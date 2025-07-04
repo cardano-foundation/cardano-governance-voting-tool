@@ -2956,7 +2956,7 @@ viewProposalCardHelper wrapMsg networkId proposal =
                     "Proposal details not available"
 
         linkUrl =
-            cardanoScanActionUrl networkId proposal.id
+            cardanoExplorerActionUrl networkId proposal.id
 
         linkHex =
             Helper.shortenedHex 5 (Bytes.toHex proposal.id.transactionId)
@@ -3077,7 +3077,7 @@ viewSelectedProposal ctx { id, actionType, metadata, metadataUrl, metadataHash }
         [ div [ HA.class "flex items-center mb-4" ]
             [ Helper.sectionTitle "Pick a Proposal" ]
         , Helper.selectedProposalCard
-            [ Helper.proposalDetailsItem "Proposal ID" (cardanoScanActionLink ctx.networkId id)
+            [ Helper.proposalDetailsItem "Proposal ID" (cardanoExplorerActionLink ctx.networkId id)
             , Helper.proposalDetailsItem "Type" actionTypeDisplay
             , Helper.proposalDetailsItem "Title" (Html.span [ HA.style "font-weight" "500" ] [ text title ])
             , if hashIsValid then
@@ -3106,30 +3106,36 @@ viewSelectedProposal ctx { id, actionType, metadata, metadataUrl, metadataHash }
 
 
 
--- Helper function to generate CardanoScan URL
+-- Helper function to generate Cardano Explorer URL
 
 
-cardanoScanActionUrl : NetworkId -> ActionId -> String
-cardanoScanActionUrl networkId id =
+cardanoExplorerActionUrl : NetworkId -> ActionId -> String
+cardanoExplorerActionUrl networkId id =
     let
+        -- Format: {transactionId}{paddedGovActionIndex}
+        -- The governance action index should be zero-padded to 2 digits
+        paddedIndex =
+            String.padLeft 2 '0' (String.fromInt id.govActionIndex)
+        
+        governanceActionId =
+            (id.transactionId |> Bytes.toHex) ++ paddedIndex
+
         baseUrl =
             case networkId of
                 Mainnet ->
-                    "https://cardanoscan.io/govAction/"
+                    "https://explorer.cardano.org/governance-action/"
 
                 Testnet ->
-                    "https://preview.cardanoscan.io/govAction/"
+                    "https://explorer.cardano.org/preview/governance-action/"
     in
-    baseUrl
-        ++ (id.transactionId |> Bytes.toHex)
-        ++ (Bytes.toHex <| Bytes.fromBytes <| Cbor.Encode.encode (Cbor.Encode.int id.govActionIndex))
+    baseUrl ++ governanceActionId
 
 
-cardanoScanActionLink : NetworkId -> ActionId -> Html msg
-cardanoScanActionLink networkId id =
+cardanoExplorerActionLink : NetworkId -> ActionId -> Html msg
+cardanoExplorerActionLink networkId id =
     let
         url =
-            cardanoScanActionUrl networkId id
+            cardanoExplorerActionUrl networkId id
     in
     Html.a
         [ HA.href url

@@ -1336,7 +1336,7 @@ proposalCard { title, hashIsValid, abstract, actionType, linkUrl, linkHex, index
                             , HA.style "color" "#3182CE"
                             , HA.style "text-decoration" "underline"
                             , HA.style "cursor" "pointer"
-                            , HA.title "View on Cardanoscan (opens in new tab)"
+                            , HA.title "View on Cardano Explorer (opens in new tab)"
                             ]
                             [ text linkHex
                             , text <| "#" ++ String.fromInt index
