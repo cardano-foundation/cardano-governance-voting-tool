@@ -3116,7 +3116,7 @@ cardanoExplorerActionUrl networkId id =
         -- The governance action index should be zero-padded to 2 digits
         paddedIndex =
             String.padLeft 2 '0' (String.fromInt id.govActionIndex)
-        
+
         governanceActionId =
             (id.transactionId |> Bytes.toHex) ++ paddedIndex
 
