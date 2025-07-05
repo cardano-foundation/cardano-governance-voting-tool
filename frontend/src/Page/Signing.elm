@@ -573,15 +573,15 @@ view ctx model =
                                     , HA.style "flex-wrap" "wrap"
                                     ]
                                     [ let
-                                        cardanoScanBaseUrl =
+                                        cardanoExplorerTxUrl =
                                             case ctx.networkId of
                                                 Mainnet ->
-                                                    "https://cardanoscan.io/transaction/"
+                                                    "https://explorer.cardano.org/transaction?id=" ++ Bytes.toHex txId
 
                                                 Testnet ->
-                                                    "https://preview.cardanoscan.io/transaction/"
+                                                    "https://explorer.cardano.org/preview/transaction?id=" ++ Bytes.toHex txId
                                       in
-                                      Helper.externalLinkButton { url = cardanoScanBaseUrl ++ Bytes.toHex txId, label = "View on CardanoScan" }
+                                      Helper.externalLinkButton { url = cardanoExplorerTxUrl, label = "View on Cardano Explorer" }
                                     ]
                                 ]
                             ]
