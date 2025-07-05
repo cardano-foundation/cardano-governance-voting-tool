@@ -2962,12 +2962,10 @@ viewProposalCardHelper wrapMsg networkId proposal =
             Helper.shortenedHex 5 (Bytes.toHex proposal.id.transactionId)
     in
     Helper.proposalCard
-        { id = idString
-        , hashIsValid = hashIsValid
+        { hashIsValid = hashIsValid
         , title = title
         , abstract = abstract
         , actionType = proposal.actionType
-        , actionId = idString
         , linkUrl = linkUrl
         , linkHex = linkHex
         , index = proposal.id.govActionIndex
@@ -3131,6 +3129,9 @@ cardanoExplorerActionLink networkId id =
     let
         url =
             cardanoExplorerActionUrl networkId id
+
+        govId =
+            Gov.idToBech32 (GovActionId id)
     in
     Html.a
         [ HA.href url
@@ -3138,8 +3139,7 @@ cardanoExplorerActionLink networkId id =
         , HA.rel "noopener noreferrer"
         , HA.class "text-blue-600 hover:text-blue-800 underline font-mono"
         ]
-        [ text <| strBothEnds 8 8 <| Bytes.toHex id.transactionId
-        , text <| "#" ++ String.fromInt id.govActionIndex
+        [ text <| strBothEnds 10 10 govId
         , Html.span
             [ HA.style "margin-left" "0.25rem"
             , HA.style "font-size" "0.8rem"
