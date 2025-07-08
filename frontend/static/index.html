@@ -48,7 +48,6 @@
     <div id="main-app"></div>
     <script type="module">
         import * as ElmCardano from "/elm-cardano.js";
-        import { jsonLdContexts } from "/json-ld-contexts.js";
         import * as ConcurrentTask from "/elm-concurrent-task.js";
         import * as Storage from "/storage.js";
 
@@ -64,13 +63,8 @@
             node: document.getElementById("main-app"),
             flags: {
                 url: window.location.href,
-                jsonLdContexts,
                 db,
                 networkId: {{network_id}}, // 0: Preview, 1: Mainnet
-                ipfsPreconfig: {
-                    label: {{ipfs_label|tojson}},
-                    description: {{ipfs_description|tojson}},
-                },
                 voterPreconfig: JSON.parse({{preconfigured_voters|tojson}}),
             },
         });
@@ -105,31 +99,6 @@
         mainApp.ports.pushUrl.subscribe(function (url) {
             history.pushState({}, "", url);
             // mainApp.ports.onUrlChange.send(location.href);
-        });
-
-        // Convert hex string to binary data
-        function hexToArrayBuffer(hexString) {
-            const bytes = new Uint8Array(hexString.length / 2);    
-            for (let i = 0; i < hexString.length; i += 2) {
-                bytes[i / 2] = parseInt(hexString.substring(i, i + 2), 16);
-            }
-            return bytes.buffer;
-        }
-
-        // Autogened PDF conversion from Hex to File
-        mainApp.ports.pdfBytesToFile.subscribe(async function (data) {
-            const file = new File([hexToArrayBuffer(data.fileContentHex)], data.fileName, {
-                type: "application/pdf",
-            });
-            mainApp.ports.gotPdfAsFile.send(file);
-        });
-
-        // JSON rationale conversion from String to File
-        mainApp.ports.jsonRationaleToFile.subscribe(async function (data) {
-            const file = new File([data.fileContent], data.fileName, {
-                type: "text/plain",
-            });
-            mainApp.ports.gotRationaleAsFile.send(file);
         });
     </script>
 </body>

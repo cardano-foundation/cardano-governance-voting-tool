@@ -79,7 +79,6 @@ type alias Flags =
     { url : String
     , db : Value
     , networkId : Int
-    , ipfsPreconfig : { label : String, description : String }
     , voterPreconfig : List PreconfVoter
     }
 
@@ -155,7 +154,6 @@ type alias Model =
     , taskPool : ConcurrentTask.Pool Msg String TaskCompleted
     , db : Value
     , networkId : NetworkId
-    , ipfsPreconfig : { label : String, description : String }
     , voterPreconfig : List PreconfVoter
     , errors : List String
     }
@@ -174,13 +172,13 @@ type TaskCompleted
 
 
 init : Flags -> ( Model, Cmd Msg )
-init { url, db, networkId, ipfsPreconfig, voterPreconfig } =
+init { url, db, networkId, voterPreconfig } =
     let
         networkIdTyped =
             Address.networkIdFromInt networkId |> Maybe.withDefault Testnet
 
         config =
-            ModelConfig db networkIdTyped ipfsPreconfig voterPreconfig
+            ModelConfig db networkIdTyped voterPreconfig
     in
     initHelper (locationHrefToRoute url) config
 
@@ -203,13 +201,12 @@ initHelper route config =
 type alias ModelConfig =
     { db : Value
     , networkId : NetworkId
-    , ipfsPreconfig : { label : String, description : String }
     , voterPreconfig : List PreconfVoter
     }
 
 
 initialModel : ModelConfig -> Model
-initialModel { db, networkId, ipfsPreconfig, voterPreconfig } =
+initialModel { db, networkId, voterPreconfig } =
     { page = LandingPage
     , appUrl = routeToAppUrl RouteLanding
     , mobileMenuIsOpen = False
@@ -228,7 +225,6 @@ initialModel { db, networkId, ipfsPreconfig, voterPreconfig } =
     , taskPool = ConcurrentTask.pool
     , db = db
     , networkId = networkId
-    , ipfsPreconfig = ipfsPreconfig
     , voterPreconfig = voterPreconfig
     , errors = []
     }
@@ -634,7 +630,6 @@ handleUrlChange route model =
                 initHelper route
                     { db = model.db
                     , networkId = networkId
-                    , ipfsPreconfig = model.ipfsPreconfig
                     , voterPreconfig = model.voterPreconfig
                     }
 
@@ -651,7 +646,6 @@ handleUrlChange route model =
                 initHelper route
                     { db = model.db
                     , networkId = networkId
-                    , ipfsPreconfig = model.ipfsPreconfig
                     , voterPreconfig = model.voterPreconfig
                     }
 
