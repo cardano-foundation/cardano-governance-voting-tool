@@ -1,59 +1,9 @@
-module ConcurrentTask.Extra exposing (attemptEach, toResult)
+module ConcurrentTask.Extra exposing (toResult)
 
 {-| Helper module adding few functions to the ConcurrentTask module.
 -}
 
-import ConcurrentTask exposing (ConcurrentTask, Pool, Response, attempt, map, onError, succeed)
-import Json.Encode exposing (Value)
-
-
-{-| Start multiple `ConcurrentTask`s concurrently.
-
-You would use `attemptEach` instead of `attempt` after `batch`
-when you do not want to wait for all tasks to finish.
-This is typically the case when these tasks are independent of each other.
-
-This needs:
-
-  - A task `Pool` (The internal model to keep track of task progress).
-  - The `send` port.
-  - The `Msg` to be called when the task completes.
-  - Your `List ConcurrentTask` to be run.
-
-Make sure to update your `Model` and pass in the commands returned from `attempt`. e.g. in a branch of `update`:
-
-    let
-        ( tasks, cmds ) =
-            ConcurrentTask.attemptEach
-                { send = send
-                , pool = model.pool
-                , onComplete = OnComplete
-                }
-                myTasks
-    in
-    ( { model | tasks = tasks }, Cmd.batch cmds )
-
--}
-attemptEach :
-    { pool : Pool msg x a
-    , send : Value -> Cmd msg
-    , onComplete : Response x a -> msg
-    }
-    -> List (ConcurrentTask x a)
-    -> ( Pool msg x a, List (Cmd msg) )
-attemptEach { pool, send, onComplete } taskList =
-    List.foldl
-        (\task ( poolAccum, cmdAccum ) ->
-            attempt
-                { pool = poolAccum
-                , send = send
-                , onComplete = onComplete
-                }
-                task
-                |> Tuple.mapSecond (\nextCmd -> nextCmd :: cmdAccum)
-        )
-        ( pool, [] )
-        taskList
+import ConcurrentTask exposing (ConcurrentTask, map, onError, succeed)
 
 
 {-| Lift a failed task into a successful one reporting the error with a `Result` type.

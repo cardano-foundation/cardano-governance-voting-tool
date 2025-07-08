@@ -45,19 +45,17 @@ Each page maintains its own state and can communicate up through MsgToParent pat
 
 -}
 
-import Api exposing (ActiveProposal, CcInfo, DrepInfo, PoolInfo, ProtocolParams)
+import Api exposing (CcInfo, DrepInfo, PoolInfo, ProtocolParams)
 import AppUrl exposing (AppUrl)
 import Browser
 import Bytes.Comparable as Bytes exposing (Bytes)
 import Cardano.Address as Address exposing (CredentialHash, NetworkId(..))
 import Cardano.Cip30 as Cip30 exposing (WalletDescriptor)
 import Cardano.Cip95 as Cip95
-import Cardano.Gov as Gov
 import Cardano.Transaction as Transaction exposing (Transaction)
 import Cardano.TxIntent
 import Cardano.Utxo as Utxo exposing (Output, TransactionId)
-import ConcurrentTask exposing (ConcurrentTask)
-import ConcurrentTask.Extra
+import ConcurrentTask
 import Dict exposing (Dict)
 import Footer
 import Header
@@ -69,19 +67,16 @@ import Http
 import Json.Decode as JD exposing (Decoder, Value)
 import Page.Disclaimer
 import Page.MultisigRegistration
-import Page.Preparation exposing (JsonLdContexts)
+import Page.Preparation
 import Page.Signing
 import Platform.Cmd as Cmd
-import ProposalMetadata exposing (ProposalMetadata)
 import RemoteData exposing (WebData)
 import ScriptInfo exposing (ScriptInfo)
-import Storage
 import Url
 
 
 type alias Flags =
     { url : String
-    , jsonLdContexts : JsonLdContexts
     , db : Value
     , networkId : Int
     , ipfsPreconfig : { label : String, description : String }
@@ -125,9 +120,6 @@ port onUrlChange : (String -> msg) -> Sub msg
 port pushUrl : String -> Cmd msg
 
 
-port jsonRationaleToFile : { fileContent : String, fileName : String } -> Cmd msg
-
-
 
 -- Task port thingy
 
@@ -156,12 +148,10 @@ type alias Model =
     , walletDrepId : Maybe (Bytes CredentialHash)
     , protocolParams : Maybe ProtocolParams
     , epoch : WebData Int
-    , proposals : WebData (Dict String ActiveProposal)
     , scriptsInfo : Dict String ScriptInfo
     , drepsInfo : Dict String DrepInfo
     , ccsInfo : Dict String CcInfo
     , poolsInfo : Dict String PoolInfo
-    , jsonLdContexts : JsonLdContexts
     , taskPool : ConcurrentTask.Pool Msg String TaskCompleted
     , db : Value
     , networkId : NetworkId
@@ -180,18 +170,17 @@ type Page
 
 
 type TaskCompleted
-    = GotProposalMetadataTask String (Result String ProposalMetadata)
-    | PreparationTaskCompleted Page.Preparation.TaskCompleted
+    = PreparationTaskCompleted Page.Preparation.TaskCompleted
 
 
 init : Flags -> ( Model, Cmd Msg )
-init { url, jsonLdContexts, db, networkId, ipfsPreconfig, voterPreconfig } =
+init { url, db, networkId, ipfsPreconfig, voterPreconfig } =
     let
         networkIdTyped =
             Address.networkIdFromInt networkId |> Maybe.withDefault Testnet
 
         config =
-            ModelConfig jsonLdContexts db networkIdTyped ipfsPreconfig voterPreconfig
+            ModelConfig db networkIdTyped ipfsPreconfig voterPreconfig
     in
     initHelper (locationHrefToRoute url) config
 
@@ -212,8 +201,7 @@ initHelper route config =
 
 
 type alias ModelConfig =
-    { jsonLdContexts : JsonLdContexts
-    , db : Value
+    { db : Value
     , networkId : NetworkId
     , ipfsPreconfig : { label : String, description : String }
     , voterPreconfig : List PreconfVoter
@@ -221,7 +209,7 @@ type alias ModelConfig =
 
 
 initialModel : ModelConfig -> Model
-initialModel { jsonLdContexts, db, networkId, ipfsPreconfig, voterPreconfig } =
+initialModel { db, networkId, ipfsPreconfig, voterPreconfig } =
     { page = LandingPage
     , appUrl = routeToAppUrl RouteLanding
     , mobileMenuIsOpen = False
@@ -233,12 +221,10 @@ initialModel { jsonLdContexts, db, networkId, ipfsPreconfig, voterPreconfig } =
     , walletDrepId = Nothing
     , protocolParams = Nothing
     , epoch = RemoteData.NotAsked
-    , proposals = RemoteData.NotAsked
     , scriptsInfo = Dict.empty
     , drepsInfo = Dict.empty
     , ccsInfo = Dict.empty
     , poolsInfo = Dict.empty
-    , jsonLdContexts = jsonLdContexts
     , taskPool = ConcurrentTask.pool
     , db = db
     , networkId = networkId
@@ -260,7 +246,6 @@ type Msg
     | WalletMsg Value
     | GotProtocolParams (Result Http.Error ProtocolParams)
     | GotEpoch (Result Http.Error Int)
-    | GotProposals (Result Http.Error (List ActiveProposal))
       -- Header
     | ToggleMobileMenu
     | ToggleWalletDropdown
@@ -439,7 +424,6 @@ update msg model =
                     { model
                         | networkId = newNet
                         , networkDropdownIsOpen = False -- Close dropdown after selection
-                        , proposals = RemoteData.NotAsked
                     }
             in
             case model.page of
@@ -503,15 +487,12 @@ update msg model =
                         ctx =
                             { wrapMsg = PreparationPageMsg
                             , db = model.db
-                            , proposals = model.proposals
                             , scriptsInfo = model.scriptsInfo
                             , drepsInfo = model.drepsInfo
                             , ccsInfo = model.ccsInfo
                             , poolsInfo = model.poolsInfo
                             , loadedWallet = loadedWallet
                             , drepId = model.walletDrepId
-                            , jsonLdContexts = model.jsonLdContexts
-                            , jsonRationaleToFile = jsonRationaleToFile
                             , costModels = Maybe.map .costModels model.protocolParams
                             , networkId = model.networkId
                             }
@@ -588,45 +569,6 @@ update msg model =
                     , Cmd.none
                     )
 
-        ( GotProposals result, _ ) ->
-            case result of
-                Err httpError ->
-                    ( { model | proposals = RemoteData.Failure httpError }
-                    , Cmd.none
-                    )
-
-                Ok activeProposals ->
-                    let
-                        epochVisibility =
-                            RemoteData.withDefault 0 model.epoch
-
-                        proposalsList =
-                            List.map (\p -> ( Gov.actionIdToString p.id, p )) activeProposals
-                                -- only keep those that aren’t expired when we receive them
-                                |> List.filter (\( _, p ) -> p.epoch_validity.end >= epochVisibility)
-
-                        completeReadProposalMetadataTask : ActiveProposal -> ConcurrentTask x TaskCompleted
-                        completeReadProposalMetadataTask { id, metadataHash, metadataUrl } =
-                            Api.defaultApiProvider.loadProposalMetadata metadataUrl
-                                |> Storage.cacheWrap
-                                    { db = model.db, storeName = "proposalMetadata" }
-                                    ProposalMetadata.decoder
-                                    ProposalMetadata.encode
-                                    { key = metadataHash }
-                                |> ConcurrentTask.Extra.toResult
-                                |> ConcurrentTask.map (GotProposalMetadataTask <| Gov.actionIdToString id)
-
-                        ( newPool, cmds ) =
-                            ConcurrentTask.Extra.attemptEach { pool = model.taskPool, send = sendTask, onComplete = OnTaskComplete }
-                                (List.map completeReadProposalMetadataTask activeProposals)
-                    in
-                    ( { model
-                        | taskPool = newPool
-                        , proposals = RemoteData.Success <| Dict.fromList proposalsList
-                      }
-                    , Cmd.batch cmds
-                    )
-
         ( OnTaskProgress ( taskPool, cmd ), _ ) ->
             ( { model | taskPool = taskPool }, cmd )
 
@@ -690,30 +632,24 @@ handleUrlChange route model =
             in
             if networkId /= model.networkId then
                 initHelper route
-                    { jsonLdContexts = model.jsonLdContexts
-                    , db = model.db
+                    { db = model.db
                     , networkId = networkId
                     , ipfsPreconfig = model.ipfsPreconfig
                     , voterPreconfig = model.voterPreconfig
                     }
 
-            else if RemoteData.isSuccess model.proposals then
-                ( newModel, pushUrlCmd )
-
             else
-                ( { newModel | proposals = RemoteData.Loading }
+                ( newModel
                 , Cmd.batch
                     [ pushUrlCmd
                     , Api.defaultApiProvider.queryEpoch model.networkId GotEpoch
-                    , Api.defaultApiProvider.loadGovProposals model.networkId GotProposals
                     ]
                 )
 
         RouteSigning { networkId, expectedSigners, tx } ->
             if networkId /= model.networkId then
                 initHelper route
-                    { jsonLdContexts = model.jsonLdContexts
-                    , db = model.db
+                    { db = model.db
                     , networkId = networkId
                     , ipfsPreconfig = model.ipfsPreconfig
                     , voterPreconfig = model.voterPreconfig
@@ -919,23 +855,6 @@ handleCompletedTask response model =
         ( ConcurrentTask.UnexpectedError error, _ ) ->
             ( { model | errors = Debug.toString error :: model.errors }, Cmd.none )
 
-        ( ConcurrentTask.Success (GotProposalMetadataTask id result), _ ) ->
-            let
-                updateMetadata maybeProposal =
-                    case ( maybeProposal, result ) of
-                        ( Nothing, _ ) ->
-                            Nothing
-
-                        ( Just p, Ok metadata ) ->
-                            Just { p | metadata = RemoteData.Success metadata }
-
-                        ( Just p, Err error ) ->
-                            Just { p | metadata = RemoteData.Failure error }
-            in
-            ( { model | proposals = RemoteData.map (\ps -> Dict.update id updateMetadata ps) model.proposals }
-            , Cmd.none
-            )
-
         ( ConcurrentTask.Success (PreparationTaskCompleted taskCompleted), PreparationPage pageModel ) ->
             let
                 ( newPageModel, cmds, msgToParent ) =
@@ -1094,8 +1013,6 @@ viewContent model =
                 , loadedWallet = loadedWallet
                 , drepId = model.walletDrepId
                 , epoch = RemoteData.toMaybe model.epoch
-                , proposals = model.proposals
-                , jsonLdContexts = model.jsonLdContexts
                 , costModels = Maybe.map .costModels model.protocolParams
                 , networkId = model.networkId
                 , changeNetworkLink =

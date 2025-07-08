@@ -1,11 +1,11 @@
-module Api exposing (ActiveProposal, ApiProvider, CcInfo, DrepInfo, PoolInfo, ProtocolParams, defaultApiProvider)
+module Api exposing (ApiProvider, CcInfo, DrepInfo, PoolInfo, ProtocolParams, defaultApiProvider)
 
 {-| Module gathering all the remote HTTP calls made by the app.
 -}
 
 import Bytes.Comparable as Bytes exposing (Bytes)
 import Cardano.Address exposing (Credential(..), CredentialHash, NetworkId(..))
-import Cardano.Gov exposing (ActionId, CostModels)
+import Cardano.Gov exposing (CostModels)
 import Cardano.Pool as Pool
 import Cardano.Transaction exposing (Transaction)
 import Cardano.Utxo exposing (TransactionId)
@@ -16,8 +16,6 @@ import Json.Decode as JD exposing (Decoder)
 import Json.Encode as JE
 import List.Extra
 import Natural exposing (Natural)
-import ProposalMetadata exposing (ProposalMetadata)
-import RemoteData exposing (RemoteData)
 import ScriptInfo exposing (ScriptInfo)
 
 
@@ -44,8 +42,6 @@ So this is how there is a mix of regular `(...) -> Cmd msg` and `ConcurrentTask 
 type alias ApiProvider msg =
     { loadProtocolParams : NetworkId -> (Result Http.Error ProtocolParams -> msg) -> Cmd msg
     , queryEpoch : NetworkId -> (Result Http.Error Int -> msg) -> Cmd msg
-    , loadGovProposals : NetworkId -> (Result Http.Error (List ActiveProposal) -> msg) -> Cmd msg
-    , loadProposalMetadata : String -> ConcurrentTask String ProposalMetadata
     , retrieveTx : NetworkId -> Bytes TransactionId -> ConcurrentTask ConcurrentTask.Http.Error (Bytes Transaction)
     , getScriptInfo : NetworkId -> Bytes CredentialHash -> ConcurrentTask ConcurrentTask.Http.Error ScriptInfo
     , getDrepInfo : NetworkId -> Credential -> (Result Http.Error DrepInfo -> msg) -> Cmd msg
@@ -87,50 +83,6 @@ protocolParamsDecoder =
 ogmiosEpochDecoder : Decoder Int
 ogmiosEpochDecoder =
     JD.field "result" JD.int
-
-
-
--- Governance Proposals
-
-
-{-| Information for currently active proposals.
-
-Proposals metadata are not stored onchain, and need extra remote calls to be fetched.
-
--}
-type alias ActiveProposal =
-    { id : ActionId
-    , actionType : String
-    , metadataUrl : String
-    , metadataHash : String
-    , epoch_validity : { start : Int, end : Int }
-    , metadata : RemoteData String ProposalMetadata
-    }
-
-
-ogmiosGovProposalsDecoder : Decoder (List ActiveProposal)
-ogmiosGovProposalsDecoder =
-    JD.field "result" <|
-        JD.list <|
-            JD.map6 ActiveProposal
-                (JD.map2
-                    (\id index ->
-                        { transactionId = Bytes.fromHexUnchecked id
-                        , govActionIndex = index
-                        }
-                    )
-                    (JD.at [ "proposal", "transaction", "id" ] JD.string)
-                    (JD.at [ "proposal", "index" ] JD.int)
-                )
-                (JD.at [ "action", "type" ] JD.string)
-                (JD.at [ "metadata", "url" ] JD.string)
-                (JD.at [ "metadata", "hash" ] JD.string)
-                (JD.map2
-                    (\start end -> { start = start, end = end })
-                    (JD.at [ "since", "epoch" ] JD.int)
-                    (JD.at [ "until", "epoch" ] JD.int)
-                )
-                (JD.succeed RemoteData.Loading)
 
 
 
@@ -372,28 +324,6 @@ defaultApiProvider =
                 , tracker = Nothing
                 }
 
-    -- Get governance proposals via Koios
-    , loadGovProposals =
-        \networkId toMsg ->
-            Http.request
-                { method = "POST"
-                , url = koiosUrl networkId ++ "/ogmios"
-                , headers = [ Http.header "Authorization" <| "Bearer " ++ koiosApiToken ]
-                , body =
-                    Http.jsonBody
-                        (JE.object
-                            [ ( "jsonrpc", JE.string "2.0" )
-                            , ( "method", JE.string "queryLedgerState/governanceProposals" )
-                            ]
-                        )
-                , expect = Http.expectJson toMsg ogmiosGovProposalsDecoder
-                , timeout = Nothing
-                , tracker = Nothing
-                }
-
-    -- Load the metadata associated with a governance proposal
-    , loadProposalMetadata = taskLoadProposalMetadata
-
     -- Retrieve transactions via Koios by proxying with the server (to avoid CORS errors)
     , retrieveTx = taskRetrieveTx
 
@@ -479,69 +409,6 @@ defaultApiProvider =
 
 
 -- Task port requests
-
-
-{-| Task to retrieve a proposal metadata.
-
-If the metadata URL is pointing to an IPFS resource ("ipfs://")
-the URL is automatically converted into a call to the main IPFS gateway ("<https://ipfs.io/ipfs/">).
-
-Some metadata URLs point to servers that do not accept cross-origin requests (CORS).
-For this reason, if a request task fails with potentially a CORS error,
-we redo the request by proxying it through this app server.
-
--}
-taskLoadProposalMetadata : String -> ConcurrentTask String ProposalMetadata
-taskLoadProposalMetadata url =
-    let
-        adjustedUrl =
-            -- Differentiate HTTP and IPFS protocols to adjust the IPFS URL to a gateway
-            if String.startsWith "ipfs://" url then
-                "https://ipfs.io/ipfs/" ++ String.dropLeft 7 url
-
-            else
-                url
-    in
-    ConcurrentTask.Http.get
-        { url = adjustedUrl
-        , headers = []
-        , expect = ConcurrentTask.Http.expectString
-        , timeout = Nothing
-        }
-        |> ConcurrentTask.onError
-            (\httpError ->
-                case httpError of
-                    -- NetworkError is potentially a CORS issue, so we proxy through the server
-                    ConcurrentTask.Http.NetworkError ->
-                        ConcurrentTask.Http.post
-                            { url = "/proxy/json"
-                            , headers = []
-                            , body =
-                                ConcurrentTask.Http.jsonBody
-                                    (JE.object
-                                        [ ( "url", JE.string adjustedUrl )
-                                        , ( "method", JE.string "GET" )
-                                        ]
-                                    )
-                            , expect = ConcurrentTask.Http.expectString
-                            , timeout = Nothing
-                            }
-
-                    _ ->
-                        ConcurrentTask.fromResult (Err httpError)
-            )
-        |> ConcurrentTask.map ProposalMetadata.fromRaw
-        |> ConcurrentTask.onError
-            (\httpError ->
-                case httpError of
-                    ConcurrentTask.Http.NetworkError ->
-                        Err "Network error. Maybe you lost your connection, or the request was blocked by CORS on the server."
-                            |> ConcurrentTask.fromResult
-
-                    _ ->
-                        Err (Debug.toString httpError)
-                            |> ConcurrentTask.fromResult
-            )
 
 
 {-| Task to retrieve the raw CBOR of a given Tx.

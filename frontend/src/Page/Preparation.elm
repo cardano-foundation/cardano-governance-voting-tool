@@ -1,4 +1,4 @@
-module Page.Preparation exposing (JsonLdContexts, LoadedWallet, Model, Msg, MsgToParent(..), TaskCompleted, UpdateContext, ViewContext, handleTaskCompleted, init, update, view)
+module Page.Preparation exposing (LoadedWallet, Model, Msg, MsgToParent(..), TaskCompleted, UpdateContext, ViewContext, handleTaskCompleted, init, update, view)
 
 {-| This module handles the complete vote preparation workflow, from identifying
 the voter to signing the transaction, which is handled by another page.
@@ -25,7 +25,7 @@ The steps are sequential but allow going back to modify previous steps.
 
 -}
 
-import Api exposing (ActiveProposal, CcInfo, DrepInfo, PoolInfo)
+import Api exposing (CcInfo, DrepInfo, PoolInfo)
 import Bytes.Comparable as Bytes exposing (Bytes)
 import Cardano.Address exposing (Credential(..), CredentialHash, NetworkId)
 import Cardano.Cip30 as Cip30
@@ -47,7 +47,6 @@ import Html.Attributes as HA
 import Html.Lazy
 import Http
 import Json.Decode as JD
-import Json.Encode as JE
 import List.Extra
 import Natural
 import Platform.Cmd as Cmd
@@ -172,7 +171,7 @@ type Msg
 {-| Configuration required by the update function.
 Provides access to:
 
-  - External data (proposals, script info, etc.)
+  - External data (script info, etc.)
   - Cardano network cost models (for script execution)
   - Wallet integration
   - In-browser storage connection
@@ -182,22 +181,15 @@ Provides access to:
 type alias UpdateContext msg =
     { wrapMsg : Msg -> msg
     , db : JD.Value
-    , proposals : WebData (Dict String ActiveProposal)
     , scriptsInfo : Dict String ScriptInfo
     , drepsInfo : Dict String DrepInfo
     , ccsInfo : Dict String CcInfo
     , poolsInfo : Dict String PoolInfo
     , loadedWallet : Maybe LoadedWallet
     , drepId : Maybe (Bytes CredentialHash)
-    , jsonLdContexts : JsonLdContexts
-    , jsonRationaleToFile : { fileContent : String, fileName : String } -> Cmd msg
     , costModels : Maybe CostModels
     , networkId : NetworkId
     }
-
-
-type alias JsonLdContexts =
-    { ccCip136Context : JE.Value }
 
 
 type alias LoadedWallet =
@@ -325,13 +317,6 @@ innerUpdate ctx msg model =
             case model.voterStep of
                 Done prep _ ->
                     ( { model | voterStep = Preparing prep }
-                      -- TODO: also reset all dependents steps
-                      -- |> resetProposal
-                      -- |> resetRationaleCreation
-                      -- |> resetRationaleSignature
-                      -- |> resetStorage
-                      -- |> resetTxBuilding
-                      -- |> resetTxSigning
                     , Cmd.none
                     , Nothing
                     )
@@ -821,7 +806,6 @@ utxoRefFromStr str =
   - Message wrapper for parent component
   - Wallet connectivity status
   - The current epoch
-  - Available proposals to vote on
   - JSON-LD metadata context for rationale
   - Protocol parameters
   - The network ID
@@ -833,8 +817,6 @@ type alias ViewContext msg =
     , loadedWallet : Maybe LoadedWallet
     , drepId : Maybe (Bytes CredentialHash)
     , epoch : Maybe Int
-    , proposals : WebData (Dict String ActiveProposal)
-    , jsonLdContexts : JsonLdContexts
     , costModels : Maybe CostModels
     , networkId : NetworkId
     , changeNetworkLink : NetworkId -> List (Html msg) -> Html msg
