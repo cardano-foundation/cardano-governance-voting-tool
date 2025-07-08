@@ -1,4 +1,4 @@
-module Api exposing (ActiveProposal, ApiProvider, CcInfo, DrepInfo, IpfsAnswer(..), IpfsFile, PoolInfo, ProtocolParams, defaultApiProvider)
+module Api exposing (ActiveProposal, ApiProvider, CcInfo, DrepInfo, PoolInfo, ProtocolParams, defaultApiProvider)
 
 {-| Module gathering all the remote HTTP calls made by the app.
 -}
@@ -11,17 +11,14 @@ import Cardano.Transaction exposing (Transaction)
 import Cardano.Utxo exposing (TransactionId)
 import ConcurrentTask exposing (ConcurrentTask)
 import ConcurrentTask.Http
-import File exposing (File)
 import Http
 import Json.Decode as JD exposing (Decoder)
 import Json.Encode as JE
 import List.Extra
 import Natural exposing (Natural)
-import Platform exposing (Task)
 import ProposalMetadata exposing (ProposalMetadata)
 import RemoteData exposing (RemoteData)
 import ScriptInfo exposing (ScriptInfo)
-import Task
 
 
 {-| Free Tier Koios API token.
@@ -54,10 +51,6 @@ type alias ApiProvider msg =
     , getDrepInfo : NetworkId -> Credential -> (Result Http.Error DrepInfo -> msg) -> Cmd msg
     , getCcInfo : NetworkId -> Credential -> (Result Http.Error CcInfo -> msg) -> Cmd msg
     , getPoolLiveStake : NetworkId -> Bytes Pool.Id -> (Result Http.Error PoolInfo -> msg) -> Cmd msg
-    , ipfsAddFileCustom : { rpc : String, headers : List ( String, String ), file : File } -> (Result String IpfsAnswer -> msg) -> Cmd msg
-    , ipfsAddFileNmkr : { userId : String, apiToken : String, file : File } -> (Result String IpfsAnswer -> msg) -> Cmd msg
-    , ipfsAddFileBlockfrost : { projectId : String, file : File } -> (Result String IpfsAnswer -> msg) -> Cmd msg
-    , ipfsAddFile : { file : File } -> (Result String IpfsAnswer -> msg) -> Cmd msg
     }
 
 
@@ -324,84 +317,6 @@ poolStakeDecoder poolId =
 
 
 
--- IPFS
-
-
-{-| Response from an IPFS server to a request to store a file.
--}
-type IpfsAnswer
-    = IpfsError String
-    | IpfsAddSuccessful IpfsFile
-
-
-{-| Relevant IPFS file information.
--}
-type alias IpfsFile =
-    { name : String
-    , cid : String
-    , size : String
-    }
-
-
-responseToIpfsAnswer : Http.Response String -> Result String IpfsAnswer
-responseToIpfsAnswer response =
-    case response of
-        Http.GoodStatus_ _ body ->
-            JD.decodeString ipfsAnswerDecoder body
-                |> Result.mapError JD.errorToString
-
-        Http.BadStatus_ meta body ->
-            case JD.decodeString ipfsAnswerDecoder body of
-                Ok answer ->
-                    Ok answer
-
-                Err _ ->
-                    Err <| "Bad status (" ++ String.fromInt meta.statusCode ++ "): " ++ meta.statusText
-
-        Http.NetworkError_ ->
-            Err "Network error. Maybe you lost your connection, or an IPFS gateway did not respond in time, or some other network error occured."
-
-        Http.Timeout_ ->
-            Err "The Pin request timed out."
-
-        Http.BadUrl_ str ->
-            Err <| "Incorrect URL: " ++ str
-
-
-ipfsAnswerDecoder : JD.Decoder IpfsAnswer
-ipfsAnswerDecoder =
-    JD.oneOf
-        -- Error
-        [ JD.map3 (\err msg code -> IpfsError <| String.fromInt code ++ " (" ++ err ++ "): " ++ msg)
-            (JD.field "error" JD.string)
-            (JD.field "message" JD.string)
-            (JD.field "status_code" JD.int)
-        , JD.map IpfsError
-            (JD.field "errorMessage" JD.string)
-        , JD.map IpfsError
-            (JD.field "detail" JD.string)
-        , JD.map (\json -> IpfsError <| JE.encode 2 json)
-            (JD.field "detail" JD.value)
-
-        -- Blockfrost format
-        , JD.map3 (\name hash size -> IpfsAddSuccessful <| IpfsFile name hash size)
-            (JD.field "name" JD.string)
-            (JD.field "ipfs_hash" JD.string)
-            (JD.field "size" JD.string)
-
-        -- CF format
-        , JD.map3 (\name hash size -> IpfsAddSuccessful <| IpfsFile name hash size)
-            (JD.field "Name" JD.string)
-            (JD.field "Hash" JD.string)
-            (JD.field "Size" JD.string)
-
-        -- NMKR format
-        , JD.map (\cid -> IpfsAddSuccessful <| IpfsFile "unkown" cid "unknown")
-            JD.string
-        ]
-
-
-
 -- Default API Provider
 
 
@@ -556,131 +471,6 @@ defaultApiProvider =
                             ]
                         )
                 , expect = Http.expectJson toMsg (poolStakeDecoder poolId)
-                , timeout = Nothing
-                , tracker = Nothing
-                }
-
-    -- Make a request to an IPFS RPC
-    , ipfsAddFileCustom =
-        \{ rpc, headers, file } toMsg ->
-            Http.request
-                { method = "POST"
-                , headers = List.map (\( k, v ) -> Http.header k v) headers
-                , url = rpc ++ "/add?pin=true"
-                , body = Http.multipartBody [ Http.filePart "file" file ]
-                , expect = Http.expectStringResponse toMsg responseToIpfsAnswer
-                , timeout = Nothing
-                , tracker = Nothing
-                }
-
-    -- Make a request to NMKR IPFS server
-    , ipfsAddFileNmkr =
-        \{ userId, apiToken, file } toMsg ->
-            File.toUrl file
-                |> Task.andThen
-                    (\fileAsBase64Url ->
-                        let
-                            -- Remove the uri prefix for NMKR which doesn’t accept it
-                            prefixSize =
-                                String.length <| "data:" ++ File.mime file ++ ";base64,"
-
-                            fileAsBase64 =
-                                String.dropLeft prefixSize fileAsBase64Url
-                        in
-                        Http.task
-                            { method = "POST"
-                            , url = "/proxy/json"
-                            , headers = []
-                            , body =
-                                Http.jsonBody
-                                    (JE.object
-                                        [ ( "url", JE.string <| "https://studio-api.nmkr.io/v2/UploadToIpfs/" ++ userId )
-                                        , ( "method", JE.string "POST" )
-                                        , ( "headers", JE.object [ ( "Authorization", JE.string ("Bearer " ++ apiToken) ) ] )
-                                        , ( "body"
-                                          , JE.object
-                                                [ ( "mimetype", JE.string <| File.mime file )
-                                                , ( "name", JE.string <| File.name file )
-                                                , ( "fileFromBase64", JE.string fileAsBase64 )
-                                                ]
-                                          )
-                                        ]
-                                    )
-                            , resolver = Http.stringResolver responseToIpfsAnswer
-                            , timeout = Nothing
-                            }
-                    )
-                |> Task.attempt toMsg
-
-    -- Make an add+pin request to Blockfrost IPFS servers
-    , ipfsAddFileBlockfrost =
-        let
-            addRequest : String -> File -> Task String IpfsAnswer
-            addRequest projectId file =
-                Http.task
-                    { method = "POST"
-                    , headers = [ Http.header "project_id" projectId ]
-                    , url = "https://ipfs.blockfrost.io/api/v0/ipfs/add"
-                    , body = Http.multipartBody [ Http.filePart "file" file ]
-                    , resolver = Http.stringResolver <| responseToIpfsAnswer
-                    , timeout = Nothing
-                    }
-
-            pinRequest : String -> IpfsAnswer -> Task String IpfsAnswer
-            pinRequest projectId ipfsAnswer =
-                case ipfsAnswer of
-                    IpfsError _ ->
-                        Task.succeed ipfsAnswer
-
-                    IpfsAddSuccessful { cid } ->
-                        Http.task
-                            { method = "POST"
-                            , headers = [ Http.header "project_id" projectId ]
-                            , url = "https://ipfs.blockfrost.io/api/v0/ipfs/pin/add/" ++ cid
-                            , body =
-                                Http.jsonBody <|
-                                    JE.object
-                                        [ ( "ipfs_hash", JE.string cid )
-                                        , ( "state", JE.string "queued" )
-                                        , ( "filecoin", JE.bool False )
-                                        ]
-                            , resolver =
-                                Http.stringResolver
-                                    (\pinResponse ->
-                                        case pinResponse of
-                                            Http.GoodStatus_ _ _ ->
-                                                -- Return the original /add answer
-                                                Ok ipfsAnswer
-
-                                            Http.BadStatus_ meta _ ->
-                                                Err <| "Pinning failed (" ++ String.fromInt meta.statusCode ++ "): " ++ meta.statusText
-
-                                            Http.NetworkError_ ->
-                                                Err "Network error during IPFS pinning."
-
-                                            Http.Timeout_ ->
-                                                Err "The pin request timed out."
-
-                                            Http.BadUrl_ str ->
-                                                Err <| "Incorrect URL for pinning: " ++ str
-                                    )
-                            , timeout = Nothing
-                            }
-        in
-        \{ projectId, file } toMsg ->
-            addRequest projectId file
-                |> Task.andThen (pinRequest projectId)
-                |> Task.attempt toMsg
-
-    -- Make a request to the pre-configured IPFS RPC via the server
-    , ipfsAddFile =
-        \{ file } toMsg ->
-            Http.request
-                { method = "POST"
-                , headers = []
-                , url = "/ipfs-pin/file"
-                , body = Http.multipartBody [ Http.filePart "file" file ]
-                , expect = Http.expectStringResponse toMsg responseToIpfsAnswer
                 , timeout = Nothing
                 , tracker = Nothing
                 }

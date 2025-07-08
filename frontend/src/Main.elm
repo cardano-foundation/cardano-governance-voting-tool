@@ -102,7 +102,6 @@ main =
                 Sub.batch
                     [ fromWallet WalletMsg
                     , onUrlChange (locationHrefToRoute >> UrlChanged)
-                    , gotRationaleAsFile GotRationaleAsFile
                     , ConcurrentTask.onProgress
                         { send = sendTask
                         , receive = receiveTask
@@ -127,9 +126,6 @@ port pushUrl : String -> Cmd msg
 
 
 port jsonRationaleToFile : { fileContent : String, fileName : String } -> Cmd msg
-
-
-port gotRationaleAsFile : (Value -> msg) -> Sub msg
 
 
 
@@ -274,7 +270,6 @@ type Msg
     | NetworkChanged NetworkId
       -- Preparation page
     | PreparationPageMsg Page.Preparation.Msg
-    | GotRationaleAsFile Value
       -- Signing page
     | SigningPageMsg Page.Signing.Msg
       -- Multisig DRep registration page
@@ -530,16 +525,6 @@ update msg model =
                 _ ->
                     ( model, Cmd.none )
 
-        ( GotRationaleAsFile file, { page } ) ->
-            case page of
-                PreparationPage pageModel ->
-                    Page.Preparation.pinRationaleFile file pageModel
-                        |> Tuple.mapFirst (\newPageModel -> { model | page = PreparationPage newPageModel })
-                        |> Tuple.mapSecond (Cmd.map PreparationPageMsg)
-
-                _ ->
-                    ( model, Cmd.none )
-
         ( SigningPageMsg pageMsg, { page } ) ->
             case page of
                 SigningPage pageModel ->
@@ -699,7 +684,7 @@ handleUrlChange route model =
                 newModel =
                     { model
                         | errors = []
-                        , page = PreparationPage <| Page.Preparation.init model.ipfsPreconfig
+                        , page = PreparationPage <| Page.Preparation.init
                         , appUrl = appUrl
                     }
             in
@@ -1119,7 +1104,6 @@ viewContent model =
                 , signingLink =
                     \tx expectedSigners ->
                         link (RouteSigning { networkId = model.networkId, tx = Just tx, expectedSigners = expectedSigners }) []
-                , ipfsPreconfig = model.ipfsPreconfig
                 , voterPreconfig = model.voterPreconfig
                 }
                 prepModel

@@ -1,4 +1,4 @@
-module ProposalMetadata exposing (AuthorWitness, Body, ProposalMetadata, authorWitnessDecoder, decoder, encode, fromRaw)
+module ProposalMetadata exposing (AuthorWitness, Body, ProposalMetadata, decoder, encode, fromRaw)
 
 {-| Helper module to handle proposals metadata following [CIP-108](https://cips.cardano.org/cip/CIP-0108).
 -}
