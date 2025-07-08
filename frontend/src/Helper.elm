@@ -39,15 +39,9 @@ and are potentially useful in multiple places.
 @docs applyDropdownContainerStyle, applyDropdownItemStyle, applyMobileDropdownContainerStyle, applyWalletIconContainerStyle, applyWalletIconStyle
 
 
-# Governance Icons
-
-
 # UI Structure Components
 
 @docs sectionTitle, viewError
-
-
-# Markdown Processing
 
 
 # Page Structure Components
@@ -59,24 +53,6 @@ and are potentially useful in multiple places.
 
 @docs PreconfVoter, viewVoterGrid, viewVoterCard, voterCustomCard, votingPowerDisplay, scriptInfoContainer, viewVoterCredDetails, viewVoterDetailsItem, viewCredInfo
 @docs viewUtxoRefForm, scriptSignerSection, scriptSignerCheckbox, viewIdentifiedVoterCard, viewVoterInfoItem
-
-
-# Proposal Selection Components
-
-
-# Storage Configuration Components
-
-
-# Rationale Components
-
-
-# Document Creation Components
-
-
-# Transaction Components
-
-
-# Signing Components
 
 -}
 
@@ -342,7 +318,6 @@ applyWalletIconStyle =
 
 
 
--- GOV ICONS ###################################################################
 -- SECTION STYLING #############################################################
 
 
@@ -416,8 +391,6 @@ cardContent attributes content =
 
 
 
--- INFORMATION BOXES ###########################################################
--- FORM INPUT STYLING #########################################################
 -- UI COMPONENTS ##############################################################
 
 
@@ -473,7 +446,6 @@ viewError error =
 
 
 
--- MARKDOWN RENDERING ##########################################################
 -- Stepper with circle and header #########################################################
 
 
@@ -915,13 +887,3 @@ viewIdentifiedVoterCard title content changeButton =
 viewVoterInfoItem : String -> String -> Html msg
 viewVoterInfoItem label value =
     Html.p [] [ text <| label ++ ": " ++ value ]
-
-
-
--- PROPOSAL SELECTION STEP STYLING #########################################################
--- STORAGE CONFIGURATION STEP STYLING #########################################################
--- VOTE RATIONALE STEP STYLING  #########################################################
--- RATIONALE SIGNATURE STEP STYLING  #########################################################
--- RATIONALE STORAGE STEP STYLING  #########################################################
--- TX BUILDING STEP STYLING #########################################################
--- TX SIGNING STEP STYLING #########################################################

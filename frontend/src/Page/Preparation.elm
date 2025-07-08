@@ -6,14 +6,6 @@ the voter to signing the transaction, which is handled by another page.
 The workflow is split into the following sequential steps:
 
 1.  Voter identification - Who is voting (DRep/SPO/CC)
-2.  Proposal selection - What proposal to vote on
-3.  IPFS storage configuration - How to store the rationale on IPFS
-4.  Rationale creation - The reasoning behind the vote
-5.  Rationale signing - Optional signatures from multiple authors
-6.  Rationale storage - Storing rationale on IPFS
-7.  Fee handling - How transaction fees will be paid
-8.  Transaction building - Creating the vote transaction
-9.  Transaction signing - Redirect to the signing page
 
 Each step follows a common pattern using the Step type:
 
@@ -806,7 +798,6 @@ utxoRefFromStr str =
   - Message wrapper for parent component
   - Wallet connectivity status
   - The current epoch
-  - JSON-LD metadata context for rationale
   - Protocol parameters
   - The network ID
   - Link to transaction signing page
