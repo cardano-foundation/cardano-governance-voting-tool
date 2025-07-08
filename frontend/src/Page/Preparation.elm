@@ -1,4 +1,4 @@
-module Page.Preparation exposing (InternalVote, JsonLdContexts, LoadedWallet, Model, Msg, MsgToParent(..), Rationale, Reference, ReferenceType(..), TaskCompleted, UpdateContext, ViewContext, handleTaskCompleted, init, noInternalVote, pinPdfFile, pinRationaleFile, update, view)
+module Page.Preparation exposing (InternalVote, JsonLdContexts, LoadedWallet, Model, Msg, MsgToParent(..), Rationale, Reference, ReferenceType(..), TaskCompleted, UpdateContext, ViewContext, handleTaskCompleted, init, pinRationaleFile, update, view)
 
 {-| This module handles the complete vote preparation workflow, from identifying
 the voter to signing the transaction, which is handled by another page.
@@ -27,7 +27,6 @@ The steps are sequential but allow going back to modify previous steps.
 
 import Api exposing (ActiveProposal, CcInfo, DrepInfo, IpfsAnswer(..), PoolInfo)
 import Blake2b exposing (blake2b256)
-import Bytes as ElmBytes
 import Bytes.Comparable as Bytes exposing (Bytes)
 import Cardano.Address as Address exposing (Address, Credential(..), CredentialHash, NetworkId(..))
 import Cardano.Cip30 as Cip30
@@ -164,7 +163,6 @@ initVoterForm =
 
 type alias RationaleForm =
     { summary : String
-    , pdfAutogen : Bool
     , rationaleStatement : MarkdownForm
     , precedentDiscussion : MarkdownForm
     , counterArgumentDiscussion : MarkdownForm
@@ -201,7 +199,6 @@ noInternalVote =
 initRationaleForm : RationaleForm
 initRationaleForm =
     { summary = ""
-    , pdfAutogen = True
     , rationaleStatement = ""
     , precedentDiscussion = ""
     , counterArgumentDiscussion = ""
@@ -446,7 +443,6 @@ type Msg
     | ValidateStorageConfigButtonClicked
       -- Rationale
     | RationaleSummaryChange String
-    | TogglePdfAutogen Bool
     | RationaleStatementChange String
     | PrecedentDiscussionChange String
     | CounterArgumentChange String
@@ -462,7 +458,6 @@ type Msg
     | ReferenceUriChange Int String
     | ReferenceTypeChange Int String
     | ValidateRationaleButtonClicked
-    | GotUnsignedPdfFile (Result Http.Error ElmBytes.Bytes)
     | EditRationaleButtonClicked
       -- Rationale Signature
     | AddAuthorButtonClicked
@@ -505,7 +500,6 @@ type alias UpdateContext msg =
     , drepId : Maybe (Bytes CredentialHash)
     , jsonLdContexts : JsonLdContexts
     , jsonRationaleToFile : { fileContent : String, fileName : String } -> Cmd msg
-    , pdfBytesToFile : { fileContentHex : String, fileName : String } -> Cmd msg
     , costModels : Maybe CostModels
     , networkId : NetworkId
     }
@@ -783,12 +777,6 @@ innerUpdate ctx msg model =
             , Nothing
             )
 
-        TogglePdfAutogen pdfAutogen ->
-            ( updateRationaleForm (\form -> { form | pdfAutogen = pdfAutogen }) model
-            , Cmd.none
-            , Nothing
-            )
-
         RationaleStatementChange statement ->
             ( updateRationaleForm (\form -> { form | rationaleStatement = statement }) model
             , Cmd.none
@@ -879,21 +867,9 @@ innerUpdate ctx msg model =
                 ( Preparing formWithError, _ ) ->
                     ( { model | rationaleCreationStep = Preparing formWithError }, Cmd.none, Nothing )
 
-                -- If validation partially succeeds but needs more processing,
-                -- it will return in the Preparing step and we now need to store the PDF on IPFS,
-                -- and then edit the rationale to include the PDF link
-                ( Validating form rationale, Done _ { id } ) ->
-                    let
-                        tempUnsignedRationaleForm =
-                            rationaleSignatureFromForm ctx.jsonLdContexts id { authors = [], error = Nothing, rationale = rationale }
-
-                        rawFileContent =
-                            tempUnsignedRationaleForm.signedJson
-                    in
+                ( Validating form rationale, Done _ _ ) ->
                     ( { model | rationaleCreationStep = Validating form rationale }
-                      -- Save rationale PDF to IPFS and update rationale with link
-                    , Api.defaultApiProvider.convertToPdf rawFileContent GotUnsignedPdfFile
-                        |> Cmd.map ctx.wrapMsg
+                    , Cmd.none
                     , Nothing
                     )
 
@@ -917,28 +893,6 @@ innerUpdate ctx msg model =
                     ( updatedModel, Cmd.none, Nothing )
 
                 _ ->
-                    ( model, Cmd.none, Nothing )
-
-        -- Handling PDF auto-gen for the rationale
-        GotUnsignedPdfFile result ->
-            case ( model.rationaleCreationStep, result ) of
-                ( Validating _ _, Ok pdfBytes ) ->
-                    ( model
-                    , ctx.pdfBytesToFile
-                        { fileContentHex = Bytes.fromBytes pdfBytes |> Bytes.toHex
-                        , fileName = "unsigned-rationale.pdf"
-                        }
-                    , Nothing
-                    )
-
-                ( Validating form _, Err error ) ->
-                    ( { model | rationaleCreationStep = Preparing { form | error = Just <| "An error occurred while converting the rationale to PDF: " ++ Debug.toString error } }
-                    , Cmd.none
-                    , Nothing
-                    )
-
-                _ ->
-                    -- Ignore if we are not validating the rationale
                     ( model, Cmd.none, Nothing )
 
         EditRationaleButtonClicked ->
@@ -1024,18 +978,8 @@ innerUpdate ctx msg model =
                     ( model, Cmd.none, Nothing )
 
         GotIpfsAnswer (Err httpError) ->
-            case ( model.rationaleCreationStep, model.permanentStorageStep ) of
-                -- If we are validating the rationale form, it means the IPFS answer
-                -- is most likely the PDF we got back for PDF auto-gen.
-                ( Validating form _, _ ) ->
-                    ( { model | rationaleCreationStep = Preparing { form | error = Just <| Debug.toString httpError } }
-                    , Cmd.none
-                    , Nothing
-                    )
-
-                -- Otherwise, if we are validating the permanent storage step, it means the IPFS answer
-                -- is most likely for the signed JSON rationale.
-                ( _, Validating form _ ) ->
+            case model.permanentStorageStep of
+                Validating form _ ->
                     ( { model | permanentStorageStep = Preparing { form | error = Just <| Debug.toString httpError } }
                     , Cmd.none
                     , Nothing
@@ -1047,11 +991,6 @@ innerUpdate ctx msg model =
 
         GotIpfsAnswer (Ok ipfsAnswer) ->
             case ( model.rationaleCreationStep, model.permanentStorageStep ) of
-                -- If we are validating the rationale form, it means the IPFS answer
-                -- is most likely the PDF we got back for PDF auto-gen.
-                ( Validating form rationale, _ ) ->
-                    handlePdfIpfsAnswer ctx model form rationale ipfsAnswer
-
                 -- Otherwise, if we are validating the permanent storage step, it means the IPFS answer
                 -- is most likely for the signed JSON rationale.
                 ( _, Validating _ _ ) ->
@@ -1772,25 +1711,15 @@ validateRationaleForm step =
                         |> Result.andThen (\_ -> validateRationaleInternVote form.internalVote)
                         |> Result.andThen (\_ -> validateRationaleRefs form.references)
             in
-            case ( rationaleValidation, form.pdfAutogen ) of
-                -- Without PDF autogeneration, validation is considered complete
-                ( Ok _, False ) ->
+            case rationaleValidation of
+                Ok _ ->
                     let
                         formWithoutError =
                             { form | error = Nothing }
                     in
                     Done formWithoutError (rationaleFromForm formWithoutError)
 
-                -- With PDF autogeneration, we will need to store on IPFS the PDF,
-                -- and then auto-edit the rationale statement and references sections.
-                ( Ok _, True ) ->
-                    let
-                        formWithoutError =
-                            { form | error = Nothing }
-                    in
-                    Validating formWithoutError (rationaleFromForm formWithoutError)
-
-                ( Err err, _ ) ->
+                Err err ->
                     Preparing { form | error = Just err }
 
         _ ->
@@ -1928,51 +1857,6 @@ rationaleFromForm form =
     , internalVote = form.internalVote
     , references = form.references
     }
-
-
-pinPdfFile : JD.Value -> Model -> ( Model, Cmd Msg )
-pinPdfFile fileAsValue (Model model) =
-    case ( JD.decodeValue File.decoder fileAsValue, model.storageConfigStep, model.rationaleCreationStep ) of
-        ( Err error, _, Validating form _ ) ->
-            ( Model { model | rationaleCreationStep = Preparing { form | error = Just <| JD.errorToString error } }
-            , Cmd.none
-            )
-
-        ( Ok file, Done _ storageConfig, Validating _ _ ) ->
-            ( Model model
-            , case storageConfig of
-                UsePreconfigIpfs _ ->
-                    Api.defaultApiProvider.ipfsAddFile
-                        { file = file }
-                        GotIpfsAnswer
-
-                UseBlockfrostIpfs { projectId } ->
-                    Api.defaultApiProvider.ipfsAddFileBlockfrost
-                        { projectId = projectId
-                        , file = file
-                        }
-                        GotIpfsAnswer
-
-                UseNmkrIpfs { userId, apiToken } ->
-                    Api.defaultApiProvider.ipfsAddFileNmkr
-                        { userId = userId
-                        , apiToken = apiToken
-                        , file = file
-                        }
-                        GotIpfsAnswer
-
-                UseCustomIpfs { ipfsServer, headers } ->
-                    Api.defaultApiProvider.ipfsAddFileCustom
-                        { rpc = ipfsServer
-                        , headers = headers
-                        , file = file
-                        }
-                        GotIpfsAnswer
-            )
-
-        -- Ignore if we aren't validating the rationale storage step
-        _ ->
-            ( Model model, Cmd.none )
 
 
 editRationale : Step RationaleForm Rationale Rationale -> Step RationaleForm Rationale Rationale
@@ -2304,64 +2188,6 @@ pinRationaleFile fileAsValue (Model model) =
         -- Ignore if we aren't validating the rationale storage step
         _ ->
             ( Model model, Cmd.none )
-
-
-handlePdfIpfsAnswer : UpdateContext msg -> InnerModel -> RationaleForm -> Rationale -> IpfsAnswer -> ( InnerModel, Cmd msg, Maybe MsgToParent )
-handlePdfIpfsAnswer ctx model form rationale ipfsAnswer =
-    case ( model.pickProposalStep, ipfsAnswer ) of
-        ( _, IpfsError error ) ->
-            ( { model | rationaleCreationStep = Preparing { form | error = Just error } }
-            , Cmd.none
-            , Nothing
-            )
-
-        -- Edit the rationale to prepend a link to the PDF at the beginning of the rationale statement,
-        -- and in the list of references.
-        ( Done _ { id }, IpfsAddSuccessful file ) ->
-            let
-                pdfLink =
-                    "https://ipfs.io/ipfs/" ++ file.cid
-
-                updatedRationaleStatement =
-                    "A [PDF version][pdf-link] of this rationale is also made available."
-                        ++ "\n\n"
-                        ++ ("[pdf-link]: " ++ pdfLink)
-                        ++ "\n\n"
-                        ++ rationale.rationaleStatement
-
-                updatedReferences =
-                    rationale.references
-                        ++ [ { type_ = OtherRefType
-                             , label = "Rationale PDF"
-                             , uri = "ipfs://" ++ file.cid
-                             }
-                           ]
-
-                updatedRationale =
-                    { rationale
-                        | rationaleStatement = updatedRationaleStatement
-                        , references = updatedReferences
-                    }
-
-                -- Initialize rationale signature with no author
-                rationaleSignatureForm =
-                    { authors = []
-                    , rationale = updatedRationale
-                    , error = Nothing
-                    }
-            in
-            ( { model
-                | rationaleCreationStep = Done { form | error = Nothing } updatedRationale
-                , rationaleSignatureStep =
-                    Done rationaleSignatureForm (rationaleSignatureFromForm ctx.jsonLdContexts id rationaleSignatureForm)
-              }
-            , Cmd.none
-            , Nothing
-            )
-
-        -- Do nothing if no proposal was picked yet
-        ( _, IpfsAddSuccessful _ ) ->
-            ( model, Cmd.none, Nothing )
 
 
 handleRationaleIpfsAnswer : InnerModel -> IpfsAnswer -> ( InnerModel, Cmd msg, Maybe MsgToParent )
@@ -3429,8 +3255,7 @@ viewRationaleStep ctx pickProposalStep storageConfigStep step =
                 div []
                     [ Helper.sectionTitle "Vote Rationale"
                     , Helper.formContainer
-                        [ Html.p [ HA.class "text-gray-600" ] [ text "Auto-generation of PDF in progress ..." ]
-                        , Html.p [ HA.class "mt-4" ] [ Helper.viewButton "Edit rationale" EditRationaleButtonClicked ]
+                        [ Html.p [ HA.class "mt-4" ] [ Helper.viewButton "Edit rationale" EditRationaleButtonClicked ]
                         ]
                     ]
 
@@ -3468,7 +3293,7 @@ viewRationaleForm form =
             , Helper.rationaleCard
                 "Rationale Statement"
                 "Fully describe your rationale, with your arguments in full details. Use markdown with heading level 2 (##) or higher."
-                (viewStatementInput form.pdfAutogen form.rationaleStatement)
+                (viewStatementInput form.rationaleStatement)
             , Helper.rationaleCard
                 "Precedent Discussion"
                 "Optional: Discuss what you feel is relevant precedent."
@@ -3494,11 +3319,10 @@ viewRationaleForm form =
         ]
 
 
-viewStatementInput : Bool -> String -> Html Msg
-viewStatementInput hasAutoGen form =
+viewStatementInput : String -> Html Msg
+viewStatementInput form =
     div []
-        [ Helper.pdfAutogenCheckbox hasAutoGen TogglePdfAutogen
-        , div
+        [ div
             [ HA.style "margin-bottom" "0.5rem"
             , HA.style "color" "#4A5568"
             , HA.style "font-size" "0.75rem"

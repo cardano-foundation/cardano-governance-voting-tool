@@ -13,7 +13,7 @@ module Helper exposing
     , proposalListContainer, showMoreButton, proposalCard, selectedProposalCard, proposalDetailsItem
     , storageConfigCard, storageMethodOption, storageProviderForm, storageProviderCard, storageConfigItem, addHeaderButton, storageHeaderInput
     , storageHeaderForm, storageInfoGrid, storageNotAvailableCard, storageUploadCard, uploadingSpinner, storageSuccessCard, fileInfoItem, externalLinkDisplay
-    , rationaleCard, rationaleMarkdownInput, rationaleTextArea, pdfAutogenCheckbox, voteNumberInput, referenceCard, referenceForm
+    , rationaleCard, rationaleMarkdownInput, rationaleTextArea, voteNumberInput, referenceCard, referenceForm
     , rationaleCompletedCard, optionalSection, formattedInternalVote, formattedReferences
     , stepNotAvailableCard, downloadJSONButton, authorsCard, addAuthorButton, codeSnippetBox, noAuthorsPlaceholder
     , signerCard, authorForm, labeledField, readOnlyField, signatureField, formButtonsRow, secondaryButton, primaryButton, loadSignatureButton
@@ -89,7 +89,7 @@ and are potentially useful in multiple places.
 
 # Rationale Components
 
-@docs rationaleCard, rationaleMarkdownInput, rationaleTextArea, pdfAutogenCheckbox, voteNumberInput, referenceCard, referenceForm
+@docs rationaleCard, rationaleMarkdownInput, rationaleTextArea, voteNumberInput, referenceCard, referenceForm
 @docs rationaleCompletedCard, optionalSection, formattedInternalVote, formattedReferences
 
 
@@ -1691,34 +1691,6 @@ rationaleTextArea msgOnInput maybeCharLimit summary =
             , HA.style "text-align" "right"
             ]
             [ text limitInfo ]
-        ]
-
-
-{-| Checkbox for PDF auto-generation option
--}
-pdfAutogenCheckbox : Bool -> (Bool -> msg) -> Html msg
-pdfAutogenCheckbox hasAutoGen toggleMsg =
-    div
-        [ HA.class "flex items-center mb-3" ]
-        [ div
-            [ HA.class "relative flex items-center" ]
-            [ Html.input
-                [ HA.type_ "checkbox"
-                , HA.id "autogen-checkbox"
-                , HA.name "autogen-checkbox"
-                , HA.checked hasAutoGen
-                , onCheck toggleMsg
-                , HA.class "h-4 w-4 cursor-pointer border-gray-300 rounded"
-                , HA.style "accent-color" "#272727"
-                ]
-                []
-            , Html.label
-                [ HA.for "autogen-checkbox"
-                , HA.class "ml-2 text-sm font-medium text-gray-700 cursor-pointer flex items-center"
-                ]
-                [ Html.span [ HA.class "mr-1" ] [ text "Auto-generate PDF and add it to the rationale" ]
-                ]
-            ]
         ]
 
 

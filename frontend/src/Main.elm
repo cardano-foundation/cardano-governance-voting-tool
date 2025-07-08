@@ -12,7 +12,6 @@ The main components are:
   - Multiple pages for different governance actions (vote preparation, signing, DRep registration)
   - Concurrent task handling for asynchronous operations
   - In-browser caching of proposal metadata
-  - PDF generation capabilities
 
 
 # Key Design Decisions
@@ -70,7 +69,6 @@ import Http
 import Json.Decode as JD exposing (Decoder, Value)
 import Page.Disclaimer
 import Page.MultisigRegistration
-import Page.Pdf
 import Page.Preparation exposing (JsonLdContexts)
 import Page.Signing
 import Platform.Cmd as Cmd
@@ -105,7 +103,6 @@ main =
                     [ fromWallet WalletMsg
                     , onUrlChange (locationHrefToRoute >> UrlChanged)
                     , gotRationaleAsFile GotRationaleAsFile
-                    , gotPdfAsFile GotPdfAsFile
                     , ConcurrentTask.onProgress
                         { send = sendTask
                         , receive = receiveTask
@@ -133,12 +130,6 @@ port jsonRationaleToFile : { fileContent : String, fileName : String } -> Cmd ms
 
 
 port gotRationaleAsFile : (Value -> msg) -> Sub msg
-
-
-port pdfBytesToFile : { fileContentHex : String, fileName : String } -> Cmd msg
-
-
-port gotPdfAsFile : (Value -> msg) -> Sub msg
 
 
 
@@ -189,7 +180,6 @@ type Page
     | PreparationPage Page.Preparation.Model
     | SigningPage Page.Signing.Model
     | MultisigRegistrationPage Page.MultisigRegistration.Model
-    | PdfPage Page.Pdf.Model
     | DisclaimerPage
 
 
@@ -284,14 +274,11 @@ type Msg
     | NetworkChanged NetworkId
       -- Preparation page
     | PreparationPageMsg Page.Preparation.Msg
-    | GotPdfAsFile Value
     | GotRationaleAsFile Value
       -- Signing page
     | SigningPageMsg Page.Signing.Msg
       -- Multisig DRep registration page
     | MultisigPageMsg Page.MultisigRegistration.Msg
-      -- PDF page
-    | PdfPageMsg Page.Pdf.Msg
       -- Task port
     | OnTaskProgress ( ConcurrentTask.Pool Msg String TaskCompleted, Cmd Msg )
     | OnTaskComplete (ConcurrentTask.Response String TaskCompleted)
@@ -302,7 +289,6 @@ type Route
     | RoutePreparation { networkId : NetworkId }
     | RouteSigning { networkId : NetworkId, expectedSigners : List { keyName : String, keyHash : Bytes CredentialHash }, tx : Maybe Transaction }
     | RouteMultisigRegistration
-    | RoutePdf
     | RouteDisclaimer
     | Route404
 
@@ -379,9 +365,6 @@ locationHrefToRoute locationHref =
                 [ "page", "registration" ] ->
                     RouteMultisigRegistration
 
-                [ "page", "pdf" ] ->
-                    RoutePdf
-
                 [ "page", "disclaimer" ] ->
                     RouteDisclaimer
 
@@ -416,9 +399,6 @@ routeToAppUrl route =
 
         RouteMultisigRegistration ->
             AppUrl.fromPath [ "page", "registration" ]
-
-        RoutePdf ->
-            AppUrl.fromPath [ "page", "pdf" ]
 
         RouteDisclaimer ->
             AppUrl.fromPath [ "page", "disclaimer" ]
@@ -537,7 +517,6 @@ update msg model =
                             , drepId = model.walletDrepId
                             , jsonLdContexts = model.jsonLdContexts
                             , jsonRationaleToFile = jsonRationaleToFile
-                            , pdfBytesToFile = pdfBytesToFile
                             , costModels = Maybe.map .costModels model.protocolParams
                             , networkId = model.networkId
                             }
@@ -547,16 +526,6 @@ update msg model =
                     in
                     updateModelWithPrepToParentMsg msgToParent { model | page = PreparationPage newPageModel }
                         |> Tuple.mapSecond (\cmd -> Cmd.batch [ cmd, cmds ])
-
-                _ ->
-                    ( model, Cmd.none )
-
-        ( GotPdfAsFile file, { page } ) ->
-            case page of
-                PreparationPage pageModel ->
-                    Page.Preparation.pinPdfFile file pageModel
-                        |> Tuple.mapFirst (\newPageModel -> { model | page = PreparationPage newPageModel })
-                        |> Tuple.mapSecond (Cmd.map PreparationPageMsg)
 
                 _ ->
                     ( model, Cmd.none )
@@ -618,20 +587,6 @@ update msg model =
                     in
                     Page.MultisigRegistration.update ctx pageMsg pageModel
                         |> Tuple.mapFirst (\newPageModel -> { model | page = MultisigRegistrationPage newPageModel })
-
-                _ ->
-                    ( model, Cmd.none )
-
-        ( PdfPageMsg pageMsg, { page } ) ->
-            case page of
-                PdfPage pageModel ->
-                    let
-                        ctx =
-                            { wrapMsg = PdfPageMsg
-                            }
-                    in
-                    Page.Pdf.update ctx pageMsg pageModel
-                        |> Tuple.mapFirst (\newPageModel -> { model | page = PdfPage newPageModel })
 
                 _ ->
                     ( model, Cmd.none )
@@ -792,15 +747,6 @@ handleUrlChange route model =
             ( { model
                 | errors = []
                 , page = MultisigRegistrationPage Page.MultisigRegistration.initialModel
-                , appUrl = appUrl
-              }
-            , pushUrlCmd
-            )
-
-        RoutePdf ->
-            ( { model
-                | errors = []
-                , page = PdfPage Page.Pdf.initialModel
                 , appUrl = appUrl
               }
             , pushUrlCmd
@@ -1111,16 +1057,6 @@ viewHeader model =
                         _ ->
                             False
               }
-            , { label = "PDFs"
-              , link = link RoutePdf
-              , isActive =
-                    case model.page of
-                        PdfPage _ ->
-                            True
-
-                        _ ->
-                            False
-              }
             ]
 
         walletConnectorState =
@@ -1206,12 +1142,6 @@ viewContent model =
                 }
                 pageModel
 
-        PdfPage pageModel ->
-            Page.Pdf.view
-                { wrapMsg = PdfPageMsg
-                }
-                pageModel
-
 
 viewLandingPage : NetworkId -> Html Msg
 viewLandingPage networkId =
@@ -1238,7 +1168,7 @@ viewLandingPage networkId =
                 , HA.style "margin-bottom" "2.5rem"
                 , HA.style "color" "#555"
                 ]
-                [ text "Create, sign, and submit governance votes with proper rationale documentation. Generate formatted PDFs for transparency and record-keeping." ]
+                [ text "Create, sign, and submit governance votes with proper rationale documentation." ]
             , Html.p [ HA.style "margin-bottom" "4rem" ]
                 [ link (RoutePreparation { networkId = networkId })
                     [ HA.class "inline-block" ]

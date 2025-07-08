@@ -3,7 +3,6 @@ module Api exposing (ActiveProposal, ApiProvider, CcInfo, DrepInfo, IpfsAnswer(.
 {-| Module gathering all the remote HTTP calls made by the app.
 -}
 
-import Bytes as ElmBytes
 import Bytes.Comparable as Bytes exposing (Bytes)
 import Cardano.Address exposing (Credential(..), CredentialHash, NetworkId(..))
 import Cardano.Gov exposing (ActionId, CostModels)
@@ -59,7 +58,6 @@ type alias ApiProvider msg =
     , ipfsAddFileNmkr : { userId : String, apiToken : String, file : File } -> (Result String IpfsAnswer -> msg) -> Cmd msg
     , ipfsAddFileBlockfrost : { projectId : String, file : File } -> (Result String IpfsAnswer -> msg) -> Cmd msg
     , ipfsAddFile : { file : File } -> (Result String IpfsAnswer -> msg) -> Cmd msg
-    , convertToPdf : String -> (Result Http.Error ElmBytes.Bytes -> msg) -> Cmd msg
     }
 
 
@@ -686,35 +684,7 @@ defaultApiProvider =
                 , timeout = Nothing
                 , tracker = Nothing
                 }
-
-    -- Convert the JSON LD file into a pretty PDF on the server
-    , convertToPdf =
-        \jsonFileContent toMsg ->
-            Http.post
-                { url = "/pretty-gov-pdf"
-                , body = Http.stringBody "application/json" jsonFileContent
-                , expect = Http.expectBytesResponse toMsg bytesResponseToResult
-                }
     }
-
-
-bytesResponseToResult : Http.Response ElmBytes.Bytes -> Result Http.Error ElmBytes.Bytes
-bytesResponseToResult response =
-    case response of
-        Http.BadUrl_ str ->
-            Err <| Http.BadUrl str
-
-        Http.Timeout_ ->
-            Err Http.Timeout
-
-        Http.NetworkError_ ->
-            Err Http.NetworkError
-
-        Http.BadStatus_ meta _ ->
-            Err <| Http.BadStatus meta.statusCode
-
-        Http.GoodStatus_ _ bytes ->
-            Ok bytes
 
 
 

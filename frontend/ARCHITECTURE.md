@@ -20,7 +20,6 @@ This stage requires the following steps:
 - Load governance proposals and select one
 - Retrieve the proposals metadata
 - Fill the vote rationale, following the relevant CIP standard JSON
-- Generate a pretty PDF version of the JSON rationale
 - Pin the rationale in permanent storage (IPFS)
 - Build the Tx
 - Provide ways to export the Tx and rationale to share with signers
