@@ -295,11 +295,15 @@ view ctx (Model model) =
                         , HA.style "max-width" "640px"
                         , HA.style "margin-bottom" "2rem"
                         ]
-                        [ text "This page helps you generate well-formatted PDF documents from governance metadata JSON files. It supports metadata documents following the "
+                        [ text "This page helps you generate well-formatted PDF documents from governance metadata JSON files. It aims to support metadata documents following the "
                         , extLink "https://github.com/cardano-foundation/CIPs/tree/master/CIP-0100" "CIP-100 standard"
-                        , text ", particularly vote rationales that follow the "
+                        , text ". For now, rationales following the "
                         , extLink "https://github.com/cardano-foundation/CIPs/tree/master/CIP-0136" "CIP-136 standard"
-                        , text "."
+                        , text " are supported."
+                        , div [ HA.style "height" "1rem" ] []
+                        , text "Simpler CIP-100 DRep votes format is not directly supported yet. Pull request is welcome!"
+                        , text " Meanwhile, we still provide this template for you to convert your CIP-100 DRep vote rationales to pretty PDFs: "
+                        , extLink "https://typst.app/project/rfmOnSMMOVlIY52dkYmFNL" "Typst CIP-100 template."
                         ]
                     , Html.div
                         [ HA.style "display" "flex"
