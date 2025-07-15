@@ -684,7 +684,12 @@ update msg model =
                         | taskPool = newPool
                         , proposals = RemoteData.Success <| Dict.fromList proposalsList
                       }
-                    , Cmd.batch cmds
+                      -- Let’s also redo a wallet discovery,
+                      -- just to make sure all wallets have had the time to load,
+                      -- which should be the case by now.
+                      -- This is to prevent a situation where the browser extensions
+                      -- were not ready yet the first time around.
+                    , Cmd.batch (toWallet (Cip30.encodeRequest Cip30.discoverWallets) :: cmds)
                     )
 
         ( OnTaskProgress ( taskPool, cmd ), _ ) ->
