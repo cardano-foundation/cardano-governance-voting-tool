@@ -1170,6 +1170,7 @@ viewContent model =
             in
             Page.Preparation.view
                 { wrapMsg = PreparationPageMsg
+                , walletsDiscovered = model.walletsDiscovered
                 , loadedWallet = loadedWallet
                 , drepId = model.walletDrepId
                 , epoch = RemoteData.toMaybe model.epoch
