@@ -3451,7 +3451,7 @@ viewRationaleStep ctx pickProposalStep storageConfigStep step =
             ( ( _, Done _ _ ), Done _ _, Done _ rationale ) ->
                 viewCompletedRationale rationale
 
-            ( ( _, _ ), Done _ _, _ ) ->
+            ( _, Done _ _, _ ) ->
                 div []
                     [ Helper.sectionTitle "Vote Rationale"
                     , Helper.stepNotAvailableCard [ text "Please pick a proposal first." ]
