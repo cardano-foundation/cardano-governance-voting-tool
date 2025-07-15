@@ -431,25 +431,25 @@ viewActionTypeIcon actionType =
             ]
     in
     case actionType of
-        "treasuryWithdrawals" ->
+        "TreasuryWithdrawals" ->
             Html.span iconStyle [ text "💰" ]
 
-        "constitution" ->
+        "NewConstitution" ->
             Html.span iconStyle [ text "📜" ]
 
-        "constitutionalCommittee" ->
+        "NewCommittee" ->
             Html.span iconStyle [ text "👥" ]
 
-        "information" ->
+        "InfoAction" ->
             Html.span iconStyle [ text "ℹ️" ]
 
-        "noConfidence" ->
+        "NoConfidence" ->
             Html.span iconStyle [ text "❌" ]
 
-        "protocolParametersUpdate" ->
+        "ParameterChange" ->
             Html.span iconStyle [ text "⚙️" ]
 
-        "hardfork" ->
+        "HardForkInitiation" ->
             Html.span iconStyle [ text "🍴" ]
 
         _ ->
