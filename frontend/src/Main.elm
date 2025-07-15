@@ -645,7 +645,7 @@ update msg model =
 
                 Ok epoch ->
                     ( { model | epoch = RemoteData.Success epoch }
-                    , Cmd.none
+                    , Api.defaultApiProvider.loadGovProposals model.networkId epoch GotProposals
                     )
 
         ( GotProposals result, _ ) ->
@@ -657,13 +657,16 @@ update msg model =
 
                 Ok activeProposals ->
                     let
-                        epochVisibility =
+                        currentEpoch =
                             RemoteData.withDefault 0 model.epoch
 
                         proposalsList =
                             List.map (\p -> ( Gov.actionIdToString p.id, p )) activeProposals
-                                -- only keep those that aren’t expired when we receive them
-                                |> List.filter (\( _, p ) -> p.epoch_validity.end >= epochVisibility)
+                                -- deduplicate proposals
+                                |> Dict.fromList
+                                |> Dict.toList
+                                -- only keep those that aren’t expired or already ratified when we receive them
+                                |> List.filter (\( _, p ) -> p.epoch_validity.end >= currentEpoch && p.ratified == Nothing)
 
                         completeReadProposalMetadataTask : ActiveProposal -> ConcurrentTask x TaskCompleted
                         completeReadProposalMetadataTask { id, metadataHash, metadataUrl } =
@@ -765,7 +768,6 @@ handleUrlChange route model =
                 , Cmd.batch
                     [ pushUrlCmd
                     , Api.defaultApiProvider.queryEpoch model.networkId GotEpoch
-                    , Api.defaultApiProvider.loadGovProposals model.networkId GotProposals
                     ]
                 )
 

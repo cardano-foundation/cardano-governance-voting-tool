@@ -48,7 +48,7 @@ So this is how there is a mix of regular `(...) -> Cmd msg` and `ConcurrentTask 
 type alias ApiProvider msg =
     { loadProtocolParams : NetworkId -> (Result Http.Error ProtocolParams -> msg) -> Cmd msg
     , queryEpoch : NetworkId -> (Result Http.Error Int -> msg) -> Cmd msg
-    , loadGovProposals : NetworkId -> (Result Http.Error (List ActiveProposal) -> msg) -> Cmd msg
+    , loadGovProposals : NetworkId -> Int -> (Result Http.Error (List ActiveProposal) -> msg) -> Cmd msg
     , loadProposalMetadata : String -> ConcurrentTask String ProposalMetadata
     , retrieveTx : NetworkId -> Bytes TransactionId -> ConcurrentTask ConcurrentTask.Http.Error (Bytes Transaction)
     , getScriptInfo : NetworkId -> Bytes CredentialHash -> ConcurrentTask ConcurrentTask.Http.Error ScriptInfo
@@ -113,33 +113,35 @@ type alias ActiveProposal =
     , metadataUrl : String
     , metadataHash : String
     , epoch_validity : { start : Int, end : Int }
+    , ratified : Maybe Int
     , metadata : RemoteData String ProposalMetadata
     }
 
 
-ogmiosGovProposalsDecoder : Decoder (List ActiveProposal)
-ogmiosGovProposalsDecoder =
-    JD.field "result" <|
-        JD.list <|
-            JD.map6 ActiveProposal
-                (JD.map2
-                    (\id index ->
-                        { transactionId = Bytes.fromHexUnchecked id
-                        , govActionIndex = index
-                        }
-                    )
-                    (JD.at [ "proposal", "transaction", "id" ] JD.string)
-                    (JD.at [ "proposal", "index" ] JD.int)
+koiosGovProposalsDecoder : Decoder (List ActiveProposal)
+koiosGovProposalsDecoder =
+    JD.list <|
+        JD.map7 ActiveProposal
+            (JD.map2
+                (\id index ->
+                    { transactionId = Bytes.fromHexUnchecked id
+                    , govActionIndex = index
+                    }
                 )
-                (JD.at [ "action", "type" ] JD.string)
-                (JD.at [ "metadata", "url" ] JD.string)
-                (JD.at [ "metadata", "hash" ] JD.string)
-                (JD.map2
-                    (\start end -> { start = start, end = end })
-                    (JD.at [ "since", "epoch" ] JD.int)
-                    (JD.at [ "until", "epoch" ] JD.int)
-                )
-                (JD.succeed RemoteData.Loading)
+                (JD.field "proposal_tx_hash" JD.string)
+                (JD.field "proposal_index" JD.int)
+            )
+            (JD.field "proposal_type" JD.string)
+            (JD.field "meta_url" JD.string)
+            (JD.field "meta_hash" JD.string)
+            (JD.map2
+                (\start end -> { start = start, end = end })
+                (JD.field "proposed_epoch" JD.int)
+                -- TODO or is it expiration +-1 ?
+                (JD.field "expiration" JD.int)
+            )
+            (JD.field "ratified_epoch" <| JD.maybe JD.int)
+            (JD.succeed RemoteData.Loading)
 
 
 
@@ -461,19 +463,26 @@ defaultApiProvider =
 
     -- Get governance proposals via Koios
     , loadGovProposals =
-        \networkId toMsg ->
+        \networkId currentEpoch toMsg ->
+            let
+                selected_rows =
+                    [ "proposal_tx_hash"
+                    , "proposal_index"
+                    , "proposal_type"
+                    , "meta_url"
+                    , "meta_hash"
+                    , "proposed_epoch"
+                    , "expiration"
+                    , "ratified_epoch"
+                    ]
+                        |> String.join ","
+            in
             Http.request
-                { method = "POST"
-                , url = koiosUrl networkId ++ "/ogmios"
+                { method = "GET"
+                , url = koiosUrl networkId ++ "/proposal_list?select=" ++ selected_rows ++ "&expiration=gte." ++ String.fromInt currentEpoch
                 , headers = [ Http.header "Authorization" <| "Bearer " ++ koiosApiToken ]
-                , body =
-                    Http.jsonBody
-                        (JE.object
-                            [ ( "jsonrpc", JE.string "2.0" )
-                            , ( "method", JE.string "queryLedgerState/governanceProposals" )
-                            ]
-                        )
-                , expect = Http.expectJson toMsg ogmiosGovProposalsDecoder
+                , body = Http.emptyBody
+                , expect = Http.expectJson toMsg koiosGovProposalsDecoder
                 , timeout = Nothing
                 , tracker = Nothing
                 }
