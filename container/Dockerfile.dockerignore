@@ -39,6 +39,10 @@ frontend/**/dist/
 frontend/**/coverage/
 frontend/**/elm-stuff/
 
+# Counter rule for the VDOM patches
+!frontend/elm-kernel-replacements/
+!frontend/elm-kernel-replacements/elm-stuff/
+
 # Editor directories and files
 **/.idea/
 **/.vscode/

@@ -56,7 +56,9 @@ RUN --mount=type=bind,source=frontend/package.json,target=package.json \
     npm ci
 
 # Then add the code and build the frontend app
+ENV ELM_HOME=elm-home/elm-stuff
 ADD frontend .
+RUN npm run vdom:patch
 RUN npm run make
 RUN npm run css
 RUN npm run compress
