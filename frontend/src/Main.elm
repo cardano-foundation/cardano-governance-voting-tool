@@ -665,8 +665,8 @@ update msg model =
                                 -- deduplicate proposals
                                 |> Dict.fromList
                                 |> Dict.toList
-                                -- only keep those that aren’t expired or already ratified when we receive them
-                                |> List.filter (\( _, p ) -> p.epoch_validity.end >= currentEpoch && p.ratified == Nothing)
+                                -- only keep those that aren’t expired when we receive them
+                                |> List.filter (\( _, p ) -> p.epoch_validity.end >= currentEpoch)
 
                         completeReadProposalMetadataTask : ActiveProposal -> ConcurrentTask x TaskCompleted
                         completeReadProposalMetadataTask { id, metadataHash, metadataUrl } =

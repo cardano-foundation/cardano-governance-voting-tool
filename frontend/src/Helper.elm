@@ -1241,8 +1241,8 @@ showMoreButton hasMore visibleCount totalCount clickMsg =
 
 {-| Card for an individual proposal
 -}
-proposalCard : { title : String, hashIsValid : Bool, abstract : String, actionType : String, linkUrl : String, linkHex : String, index : Int } -> msg -> Html msg -> Html msg
-proposalCard { title, hashIsValid, abstract, actionType, linkUrl, linkHex, index } selectMsg actionIcon =
+proposalCard : { title : String, hashIsValid : Bool, isRatifying : Bool, abstract : String, actionType : String, linkUrl : String, linkHex : String, index : Int } -> msg -> Html msg -> Html msg
+proposalCard { title, hashIsValid, isRatifying, abstract, actionType, linkUrl, linkHex, index } selectMsg actionIcon =
     div
         [ HA.style "border" "1px solid #E2E8F0"
         , HA.style "border-radius" "0.75rem"
@@ -1272,12 +1272,12 @@ proposalCard { title, hashIsValid, abstract, actionType, linkUrl, linkHex, index
                 , HA.style "word-wrap" "break-word"
                 , HA.style "flex" "1"
                 ]
-                (if hashIsValid then
-                    [ text title ]
+                [ text title
+                , if hashIsValid then
+                    text ""
 
-                 else
-                    [ text title
-                    , Html.span
+                  else
+                    Html.span
                         [ HA.style "display" "inline-flex"
                         , HA.style "align-items" "center"
                         , HA.style "background-color" "#FEF2F2"
@@ -1291,8 +1291,23 @@ proposalCard { title, hashIsValid, abstract, actionType, linkUrl, linkHex, index
                         [ Html.span [] [ text "⚠️" ]
                         , text "INVALID HASH"
                         ]
-                    ]
-                )
+                , if isRatifying then
+                    Html.span
+                        [ HA.style "display" "inline-flex"
+                        , HA.style "align-items" "center"
+                        , HA.style "background-color" "#ACFCCD"
+                        , HA.style "color" "#437D5B"
+                        , HA.style "font-weight" "bold"
+                        , HA.style "padding" "0.25rem 0.5rem"
+                        , HA.style "border-radius" "0.375rem"
+                        , HA.style "font-size" "0.875rem"
+                        , HA.style "gap" "0.25rem"
+                        ]
+                        [ text "✓ in ratification" ]
+
+                  else
+                    text ""
+                ]
             ]
         , div
             [ HA.style "padding" "1.25rem"
@@ -1365,7 +1380,12 @@ proposalCard { title, hashIsValid, abstract, actionType, linkUrl, linkHex, index
                 [ HA.style "width" "100%"
                 , HA.style "margin-top" "1rem"
                 ]
-                "Select Proposal"
+                (if isRatifying then
+                    "Select Proposal ANYWAY"
+
+                 else
+                    "Select Proposal"
+                )
                 selectMsg
             ]
         ]
