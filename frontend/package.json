@@ -5,6 +5,7 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "make": "elm-cardano make src/Main.elm --output static/main.js",
+    "vdom:patch": "node -e \"import('./elm-kernel-replacements/replace-kernel-packages.mjs').then(m => m.replaceKernelPackages())\"",
     "compress": "esbuild static/main.js --minify --allow-overwrite --outfile=static/main.js && brotli -f -Z static/main.js static/elm-cardano.js static/elm-concurrent-task.js static/storage.js static/json-ld-contexts.js static/pkg-uplc-wasm/pkg-web/uplc_wasm_bg.wasm static/css/output.css",
     "watch": "elm-watch hot",
     "lint": "elm-review",

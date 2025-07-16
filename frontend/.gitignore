@@ -2,6 +2,7 @@ static/
 !static/logo/
 !static/logo/og-image.jpg
 node_modules/
+elm-home/
 
 # Aiken compilation artifacts
 artifacts/
