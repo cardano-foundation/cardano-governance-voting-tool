@@ -2486,13 +2486,6 @@ view ctx (Model model) =
                 , HA.style "z-index" "1"
                 ]
                 []
-            , Helper.cardContainer
-                [ HA.style "position" "relative"
-                , HA.style "margin-left" "5rem"
-                ]
-                [ Helper.cardHeader [] "⚠️ WARNING" "" []
-                , Helper.cardContent [] [ text <| "Please deactivate the Grammarly and Google Translate browser extensions if you have them while we work on a fix. They interfere with the text fields unpredictably and will cause problems. You can ignore this message if you don’t have these browser extensions." ]
-                ]
             , Helper.viewStepWithCircle 1 "voter-step" (viewVoterIdentificationStep ctx model.voterStep)
             , Helper.viewStepWithCircle 2 "proposal-step" (viewProposalSelectionStep ctx model)
             , Helper.viewStepWithCircle 3 "storage-config-step" (viewStorageConfigStep ctx model.storageConfigStep)
