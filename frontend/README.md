@@ -46,6 +46,23 @@ npx elm-cardano make src/Main.elm --output static/main.js
 npm run make
 ```
 
+## Virtual DOM Kernel Patching
+
+The Elm virtual DOM is known to have problems with browser extensions that modify the DOM, such as Grammarly, or Google Translate.
+They change the DOM and make the app crash.
+Thankfully, Simon Lydell wrote a patch to fix this issue.
+You can read all about that at [lydell/elm-safe-virtual-dom][safe-vdom].
+
+Concretely, to apply that patch in this app, you need to run your commands with `ELM_HOME=elm-home/elm-stuff`.
+You also need to call the `vdom:patch` script before compiling the app.
+
+```sh
+ELM_HOME=elm-home/elm-stuff npm run vdom:patch
+ELM_HOME=elm-home/elm-stuff npm run make
+```
+
+[safe-vdom]: https://github.com/lydell/elm-safe-virtual-dom
+
 ## Documentation
 
 To access locally the documentation of all the elm code in this project, as well as elm-cardano and all the dependencies we can use `elm-doc-preview`.
