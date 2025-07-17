@@ -2917,7 +2917,7 @@ viewProposalList ctx proposalsDict visibleCount =
             [ Helper.proposalListContainer
                 "Select a proposal to vote on"
                 totalProposalCount
-                (List.map (viewProposalCardHelper ctx.wrapMsg ctx.networkId) visibleProposals)
+                (List.map (viewProposalCardHelper ctx.wrapMsg ctx.networkId ctx.epoch) visibleProposals)
             , Helper.showMoreButton
                 hasMore
                 visibleCount
@@ -2926,8 +2926,8 @@ viewProposalList ctx proposalsDict visibleCount =
             ]
 
 
-viewProposalCardHelper : (Msg -> msg) -> NetworkId -> ActiveProposal -> Html msg
-viewProposalCardHelper wrapMsg networkId proposal =
+viewProposalCardHelper : (Msg -> msg) -> NetworkId -> Maybe Int -> ActiveProposal -> Html msg
+viewProposalCardHelper wrapMsg networkId currentEpoch proposal =
     let
         idString =
             Gov.actionIdToString proposal.id
@@ -2970,6 +2970,7 @@ viewProposalCardHelper wrapMsg networkId proposal =
     in
     Helper.proposalCard
         { hashIsValid = hashIsValid
+        , isRatifying = proposal.ratified == currentEpoch
         , title = title
         , abstract = abstract
         , actionType = proposal.actionType
