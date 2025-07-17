@@ -1381,6 +1381,10 @@ selectedProposalCard content =
             [ HA.style "padding" "1.25rem"
             , HA.style "display" "grid"
             , HA.style "gap" "0.75rem"
+            , HA.style "word-wrap" "break-word"
+            , HA.style "overflow-wrap" "break-word"
+            , HA.style "word-break" "break-word"
+            , HA.style "overflow" "hidden"
             ]
             content
         ]
