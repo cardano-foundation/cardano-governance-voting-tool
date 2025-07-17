@@ -2451,6 +2451,7 @@ allPrepSteps { loadedWallet, costModels } m =
 -}
 type alias ViewContext msg =
     { wrapMsg : Msg -> msg
+    , walletsDiscovered : List Cip30.WalletDescriptor
     , loadedWallet : Maybe LoadedWallet
     , drepId : Maybe (Bytes CredentialHash)
     , epoch : Maybe Int
@@ -3429,11 +3430,17 @@ viewRationaleStep :
     -> Html msg
 viewRationaleStep ctx pickProposalStep storageConfigStep step =
     Html.map ctx.wrapMsg <|
-        case ( pickProposalStep, storageConfigStep, step ) of
-            ( Done _ _, Done _ _, Preparing form ) ->
+        case ( ( ctx.walletsDiscovered, pickProposalStep ), storageConfigStep, step ) of
+            ( ( [], _ ), _, _ ) ->
+                div []
+                    [ Helper.sectionTitle "Vote Rationale"
+                    , Helper.stepNotAvailableCard [ text "No Cardano wallet detected, you will not be able to create a transaction. Please make sure you are using the browser where your Cardano wallet is installed." ]
+                    ]
+
+            ( ( _, Done _ _ ), Done _ _, Preparing form ) ->
                 viewRationaleForm form
 
-            ( Done _ _, Done _ _, Validating _ _ ) ->
+            ( ( _, Done _ _ ), Done _ _, Validating _ _ ) ->
                 div []
                     [ Helper.sectionTitle "Vote Rationale"
                     , Helper.formContainer
@@ -3442,7 +3449,7 @@ viewRationaleStep ctx pickProposalStep storageConfigStep step =
                         ]
                     ]
 
-            ( Done _ _, Done _ _, Done _ rationale ) ->
+            ( ( _, Done _ _ ), Done _ _, Done _ rationale ) ->
                 viewCompletedRationale rationale
 
             ( _, Done _ _, _ ) ->
@@ -3451,7 +3458,7 @@ viewRationaleStep ctx pickProposalStep storageConfigStep step =
                     , Helper.stepNotAvailableCard [ text "Please pick a proposal first." ]
                     ]
 
-            ( Done _ _, _, _ ) ->
+            ( ( _, Done _ _ ), _, _ ) ->
                 div []
                     [ Helper.sectionTitle "Vote Rationale"
                     , Helper.stepNotAvailableCard [ text "Please validate the IPFS config step first." ]
