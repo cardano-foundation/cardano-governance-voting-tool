@@ -660,13 +660,19 @@ update msg model =
                         currentEpoch =
                             RemoteData.withDefault 0 model.epoch
 
+                        isDropped p =
+                            -- has expired
+                            (p.epoch_validity.end < currentEpoch)
+                                -- or was enacted (1 epoch after marked ratified by Koios)
+                                || (Maybe.withDefault False <| Maybe.map (\ratifiedEpoch -> currentEpoch > ratifiedEpoch) p.ratified)
+
                         proposalsList =
                             List.map (\p -> ( Gov.actionIdToString p.id, p )) activeProposals
                                 -- deduplicate proposals
                                 |> Dict.fromList
                                 |> Dict.toList
-                                -- only keep those that aren’t expired when we receive them
-                                |> List.filter (\( _, p ) -> p.epoch_validity.end >= currentEpoch)
+                                -- only keep if not dropped (enacted or expired)
+                                |> List.filter (\( _, p ) -> not <| isDropped p)
 
                         completeReadProposalMetadataTask : ActiveProposal -> ConcurrentTask x TaskCompleted
                         completeReadProposalMetadataTask { id, metadataHash, metadataUrl } =
