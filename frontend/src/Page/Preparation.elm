@@ -1,4 +1,4 @@
-module Page.Preparation exposing (InternalVote, JsonLdContexts, LoadedWallet, Model, Msg, MsgToParent(..), Rationale, Reference, ReferenceType(..), TaskCompleted, UpdateContext, ViewContext, handleTaskCompleted, init, noInternalVote, pinPdfFile, pinRationaleFile, setLastVoter, update, view)
+module Page.Preparation exposing (InternalVote, JsonLdContexts, LoadedWallet, Model, Msg, MsgToParent(..), Rationale, Reference, ReferenceType(..), StorageConfig, TaskCompleted, UpdateContext, ViewContext, encodeStorageConfig, handleTaskCompleted, init, noInternalVote, pinPdfFile, pinRationaleFile, setLastStorageConfig, setLastVoter, storageConfigDecoder, update, view)
 
 {-| This module handles the complete vote preparation workflow, from identifying
 the voter to signing the transaction, which is handled by another page.
@@ -349,6 +349,91 @@ type StorageConfig
     | UseCustomIpfs { label : String, description : String, ipfsServer : String, headers : List ( String, String ) }
 
 
+encodeStorageConfig : StorageConfig -> JE.Value
+encodeStorageConfig config =
+    case config of
+        UsePreconfigIpfs { label, description } ->
+            JE.object
+                [ ( "storageType", JE.string "UsePreconfigIpfs" )
+                , ( "label", JE.string label )
+                , ( "description", JE.string description )
+                ]
+
+        UseBlockfrostIpfs { label, description, projectId } ->
+            JE.object
+                [ ( "storageType", JE.string "UseBlockfrostIpfs" )
+                , ( "label", JE.string label )
+                , ( "description", JE.string description )
+                , ( "projectId", JE.string projectId )
+                ]
+
+        UseNmkrIpfs { label, description, userId, apiToken } ->
+            JE.object
+                [ ( "storageType", JE.string "UseNmkrIpfs" )
+                , ( "label", JE.string label )
+                , ( "description", JE.string description )
+                , ( "userId", JE.string userId )
+                , ( "apiToken", JE.string apiToken )
+                ]
+
+        UseCustomIpfs { label, description, ipfsServer, headers } ->
+            JE.object
+                [ ( "storageType", JE.string "UseCustomIpfs" )
+                , ( "label", JE.string label )
+                , ( "description", JE.string description )
+                , ( "ipfsServer", JE.string ipfsServer )
+                , ( "headers", JE.list encodeHttpHeader headers )
+                ]
+
+
+encodeHttpHeader : ( String, String ) -> JE.Value
+encodeHttpHeader ( name, value ) =
+    JE.object [ ( "name", JE.string name ), ( "value", JE.string value ) ]
+
+
+httpHeaderDecoder : JD.Decoder ( String, String )
+httpHeaderDecoder =
+    JD.map2 Tuple.pair
+        (JD.field "name" JD.string)
+        (JD.field "value" JD.string)
+
+
+storageConfigDecoder : JD.Decoder StorageConfig
+storageConfigDecoder =
+    JD.field "storageType" JD.string
+        |> JD.andThen
+            (\storageType ->
+                case storageType of
+                    "UsePreconfigIpfs" ->
+                        JD.map2 (\label description -> UsePreconfigIpfs { label = label, description = description })
+                            (JD.field "label" JD.string)
+                            (JD.field "description" JD.string)
+
+                    "UseBlockfrostIpfs" ->
+                        JD.map3 (\label description projectId -> UseBlockfrostIpfs { label = label, description = description, projectId = projectId })
+                            (JD.field "label" JD.string)
+                            (JD.field "description" JD.string)
+                            (JD.field "projectId" JD.string)
+
+                    "UseNmkrIpfs" ->
+                        JD.map4 (\label description userId apiToken -> UseNmkrIpfs { label = label, description = description, userId = userId, apiToken = apiToken })
+                            (JD.field "label" JD.string)
+                            (JD.field "description" JD.string)
+                            (JD.field "userId" JD.string)
+                            (JD.field "apiToken" JD.string)
+
+                    "UseCustomIpfs" ->
+                        JD.map4 (\label description ipfsServer headers -> UseCustomIpfs { label = label, description = description, ipfsServer = ipfsServer, headers = headers })
+                            (JD.field "label" JD.string)
+                            (JD.field "description" JD.string)
+                            (JD.field "ipfsServer" JD.string)
+                            (JD.field "headers" (JD.list httpHeaderDecoder))
+
+                    _ ->
+                        JD.fail "Unknown storage type"
+            )
+
+
 type alias Storage =
     { jsonFile : IpfsFile
     }
@@ -405,6 +490,7 @@ type MsgToParent
     | CacheCcInfo CcInfo
     | CachePoolInfo PoolInfo
     | CacheVoterGovId Gov.Id
+    | CacheStorageConfig StorageConfig
     | RunTask (ConcurrentTask String TaskCompleted)
     | BatchToParent MsgToParent MsgToParent
 
@@ -757,7 +843,7 @@ innerUpdate ctx msg model =
                             -- and return a "Validating" step instead of a "Done" step.
                             ( { model | storageConfigStep = Done { form | error = Nothing } storageConfig }
                             , Cmd.none
-                            , Nothing
+                            , Just <| CacheStorageConfig storageConfig
                             )
 
                         Err error ->
@@ -1651,6 +1737,40 @@ utxoRefFromStr str =
 
 
 -- Storage Configuration Step
+
+
+setLastStorageConfig : StorageConfig -> Model -> ( Model, Msg )
+setLastStorageConfig storageConfig (Model innerModel) =
+    let
+        form =
+            case storageConfig of
+                UsePreconfigIpfs labelAndDescription ->
+                    initStorageForm labelAndDescription
+
+                UseBlockfrostIpfs { label, description, projectId } ->
+                    let
+                        empty =
+                            initStorageForm { label = label, description = description }
+                    in
+                    { empty | blockfrostProjectId = projectId }
+
+                UseNmkrIpfs { label, description, userId, apiToken } ->
+                    let
+                        empty =
+                            initStorageForm { label = label, description = description }
+                    in
+                    { empty | nmkrUserId = userId, nmkrApiToken = apiToken }
+
+                UseCustomIpfs { label, description, ipfsServer, headers } ->
+                    let
+                        empty =
+                            initStorageForm { label = label, description = description }
+                    in
+                    { empty | ipfsServer = ipfsServer, headers = headers }
+    in
+    ( Model { innerModel | storageConfigStep = Preparing form }
+    , ValidateStorageConfigButtonClicked
+    )
 
 
 updateStorageConfigForm : (StorageForm -> StorageForm) -> InnerModel -> InnerModel
