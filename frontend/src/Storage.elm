@@ -1,4 +1,4 @@
-module Storage exposing (cacheWrap)
+module Storage exposing (cacheWrap, read, write)
 
 {-| Helper module to store and retrieve data from an in-browser database.
 -}

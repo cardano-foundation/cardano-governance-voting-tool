@@ -1,4 +1,4 @@
-module Page.Preparation exposing (InternalVote, JsonLdContexts, LoadedWallet, Model, Msg, MsgToParent(..), Rationale, Reference, ReferenceType(..), TaskCompleted, UpdateContext, ViewContext, handleTaskCompleted, init, noInternalVote, pinPdfFile, pinRationaleFile, update, view)
+module Page.Preparation exposing (InternalVote, JsonLdContexts, LoadedWallet, Model, Msg, MsgToParent(..), Rationale, Reference, ReferenceType(..), TaskCompleted, UpdateContext, ViewContext, handleTaskCompleted, init, noInternalVote, pinPdfFile, pinRationaleFile, setLastVoter, update, view)
 
 {-| This module handles the complete vote preparation workflow, from identifying
 the voter to signing the transaction, which is handled by another page.
@@ -404,7 +404,9 @@ type MsgToParent
     | CacheDrepInfo DrepInfo
     | CacheCcInfo CcInfo
     | CachePoolInfo PoolInfo
+    | CacheVoterGovId Gov.Id
     | RunTask (ConcurrentTask String TaskCompleted)
+    | BatchToParent MsgToParent MsgToParent
 
 
 {-| Results from asynchronous tasks:
@@ -561,11 +563,12 @@ innerUpdate ctx msg model =
             case model.voterStep of
                 Preparing form ->
                     let
-                        ( newVoterStep, cmds, toParent ) =
+                        ( newVoterStep, toParent ) =
                             confirmVoter ctx form model.someRefUtxos
+                                |> saveValidVoter
                     in
                     ( { model | voterStep = newVoterStep }
-                    , Cmd.map ctx.wrapMsg cmds
+                    , Cmd.none
                     , toParent
                     )
 
@@ -1248,6 +1251,13 @@ handleTaskCompleted task (Model model) =
 -- Voter Step
 
 
+setLastVoter : Maybe Gov.Id -> Msg
+setLastVoter maybeGovId =
+    Maybe.map Gov.idToBech32 maybeGovId
+        |> Maybe.withDefault ""
+        |> VoterGovIdChange
+
+
 updateVoterForm : (VoterPreparationForm -> VoterPreparationForm) -> InnerModel -> InnerModel
 updateVoterForm f ({ voterStep } as model) =
     case voterStep of
@@ -1443,12 +1453,29 @@ checkGovId ctx str =
                         }
 
 
-confirmVoter : UpdateContext msg -> VoterPreparationForm -> Utxo.RefDict Output -> ( Step VoterPreparationForm Witness.Voter Witness.Voter, Cmd Msg, Maybe MsgToParent )
+saveValidVoter : ( Step VoterPreparationForm Witness.Voter Witness.Voter, Maybe MsgToParent ) -> ( Step VoterPreparationForm Witness.Voter Witness.Voter, Maybe MsgToParent )
+saveValidVoter ( step, msgToParent ) =
+    case step of
+        Done form _ ->
+            case ( form.govId, msgToParent ) of
+                ( Just govId, Nothing ) ->
+                    ( step, Just <| CacheVoterGovId govId )
+
+                ( Just govId, Just msg ) ->
+                    ( step, Just <| BatchToParent msg <| CacheVoterGovId govId )
+
+                ( Nothing, _ ) ->
+                    ( step, msgToParent )
+
+        _ ->
+            ( step, msgToParent )
+
+
+confirmVoter : UpdateContext msg -> VoterPreparationForm -> Utxo.RefDict Output -> ( Step VoterPreparationForm Witness.Voter Witness.Voter, Maybe MsgToParent )
 confirmVoter ctx form loadedRefUtxos =
     let
         justError errorMsg =
             ( Preparing { form | error = Just errorMsg }
-            , Cmd.none
             , Nothing
             )
     in
@@ -1464,19 +1491,16 @@ confirmVoter ctx form loadedRefUtxos =
 
         Just (PoolId poolId) ->
             ( Done form <| Witness.WithPoolCred poolId
-            , Cmd.none
             , Nothing
             )
 
         Just (DrepId (VKeyHash keyHash)) ->
             ( Done form <| Witness.WithDrepCred (Witness.WithKey keyHash)
-            , Cmd.none
             , Nothing
             )
 
         Just (CcHotCredId (VKeyHash keyHash)) ->
             ( Done form <| Witness.WithCommitteeHotCred (Witness.WithKey keyHash)
-            , Cmd.none
             , Nothing
             )
 
@@ -1509,12 +1533,11 @@ confirmVoter ctx form loadedRefUtxos =
                     validateScriptVoter ctx form loadedRefUtxos Witness.WithCommitteeHotCred scriptInfo
 
 
-validateScriptVoter : UpdateContext msg -> VoterPreparationForm -> Utxo.RefDict Output -> (Witness.Credential -> Witness.Voter) -> ScriptInfo -> ( Step VoterPreparationForm Witness.Voter Witness.Voter, Cmd Msg, Maybe MsgToParent )
+validateScriptVoter : UpdateContext msg -> VoterPreparationForm -> Utxo.RefDict Output -> (Witness.Credential -> Witness.Voter) -> ScriptInfo -> ( Step VoterPreparationForm Witness.Voter Witness.Voter, Maybe MsgToParent )
 validateScriptVoter ctx form loadedRefUtxos toVoter scriptInfo =
     let
         justError errorMsg =
             ( Preparing { form | error = Just errorMsg }
-            , Cmd.none
             , Nothing
             )
     in
@@ -1532,7 +1555,6 @@ validateScriptVoter ctx form loadedRefUtxos toVoter scriptInfo =
                                 }
                         in
                         ( Done { form | error = Nothing } <| toVoter <| Witness.WithScript scriptInfo.scriptHash <| Witness.Native witness
-                        , Cmd.none
                         , Nothing
                         )
 
@@ -1549,7 +1571,6 @@ validateScriptVoter ctx form loadedRefUtxos toVoter scriptInfo =
                             }
                     in
                     ( Done { form | error = Nothing } <| toVoter <| Witness.WithScript scriptInfo.scriptHash <| Witness.Plutus witness
-                    , Cmd.none
                     , Nothing
                     )
 
@@ -1571,13 +1592,11 @@ validateScriptVoter ctx form loadedRefUtxos toVoter scriptInfo =
                     in
                     if Dict.Any.member outputRef loadedRefUtxos then
                         ( Done { form | error = Nothing } voter
-                        , Cmd.none
                         , Nothing
                         )
 
                     else
                         ( Validating form voter
-                        , Cmd.none
                         , Api.defaultApiProvider.retrieveTx ctx.networkId outputRef.transactionId
                             |> Storage.cacheWrap
                                 { db = ctx.db, storeName = "tx" }
@@ -1592,7 +1611,7 @@ validateScriptVoter ctx form loadedRefUtxos toVoter scriptInfo =
                         )
 
                 Script.Plutus _ ->
-                    Debug.todo "Handle Plutus script case"
+                    justError "This Plutus script cannot be supported automatically. Please open an issue on GitHub describing how your Plutus script works."
 
 
 keepOnlyExpectedSigners : Dict String { expected : Bool, key : Bytes CredentialHash } -> List (Bytes CredentialHash)

@@ -57,8 +57,8 @@
 
         // Initialize the main Elm app
         const db = await Storage.init({
-            version: 2,
-            storeNames: ["proposalMetadata", "tx", "scriptInfo"],
+            version: 3,
+            storeNames: ["proposalMetadata", "tx", "scriptInfo", "app"],
         });
         var mainApp = Elm.Main.init({
             node: document.getElementById("main-app"),
