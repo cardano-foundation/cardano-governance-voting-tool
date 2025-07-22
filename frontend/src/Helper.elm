@@ -13,7 +13,7 @@ module Helper exposing
     , proposalListContainer, showMoreButton, proposalCard, selectedProposalCard, proposalDetailsItem
     , storageConfigCard, storageMethodOption, storageProviderForm, storageProviderCard, storageConfigItem, addHeaderButton, storageHeaderInput
     , storageHeaderForm, storageInfoGrid, storageNotAvailableCard, storageUploadCard, uploadingSpinner, storageSuccessCard, fileInfoItem, externalLinkDisplay
-    , rationaleCard, rationaleMarkdownInput, rationaleTextArea, pdfAutogenCheckbox, voteNumberInput, referenceCard, referenceForm
+    , rationaleCard, checkbox, rationaleMarkdownInput, rationaleTextArea, pdfAutogenCheckbox, voteNumberInput, referenceCard, referenceForm
     , rationaleCompletedCard, optionalSection, formattedInternalVote, formattedReferences
     , stepNotAvailableCard, downloadJSONButton, authorsCard, addAuthorButton, codeSnippetBox, noAuthorsPlaceholder
     , signerCard, authorForm, labeledField, readOnlyField, signatureField, formButtonsRow, secondaryButton, primaryButton, loadSignatureButton
@@ -89,7 +89,7 @@ and are potentially useful in multiple places.
 
 # Rationale Components
 
-@docs rationaleCard, rationaleMarkdownInput, rationaleTextArea, pdfAutogenCheckbox, voteNumberInput, referenceCard, referenceForm
+@docs rationaleCard, checkbox, rationaleMarkdownInput, rationaleTextArea, pdfAutogenCheckbox, voteNumberInput, referenceCard, referenceForm
 @docs rationaleCompletedCard, optionalSection, formattedInternalVote, formattedReferences
 
 
@@ -1152,16 +1152,23 @@ scriptSignerSection additionalBytesPerSig feePerByte content =
 -}
 scriptSignerCheckbox : String -> Bool -> (Bool -> msg) -> Html msg
 scriptSignerCheckbox keyHex isChecked onCheckMsg =
+    checkbox { id = keyHex, label = " key hash: " ++ keyHex } isChecked onCheckMsg
+
+
+{-| Generic checkbox
+-}
+checkbox : { id : String, label : String } -> Bool -> (Bool -> msg) -> Html msg
+checkbox { id, label } isChecked onCheckMsg =
     Html.p []
         [ Html.input
             [ HA.type_ "checkbox"
-            , HA.id keyHex
-            , HA.name keyHex
+            , HA.id id
+            , HA.name id
             , HA.checked isChecked
             , onCheck onCheckMsg
             ]
             []
-        , Html.label [ HA.for keyHex ] [ text <| " key hash: " ++ keyHex ]
+        , Html.label [ HA.for id ] [ text <| label ]
         ]
 
 

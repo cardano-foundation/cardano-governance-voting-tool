@@ -166,6 +166,7 @@ type alias RationaleForm =
     { summary : String
     , pdfAutogen : Bool
     , rationaleStatement : MarkdownForm
+    , optionalFieldsAreVisible : Bool
     , precedentDiscussion : MarkdownForm
     , counterArgumentDiscussion : MarkdownForm
     , conclusion : MarkdownForm
@@ -203,6 +204,7 @@ initRationaleForm =
     { summary = ""
     , pdfAutogen = True
     , rationaleStatement = ""
+    , optionalFieldsAreVisible = False
     , precedentDiscussion = ""
     , counterArgumentDiscussion = ""
     , conclusion = ""
@@ -536,6 +538,7 @@ type Msg
     | RationaleSummaryChange String
     | TogglePdfAutogen Bool
     | RationaleStatementChange String
+    | ToggleOptionalFieldsVisibility Bool
     | PrecedentDiscussionChange String
     | CounterArgumentChange String
     | ConclusionChange String
@@ -880,6 +883,12 @@ innerUpdate ctx msg model =
 
         RationaleStatementChange statement ->
             ( updateRationaleForm (\form -> { form | rationaleStatement = statement }) model
+            , Cmd.none
+            , Nothing
+            )
+
+        ToggleOptionalFieldsVisibility checked ->
+            ( updateRationaleForm (\form -> { form | optionalFieldsAreVisible = checked }) model
             , Cmd.none
             , Nothing
             )
@@ -3617,24 +3626,34 @@ viewRationaleForm form =
                 "Fully describe your rationale, with your arguments in full details. Use markdown with heading level 2 (##) or higher."
                 (viewStatementInput form.pdfAutogen form.rationaleStatement)
             , Helper.rationaleCard
-                "Precedent Discussion"
-                "Optional: Discuss what you feel is relevant precedent."
-                (Helper.rationaleMarkdownInput form.precedentDiscussion PrecedentDiscussionChange)
-            , Helper.rationaleCard
-                "Counter Argument Discussion"
-                "Optional: Discuss significant counter arguments to your position."
-                (Helper.rationaleMarkdownInput form.counterArgumentDiscussion CounterArgumentChange)
-            , Helper.rationaleCard
-                "Conclusion"
-                "Optional: Final thoughts on your position."
-                (Helper.rationaleTextArea ConclusionChange Nothing form.conclusion)
-            , Helper.rationaleCard
-                "Internal Vote"
-                "If you vote as a group, you can report the group internal votes."
-                (viewInternalVoteInput form.internalVote)
-            , Helper.referenceCard
-                (List.indexedMap viewOneRefForm form.references)
-                AddRefButtonClicked
+                "Optional Fields"
+                ""
+                (Helper.checkbox { id = "optional-fields", label = " Show optional fields" } form.optionalFieldsAreVisible ToggleOptionalFieldsVisibility)
+            , if form.optionalFieldsAreVisible then
+                div []
+                    [ Helper.rationaleCard
+                        "Precedent Discussion"
+                        "Optional: Discuss what you feel is relevant precedent."
+                        (Helper.rationaleMarkdownInput form.precedentDiscussion PrecedentDiscussionChange)
+                    , Helper.rationaleCard
+                        "Counter Argument Discussion"
+                        "Optional: Discuss significant counter arguments to your position."
+                        (Helper.rationaleMarkdownInput form.counterArgumentDiscussion CounterArgumentChange)
+                    , Helper.rationaleCard
+                        "Conclusion"
+                        "Optional: Final thoughts on your position."
+                        (Helper.rationaleTextArea ConclusionChange Nothing form.conclusion)
+                    , Helper.rationaleCard
+                        "Internal Vote"
+                        "If you vote as a group, you can report the group internal votes."
+                        (viewInternalVoteInput form.internalVote)
+                    , Helper.referenceCard
+                        (List.indexedMap viewOneRefForm form.references)
+                        AddRefButtonClicked
+                    ]
+
+              else
+                text ""
             ]
         , Html.p [ HA.class "mt-6" ] [ Helper.viewButton "Confirm rationale" ValidateRationaleButtonClicked ]
         , viewError form.error
