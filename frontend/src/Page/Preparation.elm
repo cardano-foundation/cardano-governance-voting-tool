@@ -119,7 +119,7 @@ init ipfsPreconfig =
         { someRefUtxos = Utxo.emptyRefDict
         , voterStep = Preparing initVoterForm
         , pickProposalStep = Preparing {}
-        , storageConfigStep = Preparing (initStorageForm ipfsPreconfig)
+        , storageConfigStep = Done (initStorageForm ipfsPreconfig) (UsePreconfigIpfs ipfsPreconfig)
         , rationaleCreationStep = Preparing initRationaleForm
         , rationaleSignatureStep = Preparing initRationaleSignatureForm
         , permanentStorageStep = Preparing { error = Nothing }
