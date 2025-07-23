@@ -57,6 +57,7 @@ import Cardano.Gov as Gov
 import Cardano.Transaction as Transaction exposing (Transaction)
 import Cardano.TxIntent
 import Cardano.Utxo as Utxo exposing (Output, TransactionId)
+import Cmd.Extra
 import ConcurrentTask exposing (ConcurrentTask)
 import ConcurrentTask.Extra
 import Dict exposing (Dict)
@@ -68,10 +69,11 @@ import Html.Attributes as HA
 import Html.Events exposing (preventDefaultOn)
 import Http
 import Json.Decode as JD exposing (Decoder, Value)
+import Json.Encode as JE
 import Page.Disclaimer
 import Page.MultisigRegistration
 import Page.Pdf
-import Page.Preparation exposing (JsonLdContexts)
+import Page.Preparation exposing (JsonLdContexts, StorageConfig)
 import Page.Signing
 import Platform.Cmd as Cmd
 import ProposalMetadata exposing (ProposalMetadata)
@@ -194,7 +196,10 @@ type Page
 
 
 type TaskCompleted
-    = GotProposalMetadataTask String (Result String ProposalMetadata)
+    = Ignore
+    | GotLastVoter (Maybe Gov.Id)
+    | GotLastStorageConfig Page.Preparation.StorageConfig
+    | GotProposalMetadataTask String (Result String ProposalMetadata)
     | PreparationTaskCompleted Page.Preparation.TaskCompleted
 
 
@@ -761,6 +766,23 @@ handleUrlChange route model =
                         , page = PreparationPage <| Page.Preparation.init model.ipfsPreconfig
                         , appUrl = appUrl
                     }
+
+                reloadLatestVoterTask : ConcurrentTask String (Maybe Gov.Id)
+                reloadLatestVoterTask =
+                    Storage.read { db = model.db, storeName = "app" } govIdDecoder { key = "lastVoter" }
+
+                govIdDecoder =
+                    JD.string |> JD.map Gov.idFromBech32
+
+                reloadLatestStorageConfigTask : ConcurrentTask String StorageConfig
+                reloadLatestStorageConfigTask =
+                    Storage.read { db = model.db, storeName = "app" } Page.Preparation.storageConfigDecoder { key = "lastStorageConfig" }
+
+                ( newTaskPool, taskCmds ) =
+                    ConcurrentTask.Extra.attemptEach { pool = model.taskPool, send = sendTask, onComplete = OnTaskComplete }
+                        [ ConcurrentTask.map GotLastVoter reloadLatestVoterTask
+                        , ConcurrentTask.map GotLastStorageConfig reloadLatestStorageConfigTask
+                        ]
             in
             if networkId /= model.networkId then
                 initHelper route
@@ -772,14 +794,20 @@ handleUrlChange route model =
                     }
 
             else if RemoteData.isSuccess model.proposals then
-                ( newModel, pushUrlCmd )
+                ( { newModel | taskPool = newTaskPool }
+                , Cmd.batch (pushUrlCmd :: taskCmds)
+                )
 
             else
-                ( { newModel | proposals = RemoteData.Loading }
+                ( { newModel
+                    | proposals = RemoteData.Loading
+                    , taskPool = newTaskPool
+                  }
                 , Cmd.batch
-                    [ pushUrlCmd
-                    , Api.defaultApiProvider.queryEpoch model.networkId GotEpoch
-                    ]
+                    (pushUrlCmd
+                        :: Api.defaultApiProvider.queryEpoch model.networkId GotEpoch
+                        :: taskCmds
+                    )
                 )
 
         RouteSigning { networkId, expectedSigners, tx } ->
@@ -974,10 +1002,38 @@ updateModelWithPrepToParentMsg msgToParent model =
             , Cmd.none
             )
 
+        Just (Page.Preparation.CacheVoterGovId voterGovId) ->
+            let
+                encodeGovId id =
+                    JE.string <| Gov.idToBech32 id
+
+                writeGovIdToDb =
+                    Storage.write { db = model.db, storeName = "app" } encodeGovId { key = "lastVoter" } voterGovId
+                        |> ConcurrentTask.map (always Ignore)
+            in
+            ConcurrentTask.attempt { pool = model.taskPool, send = sendTask, onComplete = OnTaskComplete } writeGovIdToDb
+                |> Tuple.mapFirst (\newTaskPool -> { model | taskPool = newTaskPool })
+
+        Just (Page.Preparation.CacheStorageConfig storageConfig) ->
+            let
+                writeStorageConfigToDb =
+                    Storage.write { db = model.db, storeName = "app" } Page.Preparation.encodeStorageConfig { key = "lastStorageConfig" } storageConfig
+                        |> ConcurrentTask.map (always Ignore)
+            in
+            ConcurrentTask.attempt { pool = model.taskPool, send = sendTask, onComplete = OnTaskComplete } writeStorageConfigToDb
+                |> Tuple.mapFirst (\newTaskPool -> { model | taskPool = newTaskPool })
+
         Just (Page.Preparation.RunTask task) ->
             ConcurrentTask.attempt { pool = model.taskPool, send = sendTask, onComplete = OnTaskComplete }
                 (ConcurrentTask.map PreparationTaskCompleted task)
                 |> Tuple.mapFirst (\newTaskPool -> { model | taskPool = newTaskPool })
+
+        Just (Page.Preparation.BatchToParent msg1 msg2) ->
+            updateModelWithPrepToParentMsg (Just msg1) model
+                |> (\( newModel, cmd1 ) ->
+                        updateModelWithPrepToParentMsg (Just msg2) newModel
+                            |> Tuple.mapSecond (\cmd2 -> Cmd.batch [ cmd1, cmd2 ])
+                   )
 
 
 {-| Helper function to reset the signing step of the Preparation.
@@ -1000,6 +1056,26 @@ handleCompletedTask response model =
 
         ( ConcurrentTask.UnexpectedError error, _ ) ->
             ( { model | errors = Debug.toString error :: model.errors }, Cmd.none )
+
+        ( ConcurrentTask.Success Ignore, _ ) ->
+            ( model, Cmd.none )
+
+        ( ConcurrentTask.Success (GotLastVoter maybeGovId), _ ) ->
+            ( model
+            , Cmd.Extra.perform <| PreparationPageMsg <| Page.Preparation.setLastVoter maybeGovId
+            )
+
+        ( ConcurrentTask.Success (GotLastStorageConfig storageConfig), PreparationPage pageModel ) ->
+            let
+                ( newPageModel, pageMsg ) =
+                    Page.Preparation.setLastStorageConfig storageConfig pageModel
+            in
+            ( { model | page = PreparationPage newPageModel }
+            , Cmd.Extra.perform <| PreparationPageMsg pageMsg
+            )
+
+        ( ConcurrentTask.Success (GotLastStorageConfig _), _ ) ->
+            ( model, Cmd.none )
 
         ( ConcurrentTask.Success (GotProposalMetadataTask id result), _ ) ->
             let

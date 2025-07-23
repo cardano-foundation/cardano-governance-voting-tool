@@ -1,4 +1,4 @@
-module Page.Preparation exposing (InternalVote, JsonLdContexts, LoadedWallet, Model, Msg, MsgToParent(..), Rationale, Reference, ReferenceType(..), TaskCompleted, UpdateContext, ViewContext, handleTaskCompleted, init, noInternalVote, pinPdfFile, pinRationaleFile, update, view)
+module Page.Preparation exposing (InternalVote, JsonLdContexts, LoadedWallet, Model, Msg, MsgToParent(..), Rationale, Reference, ReferenceType(..), StorageConfig, TaskCompleted, UpdateContext, ViewContext, encodeStorageConfig, handleTaskCompleted, init, noInternalVote, pinPdfFile, pinRationaleFile, setLastStorageConfig, setLastVoter, storageConfigDecoder, update, view)
 
 {-| This module handles the complete vote preparation workflow, from identifying
 the voter to signing the transaction, which is handled by another page.
@@ -119,7 +119,7 @@ init ipfsPreconfig =
         { someRefUtxos = Utxo.emptyRefDict
         , voterStep = Preparing initVoterForm
         , pickProposalStep = Preparing {}
-        , storageConfigStep = Preparing (initStorageForm ipfsPreconfig)
+        , storageConfigStep = Done (initStorageForm ipfsPreconfig) (UsePreconfigIpfs ipfsPreconfig)
         , rationaleCreationStep = Preparing initRationaleForm
         , rationaleSignatureStep = Preparing initRationaleSignatureForm
         , permanentStorageStep = Preparing { error = Nothing }
@@ -166,6 +166,7 @@ type alias RationaleForm =
     { summary : String
     , pdfAutogen : Bool
     , rationaleStatement : MarkdownForm
+    , optionalFieldsAreVisible : Bool
     , precedentDiscussion : MarkdownForm
     , counterArgumentDiscussion : MarkdownForm
     , conclusion : MarkdownForm
@@ -203,6 +204,7 @@ initRationaleForm =
     { summary = ""
     , pdfAutogen = True
     , rationaleStatement = ""
+    , optionalFieldsAreVisible = False
     , precedentDiscussion = ""
     , counterArgumentDiscussion = ""
     , conclusion = ""
@@ -349,6 +351,91 @@ type StorageConfig
     | UseCustomIpfs { label : String, description : String, ipfsServer : String, headers : List ( String, String ) }
 
 
+encodeStorageConfig : StorageConfig -> JE.Value
+encodeStorageConfig config =
+    case config of
+        UsePreconfigIpfs { label, description } ->
+            JE.object
+                [ ( "storageType", JE.string "UsePreconfigIpfs" )
+                , ( "label", JE.string label )
+                , ( "description", JE.string description )
+                ]
+
+        UseBlockfrostIpfs { label, description, projectId } ->
+            JE.object
+                [ ( "storageType", JE.string "UseBlockfrostIpfs" )
+                , ( "label", JE.string label )
+                , ( "description", JE.string description )
+                , ( "projectId", JE.string projectId )
+                ]
+
+        UseNmkrIpfs { label, description, userId, apiToken } ->
+            JE.object
+                [ ( "storageType", JE.string "UseNmkrIpfs" )
+                , ( "label", JE.string label )
+                , ( "description", JE.string description )
+                , ( "userId", JE.string userId )
+                , ( "apiToken", JE.string apiToken )
+                ]
+
+        UseCustomIpfs { label, description, ipfsServer, headers } ->
+            JE.object
+                [ ( "storageType", JE.string "UseCustomIpfs" )
+                , ( "label", JE.string label )
+                , ( "description", JE.string description )
+                , ( "ipfsServer", JE.string ipfsServer )
+                , ( "headers", JE.list encodeHttpHeader headers )
+                ]
+
+
+encodeHttpHeader : ( String, String ) -> JE.Value
+encodeHttpHeader ( name, value ) =
+    JE.object [ ( "name", JE.string name ), ( "value", JE.string value ) ]
+
+
+httpHeaderDecoder : JD.Decoder ( String, String )
+httpHeaderDecoder =
+    JD.map2 Tuple.pair
+        (JD.field "name" JD.string)
+        (JD.field "value" JD.string)
+
+
+storageConfigDecoder : JD.Decoder StorageConfig
+storageConfigDecoder =
+    JD.field "storageType" JD.string
+        |> JD.andThen
+            (\storageType ->
+                case storageType of
+                    "UsePreconfigIpfs" ->
+                        JD.map2 (\label description -> UsePreconfigIpfs { label = label, description = description })
+                            (JD.field "label" JD.string)
+                            (JD.field "description" JD.string)
+
+                    "UseBlockfrostIpfs" ->
+                        JD.map3 (\label description projectId -> UseBlockfrostIpfs { label = label, description = description, projectId = projectId })
+                            (JD.field "label" JD.string)
+                            (JD.field "description" JD.string)
+                            (JD.field "projectId" JD.string)
+
+                    "UseNmkrIpfs" ->
+                        JD.map4 (\label description userId apiToken -> UseNmkrIpfs { label = label, description = description, userId = userId, apiToken = apiToken })
+                            (JD.field "label" JD.string)
+                            (JD.field "description" JD.string)
+                            (JD.field "userId" JD.string)
+                            (JD.field "apiToken" JD.string)
+
+                    "UseCustomIpfs" ->
+                        JD.map4 (\label description ipfsServer headers -> UseCustomIpfs { label = label, description = description, ipfsServer = ipfsServer, headers = headers })
+                            (JD.field "label" JD.string)
+                            (JD.field "description" JD.string)
+                            (JD.field "ipfsServer" JD.string)
+                            (JD.field "headers" (JD.list httpHeaderDecoder))
+
+                    _ ->
+                        JD.fail "Unknown storage type"
+            )
+
+
 type alias Storage =
     { jsonFile : IpfsFile
     }
@@ -404,7 +491,10 @@ type MsgToParent
     | CacheDrepInfo DrepInfo
     | CacheCcInfo CcInfo
     | CachePoolInfo PoolInfo
+    | CacheVoterGovId Gov.Id
+    | CacheStorageConfig StorageConfig
     | RunTask (ConcurrentTask String TaskCompleted)
+    | BatchToParent MsgToParent MsgToParent
 
 
 {-| Results from asynchronous tasks:
@@ -448,6 +538,7 @@ type Msg
     | RationaleSummaryChange String
     | TogglePdfAutogen Bool
     | RationaleStatementChange String
+    | ToggleOptionalFieldsVisibility Bool
     | PrecedentDiscussionChange String
     | CounterArgumentChange String
     | ConclusionChange String
@@ -561,11 +652,12 @@ innerUpdate ctx msg model =
             case model.voterStep of
                 Preparing form ->
                     let
-                        ( newVoterStep, cmds, toParent ) =
+                        ( newVoterStep, toParent ) =
                             confirmVoter ctx form model.someRefUtxos
+                                |> saveValidVoter
                     in
                     ( { model | voterStep = newVoterStep }
-                    , Cmd.map ctx.wrapMsg cmds
+                    , Cmd.none
                     , toParent
                     )
 
@@ -754,7 +846,7 @@ innerUpdate ctx msg model =
                             -- and return a "Validating" step instead of a "Done" step.
                             ( { model | storageConfigStep = Done { form | error = Nothing } storageConfig }
                             , Cmd.none
-                            , Nothing
+                            , Just <| CacheStorageConfig storageConfig
                             )
 
                         Err error ->
@@ -791,6 +883,12 @@ innerUpdate ctx msg model =
 
         RationaleStatementChange statement ->
             ( updateRationaleForm (\form -> { form | rationaleStatement = statement }) model
+            , Cmd.none
+            , Nothing
+            )
+
+        ToggleOptionalFieldsVisibility checked ->
+            ( updateRationaleForm (\form -> { form | optionalFieldsAreVisible = checked }) model
             , Cmd.none
             , Nothing
             )
@@ -1248,6 +1346,13 @@ handleTaskCompleted task (Model model) =
 -- Voter Step
 
 
+setLastVoter : Maybe Gov.Id -> Msg
+setLastVoter maybeGovId =
+    Maybe.map Gov.idToBech32 maybeGovId
+        |> Maybe.withDefault ""
+        |> VoterGovIdChange
+
+
 updateVoterForm : (VoterPreparationForm -> VoterPreparationForm) -> InnerModel -> InnerModel
 updateVoterForm f ({ voterStep } as model) =
     case voterStep of
@@ -1443,12 +1548,29 @@ checkGovId ctx str =
                         }
 
 
-confirmVoter : UpdateContext msg -> VoterPreparationForm -> Utxo.RefDict Output -> ( Step VoterPreparationForm Witness.Voter Witness.Voter, Cmd Msg, Maybe MsgToParent )
+saveValidVoter : ( Step VoterPreparationForm Witness.Voter Witness.Voter, Maybe MsgToParent ) -> ( Step VoterPreparationForm Witness.Voter Witness.Voter, Maybe MsgToParent )
+saveValidVoter ( step, msgToParent ) =
+    case step of
+        Done form _ ->
+            case ( form.govId, msgToParent ) of
+                ( Just govId, Nothing ) ->
+                    ( step, Just <| CacheVoterGovId govId )
+
+                ( Just govId, Just msg ) ->
+                    ( step, Just <| BatchToParent msg <| CacheVoterGovId govId )
+
+                ( Nothing, _ ) ->
+                    ( step, msgToParent )
+
+        _ ->
+            ( step, msgToParent )
+
+
+confirmVoter : UpdateContext msg -> VoterPreparationForm -> Utxo.RefDict Output -> ( Step VoterPreparationForm Witness.Voter Witness.Voter, Maybe MsgToParent )
 confirmVoter ctx form loadedRefUtxos =
     let
         justError errorMsg =
             ( Preparing { form | error = Just errorMsg }
-            , Cmd.none
             , Nothing
             )
     in
@@ -1464,19 +1586,16 @@ confirmVoter ctx form loadedRefUtxos =
 
         Just (PoolId poolId) ->
             ( Done form <| Witness.WithPoolCred poolId
-            , Cmd.none
             , Nothing
             )
 
         Just (DrepId (VKeyHash keyHash)) ->
             ( Done form <| Witness.WithDrepCred (Witness.WithKey keyHash)
-            , Cmd.none
             , Nothing
             )
 
         Just (CcHotCredId (VKeyHash keyHash)) ->
             ( Done form <| Witness.WithCommitteeHotCred (Witness.WithKey keyHash)
-            , Cmd.none
             , Nothing
             )
 
@@ -1509,12 +1628,11 @@ confirmVoter ctx form loadedRefUtxos =
                     validateScriptVoter ctx form loadedRefUtxos Witness.WithCommitteeHotCred scriptInfo
 
 
-validateScriptVoter : UpdateContext msg -> VoterPreparationForm -> Utxo.RefDict Output -> (Witness.Credential -> Witness.Voter) -> ScriptInfo -> ( Step VoterPreparationForm Witness.Voter Witness.Voter, Cmd Msg, Maybe MsgToParent )
+validateScriptVoter : UpdateContext msg -> VoterPreparationForm -> Utxo.RefDict Output -> (Witness.Credential -> Witness.Voter) -> ScriptInfo -> ( Step VoterPreparationForm Witness.Voter Witness.Voter, Maybe MsgToParent )
 validateScriptVoter ctx form loadedRefUtxos toVoter scriptInfo =
     let
         justError errorMsg =
             ( Preparing { form | error = Just errorMsg }
-            , Cmd.none
             , Nothing
             )
     in
@@ -1532,7 +1650,6 @@ validateScriptVoter ctx form loadedRefUtxos toVoter scriptInfo =
                                 }
                         in
                         ( Done { form | error = Nothing } <| toVoter <| Witness.WithScript scriptInfo.scriptHash <| Witness.Native witness
-                        , Cmd.none
                         , Nothing
                         )
 
@@ -1549,7 +1666,6 @@ validateScriptVoter ctx form loadedRefUtxos toVoter scriptInfo =
                             }
                     in
                     ( Done { form | error = Nothing } <| toVoter <| Witness.WithScript scriptInfo.scriptHash <| Witness.Plutus witness
-                    , Cmd.none
                     , Nothing
                     )
 
@@ -1571,13 +1687,11 @@ validateScriptVoter ctx form loadedRefUtxos toVoter scriptInfo =
                     in
                     if Dict.Any.member outputRef loadedRefUtxos then
                         ( Done { form | error = Nothing } voter
-                        , Cmd.none
                         , Nothing
                         )
 
                     else
                         ( Validating form voter
-                        , Cmd.none
                         , Api.defaultApiProvider.retrieveTx ctx.networkId outputRef.transactionId
                             |> Storage.cacheWrap
                                 { db = ctx.db, storeName = "tx" }
@@ -1592,7 +1706,7 @@ validateScriptVoter ctx form loadedRefUtxos toVoter scriptInfo =
                         )
 
                 Script.Plutus _ ->
-                    Debug.todo "Handle Plutus script case"
+                    justError "This Plutus script cannot be supported automatically. Please open an issue on GitHub describing how your Plutus script works."
 
 
 keepOnlyExpectedSigners : Dict String { expected : Bool, key : Bytes CredentialHash } -> List (Bytes CredentialHash)
@@ -1632,6 +1746,40 @@ utxoRefFromStr str =
 
 
 -- Storage Configuration Step
+
+
+setLastStorageConfig : StorageConfig -> Model -> ( Model, Msg )
+setLastStorageConfig storageConfig (Model innerModel) =
+    let
+        form =
+            case storageConfig of
+                UsePreconfigIpfs labelAndDescription ->
+                    initStorageForm labelAndDescription
+
+                UseBlockfrostIpfs { label, description, projectId } ->
+                    let
+                        empty =
+                            initStorageForm { label = label, description = description }
+                    in
+                    { empty | blockfrostProjectId = projectId }
+
+                UseNmkrIpfs { label, description, userId, apiToken } ->
+                    let
+                        empty =
+                            initStorageForm { label = label, description = description }
+                    in
+                    { empty | nmkrUserId = userId, nmkrApiToken = apiToken }
+
+                UseCustomIpfs { label, description, ipfsServer, headers } ->
+                    let
+                        empty =
+                            initStorageForm { label = label, description = description }
+                    in
+                    { empty | ipfsServer = ipfsServer, headers = headers }
+    in
+    ( Model { innerModel | storageConfigStep = Preparing form }
+    , ValidateStorageConfigButtonClicked
+    )
 
 
 updateStorageConfigForm : (StorageForm -> StorageForm) -> InnerModel -> InnerModel
@@ -3478,24 +3626,34 @@ viewRationaleForm form =
                 "Fully describe your rationale, with your arguments in full details. Use markdown with heading level 2 (##) or higher."
                 (viewStatementInput form.pdfAutogen form.rationaleStatement)
             , Helper.rationaleCard
-                "Precedent Discussion"
-                "Optional: Discuss what you feel is relevant precedent."
-                (Helper.rationaleMarkdownInput form.precedentDiscussion PrecedentDiscussionChange)
-            , Helper.rationaleCard
-                "Counter Argument Discussion"
-                "Optional: Discuss significant counter arguments to your position."
-                (Helper.rationaleMarkdownInput form.counterArgumentDiscussion CounterArgumentChange)
-            , Helper.rationaleCard
-                "Conclusion"
-                "Optional: Final thoughts on your position."
-                (Helper.rationaleTextArea ConclusionChange Nothing form.conclusion)
-            , Helper.rationaleCard
-                "Internal Vote"
-                "If you vote as a group, you can report the group internal votes."
-                (viewInternalVoteInput form.internalVote)
-            , Helper.referenceCard
-                (List.indexedMap viewOneRefForm form.references)
-                AddRefButtonClicked
+                "Optional Fields"
+                ""
+                (Helper.checkbox { id = "optional-fields", label = " Show optional fields" } form.optionalFieldsAreVisible ToggleOptionalFieldsVisibility)
+            , if form.optionalFieldsAreVisible then
+                div []
+                    [ Helper.rationaleCard
+                        "Precedent Discussion"
+                        "Optional: Discuss what you feel is relevant precedent."
+                        (Helper.rationaleMarkdownInput form.precedentDiscussion PrecedentDiscussionChange)
+                    , Helper.rationaleCard
+                        "Counter Argument Discussion"
+                        "Optional: Discuss significant counter arguments to your position."
+                        (Helper.rationaleMarkdownInput form.counterArgumentDiscussion CounterArgumentChange)
+                    , Helper.rationaleCard
+                        "Conclusion"
+                        "Optional: Final thoughts on your position."
+                        (Helper.rationaleTextArea ConclusionChange Nothing form.conclusion)
+                    , Helper.rationaleCard
+                        "Internal Vote"
+                        "If you vote as a group, you can report the group internal votes."
+                        (viewInternalVoteInput form.internalVote)
+                    , Helper.referenceCard
+                        (List.indexedMap viewOneRefForm form.references)
+                        AddRefButtonClicked
+                    ]
+
+              else
+                text ""
             ]
         , Html.p [ HA.class "mt-6" ] [ Helper.viewButton "Confirm rationale" ValidateRationaleButtonClicked ]
         , viewError form.error
