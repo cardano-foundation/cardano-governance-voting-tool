@@ -1854,7 +1854,7 @@ validateIpfsForm form =
                     (\_ ->
                         UseCustomIpfs
                             { label = "Custom IPFS Server"
-                            , description = "Using a     server configuration to store your files. The RPC should provide the /add?pin=true endpoint with answers equivalent to those described in the official kubo IPFS RPC docs: https://docs.ipfs.tech/reference/kubo/rpc/#api-v0-add"
+                            , description = "Using a custom IPFS server configuration to store your files. The RPC should provide the /add?pin=true endpoint with answers equivalent to those described in the official kubo IPFS RPC docs: https://docs.ipfs.tech/reference/kubo/rpc/#api-v0-add"
                             , ipfsServer = form.ipfsServer
                             , headers = form.headers
                             }
