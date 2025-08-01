@@ -1810,7 +1810,7 @@ validateIpfsForm form =
                 projectId ->
                     Ok <|
                         UseBlockfrostIpfs
-                            { label = "Blockfrost IPFS"
+                            { label = "Own Blockfrost IPFS"
                             , description = "Using Blockfrost IPFS server to store your files."
                             , projectId = projectId
                             }
@@ -1823,7 +1823,7 @@ validateIpfsForm form =
                 userId ->
                     Ok <|
                         UseNmkrIpfs
-                            { label = "NMKR IPFS"
+                            { label = "Own NMKR IPFS"
                             , description = "Using NMKR IPFS server to store your files. Remark that using NMKR own gateway will be faster to access pinned files: https://c-ipfs-gw.nmkr.io/ipfs/{file-hash-here}"
                             , userId = userId
                             , apiToken = form.nmkrApiToken
@@ -3361,9 +3361,9 @@ viewStorageConfigStep ctx step =
                     , Helper.storageConfigCard "IPFS Method"
                         [ Helper.viewGrid 240
                             [ Helper.storageMethodOption ctx.ipfsPreconfig.label (form.storageMethod == PreconfigIPFS ctx.ipfsPreconfig) (StorageMethodSelected <| PreconfigIPFS ctx.ipfsPreconfig)
-                            , Helper.storageMethodOption "Blockfrost IPFS" (form.storageMethod == BlockfrostIPFS) (StorageMethodSelected BlockfrostIPFS)
-                            , Helper.storageMethodOption "NMKR IPFS" (form.storageMethod == NmkrIPFS) (StorageMethodSelected NmkrIPFS)
-                            , Helper.storageMethodOption "Custom IPFS" (form.storageMethod == CustomIPFS) (StorageMethodSelected CustomIPFS)
+                            , Helper.storageMethodOption "Own Blockfrost IPFS" (form.storageMethod == BlockfrostIPFS) (StorageMethodSelected BlockfrostIPFS)
+                            , Helper.storageMethodOption "Own NMKR IPFS" (form.storageMethod == NmkrIPFS) (StorageMethodSelected NmkrIPFS)
+                            , Helper.storageMethodOption "Custom IPFS server" (form.storageMethod == CustomIPFS) (StorageMethodSelected CustomIPFS)
                             ]
                         , case form.storageMethod of
                             BlockfrostIPFS ->
