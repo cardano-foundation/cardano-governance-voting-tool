@@ -1,4 +1,4 @@
-module Page.Preparation exposing (InternalVote, JsonLdContexts, LoadedWallet, Model, Msg, MsgToParent(..), Rationale, Reference, ReferenceType(..), StorageConfig, TaskCompleted, UpdateContext, ViewContext, encodeStorageConfig, handleTaskCompleted, init, noInternalVote, pinPdfFile, pinRationaleFile, setLastStorageConfig, setLastVoter, storageConfigDecoder, update, view)
+module Page.Preparation exposing (InternalVote, JsonLdContexts, LoadedWallet, Model, Msg, MsgToParent(..), Rationale, Reference, ReferenceType(..), StorageConfig, TaskCompleted, UpdateContext, ViewContext, encodeStorageConfig, handleTaskCompleted, init, initStorageConfig, noInternalVote, pinPdfFile, pinRationaleFile, setLastStorageConfig, setLastVoter, storageConfigDecoder, update, view)
 
 {-| This module handles the complete vote preparation workflow, from identifying
 the voter to signing the transaction, which is handled by another page.
@@ -349,6 +349,13 @@ type StorageConfig
     | UseBlockfrostIpfs { label : String, description : String, projectId : String }
     | UseNmkrIpfs { label : String, description : String, userId : String, apiToken : String }
     | UseCustomIpfs { label : String, description : String, ipfsServer : String, headers : List ( String, String ) }
+
+
+{-| Initialize the default storage config.
+-}
+initStorageConfig : { label : String, description : String } -> StorageConfig
+initStorageConfig { label, description } =
+    UsePreconfigIpfs { label = label, description = description }
 
 
 encodeStorageConfig : StorageConfig -> JE.Value
@@ -3038,12 +3045,12 @@ viewProposalList ctx proposalsDict visibleCount =
 
     else
         let
-            epochVisibility =
+            currentEpoch =
                 Maybe.withDefault 0 ctx.epoch
 
             allProposals =
                 Dict.values proposalsDict
-                    |> List.filter (\p -> p.epoch_validity.end >= epochVisibility)
+                    |> List.filter (\p -> p.epoch_validity.end > currentEpoch)
 
             totalProposalCount =
                 List.length allProposals

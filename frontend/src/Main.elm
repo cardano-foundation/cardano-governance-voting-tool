@@ -667,7 +667,7 @@ update msg model =
 
                         isDropped p =
                             -- has expired
-                            (p.epoch_validity.end < currentEpoch)
+                            (p.epoch_validity.end <= currentEpoch)
                                 -- or was enacted (1 epoch after marked ratified by Koios)
                                 || (Maybe.withDefault False <| Maybe.map (\ratifiedEpoch -> currentEpoch > ratifiedEpoch) p.ratified)
 
@@ -770,6 +770,7 @@ handleUrlChange route model =
                 reloadLatestVoterTask : ConcurrentTask String (Maybe Gov.Id)
                 reloadLatestVoterTask =
                     Storage.read { db = model.db, storeName = "app" } govIdDecoder { key = "lastVoter" }
+                        |> ConcurrentTask.onError (\_ -> ConcurrentTask.succeed Nothing)
 
                 govIdDecoder =
                     JD.string |> JD.map Gov.idFromBech32
@@ -777,6 +778,7 @@ handleUrlChange route model =
                 reloadLatestStorageConfigTask : ConcurrentTask String StorageConfig
                 reloadLatestStorageConfigTask =
                     Storage.read { db = model.db, storeName = "app" } Page.Preparation.storageConfigDecoder { key = "lastStorageConfig" }
+                        |> ConcurrentTask.onError (\_ -> ConcurrentTask.succeed <| Page.Preparation.initStorageConfig model.ipfsPreconfig)
 
                 ( newTaskPool, taskCmds ) =
                     ConcurrentTask.Extra.attemptEach { pool = model.taskPool, send = sendTask, onComplete = OnTaskComplete }
