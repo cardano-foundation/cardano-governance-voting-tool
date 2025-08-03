@@ -479,7 +479,7 @@ defaultApiProvider =
             in
             Http.request
                 { method = "GET"
-                , url = koiosUrl networkId ++ "/proposal_list?select=" ++ selected_rows ++ "&expiration=gte." ++ String.fromInt currentEpoch
+                , url = koiosUrl networkId ++ "/proposal_list?select=" ++ selected_rows ++ "&expiration=gt." ++ String.fromInt currentEpoch
                 , headers = [ Http.header "Authorization" <| "Bearer " ++ koiosApiToken ]
                 , body = Http.emptyBody
                 , expect = Http.expectJson toMsg koiosGovProposalsDecoder

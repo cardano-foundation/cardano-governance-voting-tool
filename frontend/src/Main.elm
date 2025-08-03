@@ -667,7 +667,7 @@ update msg model =
 
                         isDropped p =
                             -- has expired
-                            (p.epoch_validity.end < currentEpoch)
+                            (p.epoch_validity.end <= currentEpoch)
                                 -- or was enacted (1 epoch after marked ratified by Koios)
                                 || (Maybe.withDefault False <| Maybe.map (\ratifiedEpoch -> currentEpoch > ratifiedEpoch) p.ratified)
 

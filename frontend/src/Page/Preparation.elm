@@ -3045,12 +3045,12 @@ viewProposalList ctx proposalsDict visibleCount =
 
     else
         let
-            epochVisibility =
+            currentEpoch =
                 Maybe.withDefault 0 ctx.epoch
 
             allProposals =
                 Dict.values proposalsDict
-                    |> List.filter (\p -> p.epoch_validity.end >= epochVisibility)
+                    |> List.filter (\p -> p.epoch_validity.end > currentEpoch)
 
             totalProposalCount =
                 List.length allProposals
