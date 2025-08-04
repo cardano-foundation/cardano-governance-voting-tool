@@ -672,14 +672,20 @@ innerUpdate ctx msg model =
                     ( model, Cmd.none, Nothing )
 
         VoterGovIdChange govIdStr ->
-            case checkGovId ctx govIdStr of
-                Err error ->
+            case ( govIdStr, checkGovId ctx govIdStr ) of
+                ( "", _ ) ->
+                    ( updateVoterForm (\_ -> initVoterForm) model
+                    , Cmd.none
+                    , Nothing
+                    )
+
+                ( _, Err error ) ->
                     ( updateVoterForm (\_ -> { initVoterForm | error = Just error }) model
                     , Cmd.none
                     , Nothing
                     )
 
-                Ok { govId, scriptInfo, expectedSigners, drepInfo, ccInfo, poolInfo, cmd, msgToParent } ->
+                ( _, Ok { govId, scriptInfo, expectedSigners, drepInfo, ccInfo, poolInfo, cmd, msgToParent } ) ->
                     ( updateVoterForm
                         (\_ ->
                             { initVoterForm
