@@ -70,6 +70,7 @@ import Html.Events exposing (preventDefaultOn)
 import Http
 import Json.Decode as JD exposing (Decoder, Value)
 import Json.Encode as JE
+import Page.Cart
 import Page.Disclaimer
 import Page.MultisigRegistration
 import Page.Pdf
@@ -182,6 +183,7 @@ type alias Model =
     , networkId : NetworkId
     , ipfsPreconfig : { label : String, description : String }
     , voterPreconfig : List PreconfVoter
+    , cart : Page.Cart.Model
     , errors : List String
     }
 
@@ -190,6 +192,7 @@ type Page
     = LandingPage
     | PreparationPage Page.Preparation.Model
     | SigningPage Page.Signing.Model
+    | CartPage
     | MultisigRegistrationPage Page.MultisigRegistration.Model
     | PdfPage Page.Pdf.Model
     | DisclaimerPage
@@ -263,6 +266,7 @@ initialModel { jsonLdContexts, db, networkId, ipfsPreconfig, voterPreconfig } =
     , networkId = networkId
     , ipfsPreconfig = ipfsPreconfig
     , voterPreconfig = voterPreconfig
+    , cart = Page.Cart.init
     , errors = []
     }
 
@@ -293,6 +297,8 @@ type Msg
     | GotRationaleAsFile Value
       -- Signing page
     | SigningPageMsg Page.Signing.Msg
+      -- Cart page
+    | CartPageMsg Page.Cart.Msg
       -- Multisig DRep registration page
     | MultisigPageMsg Page.MultisigRegistration.Msg
       -- PDF page
@@ -306,6 +312,7 @@ type Route
     = RouteLanding
     | RoutePreparation { networkId : NetworkId }
     | RouteSigning { networkId : NetworkId, expectedSigners : List { keyName : String, keyHash : Bytes CredentialHash }, tx : Maybe Transaction }
+    | RouteCart { networkId : NetworkId }
     | RouteMultisigRegistration
     | RoutePdf
     | RouteDisclaimer
@@ -360,6 +367,9 @@ locationHrefToRoute locationHref =
 
                 [ "page", "preparation" ] ->
                     RoutePreparation { networkId = networkId }
+
+                [ "page", "cart" ] ->
+                    RouteCart { networkId = networkId }
 
                 [ "page", "signing" ] ->
                     RouteSigning
@@ -417,6 +427,12 @@ routeToAppUrl route =
                     , ( "signer", List.map (\{ keyName, keyHash } -> keyName ++ ";" ++ Bytes.toHex keyHash) expectedSigners )
                     ]
             , fragment = Maybe.map (Bytes.toHex << Transaction.serialize) tx
+            }
+
+        RouteCart { networkId } ->
+            { path = [ "page", "cart" ]
+            , queryParameters = Dict.singleton "networkId" [ networkIdToString networkId ]
+            , fragment = Nothing
             }
 
         RouteMultisigRegistration ->
@@ -605,6 +621,27 @@ update msg model =
                 _ ->
                     ( model, Cmd.none )
 
+        ( CartPageMsg pageMsg, { cart } ) ->
+            let
+                loadedWallet =
+                    case ( model.wallet, model.walletUtxos ) of
+                        ( Just wallet, Just utxos ) ->
+                            Just { wallet = wallet, utxos = utxos }
+
+                        _ ->
+                            Nothing
+
+                ctx =
+                    { wrapMsg = CartPageMsg
+                    , costModels = Maybe.map .costModels model.protocolParams
+                    , loadedWallet = loadedWallet
+                    }
+
+                ( updatedCart, cmds ) =
+                    Page.Cart.update ctx pageMsg cart
+            in
+            ( { model | cart = updatedCart }, cmds )
+
         ( MultisigPageMsg pageMsg, { page } ) ->
             case page of
                 MultisigRegistrationPage pageModel ->
@@ -739,7 +776,7 @@ handleUrlChange route model =
             routeToAppUrl route
 
         pushUrlCmd =
-            if routeToAppUrl route == model.appUrl then
+            if appUrl == model.appUrl then
                 Cmd.none
 
             else
@@ -826,6 +863,25 @@ handleUrlChange route model =
                 ( { model
                     | errors = []
                     , page = SigningPage <| Page.Signing.initialModel expectedSigners tx
+                    , appUrl = appUrl
+                  }
+                , pushUrlCmd
+                )
+
+        RouteCart { networkId } ->
+            if networkId /= model.networkId then
+                initHelper route
+                    { jsonLdContexts = model.jsonLdContexts
+                    , db = model.db
+                    , networkId = networkId
+                    , ipfsPreconfig = model.ipfsPreconfig
+                    , voterPreconfig = model.voterPreconfig
+                    }
+
+            else
+                ( { model
+                    | errors = []
+                    , page = CartPage
                     , appUrl = appUrl
                   }
                 , pushUrlCmd
@@ -1025,6 +1081,16 @@ updateModelWithPrepToParentMsg msgToParent model =
             ConcurrentTask.attempt { pool = model.taskPool, send = sendTask, onComplete = OnTaskComplete } writeStorageConfigToDb
                 |> Tuple.mapFirst (\newTaskPool -> { model | taskPool = newTaskPool })
 
+        Just (Page.Preparation.AddVoteToCart voter voteRecord) ->
+            let
+                updatedCart =
+                    Page.Cart.addVote voter voteRecord model.cart
+
+                -- TODO: Generate a task to store the updated cart
+                -- TODO: keep the network around when storing? To differentiate Mainnet / Preview
+            in
+            ( { model | cart = updatedCart }, Cmd.none )
+
         Just (Page.Preparation.RunTask task) ->
             ConcurrentTask.attempt { pool = model.taskPool, send = sendTask, onComplete = OnTaskComplete }
                 (ConcurrentTask.map PreparationTaskCompleted task)
@@ -1202,6 +1268,10 @@ viewHeader model =
                         _ ->
                             False
               }
+            , { label = "Cart"
+              , link = link <| RouteCart { networkId = model.networkId }
+              , isActive = model.page == CartPage
+              }
             , { label = "PDFs"
               , link = link RoutePdf
               , isActive =
@@ -1287,6 +1357,15 @@ viewContent model =
                 , networkId = model.networkId
                 }
                 signingModel
+
+        CartPage ->
+            Page.Cart.view
+                { wrapMsg = CartPageMsg
+                , signingLink =
+                    \tx expectedSigners ->
+                        link (RouteSigning { networkId = model.networkId, tx = Just tx, expectedSigners = expectedSigners }) []
+                }
+                model.cart
 
         MultisigRegistrationPage pageModel ->
             Page.MultisigRegistration.view

@@ -61,6 +61,7 @@ import List.Extra
 import Markdown.Block
 import Markdown.Parser as Md
 import Natural
+import Page.Cart as Cart
 import Platform.Cmd as Cmd
 import ProposalMetadata exposing (AuthorWitness, ProposalMetadata)
 import RemoteData exposing (RemoteData, WebData)
@@ -500,6 +501,7 @@ type MsgToParent
     | CachePoolInfo PoolInfo
     | CacheVoterGovId Gov.Id
     | CacheStorageConfig StorageConfig
+    | AddVoteToCart Witness.Voter Cart.VoteRecord
     | RunTask (ConcurrentTask String TaskCompleted)
     | BatchToParent MsgToParent MsgToParent
 
@@ -577,6 +579,7 @@ type Msg
     | GotIpfsAnswer (Result String IpfsAnswer)
     | AddOtherStorageButtonCLicked
       -- Build Tx Step
+    | AddVoteToCartButtonClicked Vote
     | BuildTxButtonClicked Vote
     | ChangeVoteButtonClicked
 
@@ -1177,6 +1180,31 @@ innerUpdate ctx msg model =
                     ( { model | permanentStorageStep = Preparing prep }
                     , Cmd.none
                     , Nothing
+                    )
+
+        --
+        -- Add Vote to Cart
+        --
+        AddVoteToCartButtonClicked vote ->
+            case allPrepSteps ctx model of
+                Err error ->
+                    ( { model | buildTxStep = Preparing { error = Just error } }
+                    , Cmd.none
+                    , Nothing
+                    )
+
+                Ok { voter, actionId, proposalTitle, rationaleAnchor } ->
+                    let
+                        voteIntent =
+                            { actionId = actionId
+                            , vote = vote
+                            , rationale = Just rationaleAnchor
+                            }
+                    in
+                    -- TODO: update the model to mark proposals already in the cart
+                    ( model
+                    , Cmd.none
+                    , Just <| AddVoteToCart voter <| Cart.VoteRecord proposalTitle voteIntent
                     )
 
         --
@@ -2551,6 +2579,7 @@ handleRationaleIpfsAnswer model ipfsAnswer =
 type alias TxRequirements =
     { voter : Witness.Voter
     , actionId : ActionId
+    , proposalTitle : String
     , rationaleAnchor : Anchor
     , localStateUtxos : Utxo.RefDict Output
     , walletAddress : Address
@@ -2562,9 +2591,20 @@ allPrepSteps : { a | loadedWallet : Maybe LoadedWallet, costModels : Maybe CostM
 allPrepSteps { loadedWallet, costModels } m =
     case ( costModels, ( m.voterStep, m.pickProposalStep, m.rationaleSignatureStep ), ( m.permanentStorageStep, loadedWallet ) ) of
         ( Just theCostModels, ( Done _ voter, Done _ p, Done _ r ), ( Done _ s, Just { utxos, wallet } ) ) ->
+            let
+                proposalTitle =
+                    case p.metadata of
+                        RemoteData.Success metadata ->
+                            metadata.body.title
+                                |> Maybe.withDefault "??? Unknown Proposal Title"
+
+                        _ ->
+                            "??? Unknown Proposal Title"
+            in
             Ok
                 { voter = voter
                 , actionId = p.id
+                , proposalTitle = proposalTitle
                 , rationaleAnchor =
                     { url = "ipfs://" ++ s.jsonFile.cid
                     , dataHash =
@@ -4115,9 +4155,9 @@ viewBuildTxStep ctx model =
                         , HA.style "flex-wrap" "wrap"
                         , HA.style "gap" "1rem"
                         ]
-                        [ Helper.voteButton "Vote YES" "#10B981" (BuildTxButtonClicked Gov.VoteYes)
-                        , Helper.voteButton "Vote NO" "#EF4444" (BuildTxButtonClicked Gov.VoteNo)
-                        , Helper.voteButton "ABSTAIN" "#6B7280" (BuildTxButtonClicked Gov.VoteAbstain)
+                        [ Helper.voteButton "Vote YES" "#10B981" (AddVoteToCartButtonClicked Gov.VoteYes)
+                        , Helper.voteButton "Vote NO" "#EF4444" (AddVoteToCartButtonClicked Gov.VoteNo)
+                        , Helper.voteButton "ABSTAIN" "#6B7280" (AddVoteToCartButtonClicked Gov.VoteAbstain)
                         ]
                     , viewError error
                     ]
