@@ -3187,10 +3187,15 @@ viewSelectedProposal ctx { id, actionType, metadata, metadataUrl, metadataHash }
                             , HA.style "margin-left" "1.5rem"
                             ]
                             (List.map viewOneAuthor authors)
-                        , Html.p
-                            [ HA.style "margin-top" "1.5rem"
+                        , Html.p [ HA.style "margin-top" "1.5rem" ]
+                            [ text "Verify authors signatures on: "
+                            , Helper.externalLink
+                                { url = "https://verifycardanomessage.cardanofoundation.org/method=cip100#" ++ Url.percentEncode rawMetadata
+                                , label = "verifycardanomessage.cardanofoundation.org"
+                                }
                             ]
-                            [ text "To verify the authors signatures, download the metadata and use cardano-signer as follows:" ]
+                        , Html.p [ HA.style "margin-top" "1.5rem" ]
+                            [ text "To verify the authors signatures locally, download the metadata and use cardano-signer as follows:" ]
                         , Html.pre
                             [ HA.style "background-color" "#F9FAFB"
                             , HA.style "padding" "0.75rem"
@@ -3290,19 +3295,7 @@ cardanoExplorerActionLink networkId id =
         govId =
             Gov.idToBech32 (GovActionId id)
     in
-    Html.a
-        [ HA.href url
-        , HA.target "_blank"
-        , HA.rel "noopener noreferrer"
-        , HA.class "text-blue-600 hover:text-blue-800 underline font-mono"
-        ]
-        [ text <| strBothEnds 10 10 govId
-        , Html.span
-            [ HA.style "margin-left" "0.25rem"
-            , HA.style "font-size" "0.8rem"
-            ]
-            [ text "↗" ]
-        ]
+    Helper.externalLink { url = url, label = strBothEnds 10 10 govId }
 
 
 strBothEnds : Int -> Int -> String -> String

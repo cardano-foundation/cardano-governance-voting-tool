@@ -2,7 +2,7 @@ module Helper exposing
     ( shortenedHex, prettyAdaLovelace
     , textFieldInline
     , formContainer, boxContainer, viewGrid, cardContainer, cardHeader, cardContent
-    , viewButton, viewWalletButton, externalLinkButton
+    , viewButton, viewWalletButton, externalLink, externalLinkButton
     , applyDropdownContainerStyle, applyDropdownItemStyle, applyMobileDropdownContainerStyle, applyWalletIconContainerStyle, applyWalletIconStyle
     , viewActionTypeIcon
     , sectionTitle, infoBox, viewError
@@ -42,7 +42,7 @@ and are potentially useful in multiple places.
 
 # Buttons
 
-@docs viewButton, viewWalletButton, externalLinkButton
+@docs viewButton, viewWalletButton, externalLink, externalLinkButton
 
 
 # Wallet Styling
@@ -322,6 +322,17 @@ externalLinkButton { url, label } =
         , HA.style "background-color" "#272727"
         , HA.style "color" "#f7fafc"
         , HA.style "padding" "0.75rem 1.5rem"
+        ]
+        [ text <| label ++ " ↗" ]
+
+
+externalLink : { url : String, label : String } -> Html msg
+externalLink { url, label } =
+    Html.a
+        [ HA.href url
+        , HA.target "_blank"
+        , HA.rel "noopener noreferrer"
+        , HA.class "text-blue-600 hover:text-blue-800 underline font-mono"
         ]
         [ text <| label ++ " ↗" ]
 
