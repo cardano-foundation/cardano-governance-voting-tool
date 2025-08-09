@@ -32,13 +32,17 @@ import Natural as N
 -- that are independent from the context.
 
 
+{-| The Cart model has two states, preparing and ready.
+By default, when adding votes to the cart, we will try to prepare
+a transaction and estimate resources usage.
+I think it’s reasonable to do at each vote added to the cart,
+because most voters don’t use Plutus scripts, so it will be almost instant.
+If for any reason, like no wallet connected, we fail to build the vote Tx,
+we stay in the preparing state.
+Otherwise, we are in the ready state.
+-}
 type Model
     = Preparing CartPreparation
-      -- TODO: wondering if it should instead be something like:
-      -- { votersIntents : Dict String CartVoter
-      -- , ready : Maybe CartReady
-      -- }
-      -- with CartReady not containing the unusedIntents field
     | Ready CartReady
 
 
@@ -66,8 +70,7 @@ type alias VoteRecord =
 
 
 type alias CartReady =
-    { unusedIntents : Dict String CartVoter -- keys are bech32 gov IDs
-    , votersIntents : Dict String CartVoter -- keys are bech32 gov IDs
+    { votersIntents : Dict String CartVoter -- keys are bech32 gov IDs
     , maxResources : Resources
     , currentResources : Resources
     , txFinalized : TxFinalized
@@ -127,8 +130,7 @@ update ctx msg model =
                             }
                     in
                     ( Ready
-                        { unusedIntents = Dict.empty
-                        , votersIntents = votersIntents
+                        { votersIntents = votersIntents
                         , maxResources = maxResources
                         , currentResources = txResources
                         , txFinalized = txFinalized
@@ -154,6 +156,7 @@ update ctx msg model =
 
 
 {-| Add a vote to the cart.
+Reset the state to Preparing.
 -}
 addVote : Witness.Voter -> VoteRecord -> Model -> Model
 addVote voter voteRecord model =
@@ -182,8 +185,8 @@ addVote voter voteRecord model =
         Preparing { votersIntents } ->
             Preparing { votersIntents = updateVotersIntents votersIntents, error = Nothing }
 
-        Ready ({ unusedIntents } as ready) ->
-            Ready { ready | unusedIntents = updateVotersIntents unusedIntents }
+        Ready { votersIntents } ->
+            Preparing { votersIntents = updateVotersIntents votersIntents, error = Nothing }
 
 
 
@@ -411,23 +414,10 @@ viewVoteRecord ( actionIdStr, { proposalTitle, voteIntent } ) =
 
 
 viewReadyCart : ViewContext a msg -> CartReady -> Html msg
-viewReadyCart ctx { unusedIntents, votersIntents, maxResources, currentResources, txFinalized } =
+viewReadyCart ctx { votersIntents, maxResources, currentResources, txFinalized } =
     let
-        unusedVotesCount =
-            countAllVotersVotes unusedIntents
-
         countedVotesCount =
             countAllVotersVotes votersIntents
-
-        viewUnusedIntents =
-            if unusedVotesCount == 0 then
-                text ""
-
-            else
-                div [] <|
-                    (Html.h3 [] [ text "Unused votes" ]
-                        :: List.map viewVoterIntents (Dict.toList unusedIntents)
-                    )
 
         viewVotersIntents =
             if countedVotesCount == 0 then
@@ -440,8 +430,7 @@ viewReadyCart ctx { unusedIntents, votersIntents, maxResources, currentResources
                     )
     in
     div []
-        [ viewUnusedIntents
-        , viewResources maxResources currentResources
+        [ viewResources maxResources currentResources
         , viewVotersIntents
 
         -- TODO: add button to go to signing page
