@@ -203,6 +203,7 @@ type TaskCompleted
     | GotLastVoter (Maybe Gov.Id)
     | GotLastStorageConfig Page.Preparation.StorageConfig
     | GotProposalMetadataTask String (Result String ProposalMetadata)
+    | GotCart Page.Cart.Model
     | PreparationTaskCompleted Page.Preparation.TaskCompleted
 
 
@@ -223,12 +224,23 @@ initHelper route config =
     let
         ( model, cmd ) =
             handleUrlChange route (initialModel config)
+
+        loadCart =
+            Storage.read { db = config.db, storeName = "app" }
+                Page.Cart.deserialize
+                { key = "cart:" ++ networkIdToString config.networkId }
+                |> ConcurrentTask.map GotCart
+                |> ConcurrentTask.onError (\_ -> ConcurrentTask.succeed Ignore)
+
+        ( updatedTaskPool, tasksCmds ) =
+            ConcurrentTask.attempt { pool = model.taskPool, send = sendTask, onComplete = OnTaskComplete } loadCart
     in
-    ( model
+    ( { model | taskPool = updatedTaskPool }
     , Cmd.batch
         [ cmd
         , toWallet (Cip30.encodeRequest Cip30.discoverWallets)
         , Api.defaultApiProvider.loadProtocolParams model.networkId GotProtocolParams
+        , tasksCmds
         ]
     )
 
@@ -481,22 +493,36 @@ update msg model =
 
         ( NetworkChanged newNet, _ ) ->
             let
+                loadCart =
+                    Storage.read { db = model.db, storeName = "app" }
+                        Page.Cart.deserialize
+                        { key = "cart:" ++ networkIdToString newNet }
+                        |> ConcurrentTask.map GotCart
+                        |> ConcurrentTask.onError (\_ -> ConcurrentTask.succeed Ignore)
+
+                ( updatedTaskPool, tasksCmds ) =
+                    ConcurrentTask.attempt { pool = model.taskPool, send = sendTask, onComplete = OnTaskComplete } loadCart
+
                 updatedModel =
                     { model
                         | networkId = newNet
                         , networkDropdownIsOpen = False -- Close dropdown after selection
                         , proposals = RemoteData.NotAsked
+                        , cart = Page.Cart.init
+                        , taskPool = updatedTaskPool
                     }
             in
             case model.page of
                 PreparationPage _ ->
                     handleUrlChange (RoutePreparation { networkId = newNet }) updatedModel
+                        |> Cmd.Extra.add tasksCmds
 
                 SigningPage _ ->
                     handleUrlChange (RouteSigning { networkId = newNet, tx = Nothing, expectedSigners = [] }) updatedModel
+                        |> Cmd.Extra.add tasksCmds
 
                 _ ->
-                    ( updatedModel, Cmd.none )
+                    ( updatedModel, tasksCmds )
 
         ( NoMsg, _ ) ->
             ( model, Cmd.none )
@@ -1003,7 +1029,7 @@ handleWalletResponse response model =
                     ( model, Cmd.none )
 
         Cip30.ApiResponse _ _ ->
-            ( { model | errors = "TODO: unhandled CIP30 response yet" :: model.errors }
+            ( { model | errors = "Unhandled CIP30 response yet" :: model.errors }
             , Cmd.none
             )
 
@@ -1086,10 +1112,12 @@ updateModelWithPrepToParentMsg msgToParent model =
                 updatedCart =
                     Page.Cart.addVote voter voteRecord model.cart
 
-                -- TODO: Generate a task to store the updated cart
-                -- TODO: keep the network around when storing? To differentiate Mainnet / Preview
+                writeCartToDb =
+                    Storage.write { db = model.db, storeName = "app" } Page.Cart.serialize { key = "cart:" ++ networkIdToString model.networkId } updatedCart
+                        |> ConcurrentTask.map (always Ignore)
             in
-            ( { model | cart = updatedCart }, Cmd.none )
+            ConcurrentTask.attempt { pool = model.taskPool, send = sendTask, onComplete = OnTaskComplete } writeCartToDb
+                |> Tuple.mapFirst (\newTaskPool -> { model | taskPool = newTaskPool, cart = updatedCart })
 
         Just (Page.Preparation.RunTask task) ->
             ConcurrentTask.attempt { pool = model.taskPool, send = sendTask, onComplete = OnTaskComplete }
@@ -1161,6 +1189,9 @@ handleCompletedTask response model =
             ( { model | proposals = RemoteData.map (\ps -> Dict.update id updateMetadata ps) model.proposals }
             , Cmd.none
             )
+
+        ( ConcurrentTask.Success (GotCart cart), _ ) ->
+            ( { model | cart = cart }, Cmd.none )
 
         ( ConcurrentTask.Success (PreparationTaskCompleted taskCompleted), PreparationPage pageModel ) ->
             let

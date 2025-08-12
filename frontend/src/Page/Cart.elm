@@ -1,11 +1,11 @@
-module Page.Cart exposing (Model, Msg, UpdateContext, ViewContext, VoteRecord, addVote, init, update, view)
+module Page.Cart exposing (Model, Msg, UpdateContext, ViewContext, VoteRecord, addVote, deserialize, init, serialize, update, view)
 
 import Bytes.Comparable as Bytes exposing (Bytes)
 import Cardano.Address as Address exposing (Address, CredentialHash)
 import Cardano.Cip30 as Cip30
 import Cardano.CoinSelection as CoinSelection
 import Cardano.Gov as Gov exposing (ActionId, Anchor, CostModels, Id(..))
-import Cardano.Script as Script exposing (ScriptCbor)
+import Cardano.Script as Script
 import Cardano.Transaction as Transaction exposing (Transaction)
 import Cardano.TxIntent as TxIntent exposing (Fee(..), TxFinalized, TxIntent, VoteIntent)
 import Cardano.Uplc as Uplc
@@ -14,22 +14,13 @@ import Cardano.Utxo as Utxo exposing (Output)
 import Cardano.Witness as Witness exposing (Voter(..))
 import Dict exposing (Dict)
 import Dict.Any
-import Helper exposing (viewError, viewVoterCard)
+import Helper exposing (viewError)
 import Html exposing (Html, div, text)
 import Html.Attributes as HA
 import Html.Events as HE
 import Json.Decode as JD
 import Json.Encode as JE
 import Natural as N
-
-
-
--- TODO: figure out how to locally store cart in browser db.
--- The hard part is storing the script witness for native/plutus scripts.
--- For the script, we can keep a separate store of script per hash.
--- For the redeemer function (TxContext -> Data) we can store just the data
--- applied to an empty TxContext, so will only work for redeemers
--- that are independent from the context.
 
 
 {-| The Cart model has two states, preparing and ready.
@@ -193,17 +184,129 @@ addVote voter voteRecord model =
 -- Serialization
 
 
-serializeCredentialWitness : Witness.Credential -> ( JE.Value, Maybe ( Bytes CredentialHash, Bytes ScriptCbor ) )
+serialize : Model -> JE.Value
+serialize cart =
+    case cart of
+        Preparing { votersIntents } ->
+            serializeVotersIntents votersIntents
+
+        Ready { votersIntents } ->
+            serializeVotersIntents votersIntents
+
+
+{-| Serialization of all voters intents into a single JSON object.
+
+There are many trade-offs between serializing all intents into a single object
+or doing multiple objects such as one per voter or one per proposal.
+
+The problem with one per voter, is that when reloading the app,
+we cannot know in advance which voters to load, unless we have an api
+to retrieve all items of a given store.
+(which might be a good idea, but for now we only have read per-key in the store)
+
+The problem with one per proposal, is that we have to duplicate the voter witness
+for each and every proposal.
+It might get error-prone as we essentially duplicate information
+that is not supposed to be duplicated.
+
+The problem with one single object for the whole cart,
+is that we have the serialize the whole cart every time we update it.
+And potentially riskier if something goes wrong and remove the whole cart.
+
+There are counter-measures of course for each approach,
+but for the sake of simplicity, let’s start with one single JSON object.
+
+-}
+serializeVotersIntents : Dict String CartVoter -> JE.Value
+serializeVotersIntents votersIntents =
+    JE.dict identity serializeCartVoter votersIntents
+
+
+serializeCartVoter : CartVoter -> JE.Value
+serializeCartVoter { voter, voteRecords } =
+    JE.object
+        [ ( "voter", serializeVoter voter )
+        , ( "voteRecords", JE.dict identity serializeVoteRecord voteRecords )
+        ]
+
+
+serializeVoter : Witness.Voter -> JE.Value
+serializeVoter voter =
+    case voter of
+        WithCommitteeHotCred cred ->
+            JE.object
+                [ ( "type", JE.string "withCommitteeHotCred" )
+                , ( "cred", serializeCredentialWitness cred )
+                ]
+
+        WithDrepCred cred ->
+            JE.object
+                [ ( "type", JE.string "withDrepCred" )
+                , ( "cred", serializeCredentialWitness cred )
+                ]
+
+        WithPoolCred credHash ->
+            JE.object
+                [ ( "type", JE.string "withPoolCred" )
+                , ( "credHash", Bytes.jsonEncode credHash )
+                ]
+
+
+serializeVoteRecord : VoteRecord -> JE.Value
+serializeVoteRecord { proposalTitle, voteIntent } =
+    JE.object
+        [ ( "proposalTitle", JE.string proposalTitle )
+        , ( "voteIntent", serializeVoteIntent voteIntent )
+        ]
+
+
+serializeVoteIntent : VoteIntent -> JE.Value
+serializeVoteIntent { actionId, vote, rationale } =
+    JE.object
+        [ ( "actionId", serializeActionId actionId )
+        , ( "vote", serializeVote vote )
+        , ( "rationale", Maybe.map serializeAnchor rationale |> Maybe.withDefault JE.null )
+        ]
+
+
+serializeActionId : ActionId -> JE.Value
+serializeActionId { transactionId, govActionIndex } =
+    JE.object
+        [ ( "transactionId", Bytes.jsonEncode transactionId )
+        , ( "govActionIndex", JE.int govActionIndex )
+        ]
+
+
+serializeVote : Gov.Vote -> JE.Value
+serializeVote vote =
+    case vote of
+        Gov.VoteNo ->
+            JE.int 0
+
+        Gov.VoteYes ->
+            JE.int 1
+
+        Gov.VoteAbstain ->
+            JE.int 2
+
+
+serializeAnchor : Anchor -> JE.Value
+serializeAnchor { url, dataHash } =
+    JE.object
+        [ ( "url", JE.string url )
+        , ( "dataHash", Bytes.jsonEncode dataHash )
+        ]
+
+
+serializeCredentialWitness : Witness.Credential -> JE.Value
 serializeCredentialWitness cred =
     -- type: key | nativeScriptByValue | nativeScriptByRef | plutusScriptByValue | plutusScriptByRef
     case cred of
         Witness.WithKey keyHash ->
-            ( JE.object
+            JE.object
                 [ ( "type", JE.string "key" )
                 , ( "keyHash", Bytes.jsonEncode keyHash )
                 ]
-            , Nothing
-            )
 
         Witness.WithScript scriptHash scriptWitness ->
             case scriptWitness of
@@ -211,24 +314,20 @@ serializeCredentialWitness cred =
                     case script of
                         -- For NativeScript, we just serialize the script inline
                         Witness.ByValue nativeScript ->
-                            ( JE.object
+                            JE.object
                                 [ ( "type", JE.string "nativeScriptByValue" )
                                 , ( "scriptHash", Bytes.jsonEncode scriptHash )
                                 , ( "script", Script.jsonEncodeNativeScript nativeScript )
                                 , ( "expectedSigners", JE.list Bytes.jsonEncode expectedSigners )
                                 ]
-                            , Nothing
-                            )
 
                         Witness.ByReference ref ->
-                            ( JE.object
+                            JE.object
                                 [ ( "type", JE.string "nativeScriptByRef" )
                                 , ( "scriptHash", Bytes.jsonEncode scriptHash )
                                 , ( "ref", Utils.jsonEncodeCbor <| Utxo.encodeOutputReference ref )
                                 , ( "expectedSigners", JE.list Bytes.jsonEncode expectedSigners )
                                 ]
-                            , Nothing
-                            )
 
                 Witness.Plutus _ ->
                     Debug.todo "Handle serialization of Plutus witnesses"
@@ -236,6 +335,46 @@ serializeCredentialWitness cred =
 
 
 -- Deserialization
+
+
+deserialize : JD.Decoder Model
+deserialize =
+    JD.map (\intents -> Preparing { votersIntents = intents, error = Nothing }) deserializeVotersIntents
+
+
+deserializeVotersIntents : JD.Decoder (Dict String CartVoter)
+deserializeVotersIntents =
+    JD.dict deserializeCartVoter
+
+
+deserializeCartVoter : JD.Decoder CartVoter
+deserializeCartVoter =
+    JD.map2 CartVoter
+        (JD.field "voter" deserializeVoter)
+        (JD.field "voteRecords" <| JD.dict deserializeVoteRecord)
+
+
+deserializeVoter : JD.Decoder Voter
+deserializeVoter =
+    JD.field "type" JD.string
+        |> JD.andThen
+            (\voterType ->
+                case voterType of
+                    "withCommitteeHotCred" ->
+                        JD.field "cred" deserializeCredentialWitness
+                            |> JD.map WithCommitteeHotCred
+
+                    "withDrepCred" ->
+                        JD.field "cred" deserializeCredentialWitness
+                            |> JD.map WithDrepCred
+
+                    "withPoolCred" ->
+                        JD.field "credHash" Bytes.jsonDecoder
+                            |> JD.map WithPoolCred
+
+                    _ ->
+                        JD.fail <| "Unknown voter type: " ++ voterType
+            )
 
 
 deserializeCredentialWitness : JD.Decoder Witness.Credential
@@ -280,6 +419,55 @@ deserializeCredentialWitness =
                         -- similar to the serialization logic.
                         JD.fail ("Unsupported credential witness type for deserialization: " ++ other)
             )
+
+
+deserializeVoteRecord : JD.Decoder VoteRecord
+deserializeVoteRecord =
+    JD.map2 VoteRecord
+        (JD.field "proposalTitle" JD.string)
+        (JD.field "voteIntent" deserializeVoteIntent)
+
+
+deserializeVoteIntent : JD.Decoder VoteIntent
+deserializeVoteIntent =
+    JD.map3 VoteIntent
+        (JD.field "actionId" deserializeActionId)
+        (JD.field "vote" deserializeVote)
+        (JD.field "rationale" <| JD.maybe deserializeAnchor)
+
+
+deserializeActionId : JD.Decoder ActionId
+deserializeActionId =
+    JD.map2 ActionId
+        (JD.field "transactionId" Bytes.jsonDecoder)
+        (JD.field "govActionIndex" JD.int)
+
+
+deserializeVote : JD.Decoder Gov.Vote
+deserializeVote =
+    JD.int
+        |> JD.andThen
+            (\vote ->
+                case vote of
+                    0 ->
+                        JD.succeed Gov.VoteNo
+
+                    1 ->
+                        JD.succeed Gov.VoteYes
+
+                    2 ->
+                        JD.succeed Gov.VoteAbstain
+
+                    _ ->
+                        JD.fail "Invalid vote value"
+            )
+
+
+deserializeAnchor : JD.Decoder Anchor
+deserializeAnchor =
+    JD.map2 Anchor
+        (JD.field "url" JD.string)
+        (JD.field "dataHash" Bytes.jsonDecoder)
 
 
 
@@ -408,6 +596,8 @@ viewVoteRecord ( actionIdStr, { proposalTitle, voteIntent } ) =
         [ text <| Debug.toString vote
         , text " | "
         , text proposalTitle
+        , text " | action ID: "
+        , text <| Gov.actionIdToString actionId
         , text " | rationale: "
         , text viewRationale
         ]
@@ -432,8 +622,6 @@ viewReadyCart ctx { votersIntents, maxResources, currentResources, txFinalized }
     div []
         [ viewResources maxResources currentResources
         , viewVotersIntents
-
-        -- TODO: add button to go to signing page
         , viewSigningButton ctx txFinalized
         ]
 
