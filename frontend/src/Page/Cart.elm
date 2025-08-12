@@ -570,7 +570,7 @@ viewPreparingCart ctx { votersIntents, error } =
 
 
 viewVoterIntents : ( String, { voter : Witness.Voter, voteRecords : Dict String VoteRecord } ) -> Html msg
-viewVoterIntents ( voterIdStr, { voter, voteRecords } ) =
+viewVoterIntents ( voterIdStr, { voteRecords } ) =
     div []
         -- TODO: improve voter details
         [ Html.h4 [] [ text <| "Voter: " ++ voterIdStr ]
@@ -581,7 +581,7 @@ viewVoterIntents ( voterIdStr, { voter, voteRecords } ) =
 viewVoteRecord : ( String, VoteRecord ) -> Html msg
 viewVoteRecord ( actionIdStr, { proposalTitle, voteIntent } ) =
     let
-        { actionId, vote, rationale } =
+        { vote, rationale } =
             voteIntent
 
         viewRationale =
@@ -597,7 +597,7 @@ viewVoteRecord ( actionIdStr, { proposalTitle, voteIntent } ) =
         , text " | "
         , text proposalTitle
         , text " | action ID: "
-        , text <| Gov.actionIdToString actionId
+        , text actionIdStr
         , text " | rationale: "
         , text viewRationale
         ]

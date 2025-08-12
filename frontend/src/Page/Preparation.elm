@@ -31,14 +31,12 @@ import Bytes as ElmBytes
 import Bytes.Comparable as Bytes exposing (Bytes)
 import Cardano.Address as Address exposing (Address, Credential(..), CredentialHash, NetworkId(..))
 import Cardano.Cip30 as Cip30
-import Cardano.CoinSelection as CoinSelection
 import Cardano.Gov as Gov exposing (ActionId, Anchor, CostModels, Id(..), Vote)
 import Cardano.Pool as Pool
 import Cardano.Script as Script
 import Cardano.Transaction as Transaction exposing (Transaction, VKeyWitness)
 import Cardano.TxExamples exposing (prettyTx)
-import Cardano.TxIntent as TxIntent exposing (Fee(..), TxFinalized)
-import Cardano.Uplc as Uplc
+import Cardano.TxIntent exposing (TxFinalized)
 import Cardano.Utxo as Utxo exposing (Output, OutputReference, TransactionId)
 import Cardano.Witness as Witness
 import Cbor.Encode
@@ -580,7 +578,6 @@ type Msg
     | AddOtherStorageButtonCLicked
       -- Build Tx Step
     | AddVoteToCartButtonClicked Vote
-    | BuildTxButtonClicked Vote
     | ChangeVoteButtonClicked
 
 
@@ -1206,85 +1203,6 @@ innerUpdate ctx msg model =
                     , Cmd.none
                     , Just <| AddVoteToCart voter <| Cart.VoteRecord proposalTitle voteIntent
                     )
-
-        --
-        -- Build Tx Step
-        --
-        BuildTxButtonClicked vote ->
-            case allPrepSteps ctx model of
-                Err error ->
-                    ( { model | buildTxStep = Preparing { error = Just error } }
-                    , Cmd.none
-                    , Nothing
-                    )
-
-                Ok { voter, actionId, rationaleAnchor, localStateUtxos, walletAddress, costModels } ->
-                    let
-                        -- Use any address (enterprise / full) with the same payment cred
-                        -- as the one from the default wallet address to pay the fee
-                        walletOutputs =
-                            Dict.Any.values localStateUtxos
-
-                        potentialFeeSources =
-                            case Address.extractPubKeyHash walletAddress of
-                                Just paymentCred ->
-                                    walletOutputs
-                                        |> List.map (\output -> output.address)
-                                        |> List.filter (\addr -> Address.extractPubKeyHash addr == Just paymentCred)
-
-                                Nothing ->
-                                    []
-
-                        -- Helper function to gather free Ada for a given address
-                        -- Convert Natural amounts to Int (1 = 1 ada) for easy comparison
-                        freeAdaForAddress address =
-                            let
-                                freeAda output =
-                                    if output.address == address then
-                                        Utxo.freeAda output
-
-                                    else
-                                        Natural.zero
-                            in
-                            walletOutputs
-                                |> List.foldl (\output sum -> Natural.add sum <| freeAda output) Natural.zero
-                                -- divide by 1000000 to get ada amount from lovelace amount
-                                |> (\n -> n |> Natural.divBy (Natural.fromSafeInt 1000000))
-                                |> Maybe.withDefault Natural.zero
-                                |> Natural.toInt
-
-                        -- Pick the one with most free Ada as the payment source
-                        feeSource =
-                            List.sortBy freeAdaForAddress potentialFeeSources
-                                |> List.reverse
-                                |> List.head
-                                |> Maybe.withDefault walletAddress
-
-                        tryTx =
-                            [ TxIntent.Vote voter [ { actionId = actionId, vote = vote, rationale = Just rationaleAnchor } ]
-                            ]
-                                |> TxIntent.finalizeAdvanced
-                                    { govState = TxIntent.emptyGovernanceState
-                                    , localStateUtxos = localStateUtxos
-                                    , coinSelectionAlgo = CoinSelection.largestFirst
-                                    , evalScriptsCosts = Uplc.evalScriptsCosts Uplc.defaultVmConfig
-                                    , costModels = costModels
-                                    }
-                                    (AutoFee { paymentSource = feeSource })
-                                    []
-                    in
-                    case tryTx of
-                        Err error ->
-                            ( { model | buildTxStep = Preparing { error = Just <| "Error while building the Tx: " ++ TxIntent.errorToString error } }
-                            , Cmd.none
-                            , Nothing
-                            )
-
-                        Ok tx ->
-                            ( { model | buildTxStep = Done { error = Nothing } tx }
-                            , Cmd.none
-                            , Nothing
-                            )
 
         ChangeVoteButtonClicked ->
             ( { model | buildTxStep = Preparing { error = Nothing } }
