@@ -1038,6 +1038,17 @@ handleWalletResponse response model =
         Cip30.ApiResponse _ (Cip30ApiResponse (Cip30.SubmittedTx txId)) ->
             case model.page of
                 SigningPage pageModel ->
+                    let
+                        emptyCart =
+                            Page.Cart.init
+
+                        writeCartToDb =
+                            Storage.write { db = model.db, storeName = "app" } Page.Cart.serialize { key = "cart:" ++ networkIdToString model.networkId } emptyCart
+                                |> ConcurrentTask.map (always Ignore)
+
+                        ( updatedTaskPool, taskCmds ) =
+                            ConcurrentTask.attempt { pool = model.taskPool, send = sendTask, onComplete = OnTaskComplete } writeCartToDb
+                    in
                     ( { model
                         | page = SigningPage <| Page.Signing.recordSubmittedTx txId pageModel
 
@@ -1046,8 +1057,12 @@ handleWalletResponse response model =
                             Maybe.map2 updateWalletUtxosWithTx
                                 (Page.Signing.getTxInfo pageModel)
                                 model.walletUtxos
+
+                        -- Reset the cart
+                        , cart = emptyCart
+                        , taskPool = updatedTaskPool
                       }
-                    , Cmd.none
+                    , taskCmds
                     )
 
                 -- No other page expects to submit a Tx
