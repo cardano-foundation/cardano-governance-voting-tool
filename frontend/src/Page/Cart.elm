@@ -1,4 +1,4 @@
-module Page.Cart exposing (Model, Msg, UpdateContext, ViewContext, VoteRecord, addVote, deserialize, init, serialize, update, view)
+module Page.Cart exposing (Model, Msg, UpdateContext, ViewContext, VoteRecord, addVote, deleteVote, deserialize, init, serialize, update, view)
 
 import Bytes.Comparable as Bytes exposing (Bytes)
 import Cardano.Address as Address exposing (Address, CredentialHash)
@@ -143,7 +143,7 @@ update ctx msg model =
 
 
 
--- Add a vote
+-- Add / Delete a vote
 
 
 {-| Add a vote to the cart.
@@ -178,6 +178,34 @@ addVote voter voteRecord model =
 
         Ready { votersIntents } ->
             Preparing { votersIntents = updateVotersIntents votersIntents, error = Nothing }
+
+
+{-| Delete a vote from the cart.
+Reset the state to Preparing.
+-}
+deleteVote : String -> String -> Model -> Model
+deleteVote voterIdStr actionIdStr model =
+    let
+        removeVoteFromCart intents =
+            Dict.update voterIdStr (Maybe.andThen removeActionId) intents
+
+        removeActionId : CartVoter -> Maybe CartVoter
+        removeActionId { voter, voteRecords } =
+            Dict.remove actionIdStr voteRecords
+                |> (\newDict ->
+                        if Dict.isEmpty newDict then
+                            Nothing
+
+                        else
+                            Just { voter = voter, voteRecords = newDict }
+                   )
+    in
+    case model of
+        Preparing { votersIntents } ->
+            Preparing { votersIntents = removeVoteFromCart votersIntents, error = Nothing }
+
+        Ready { votersIntents } ->
+            Preparing { votersIntents = removeVoteFromCart votersIntents, error = Nothing }
 
 
 
@@ -545,6 +573,7 @@ buildTx costModels localStateUtxos walletAddress votersIntents =
 type alias ViewContext a msg =
     { a
         | wrapMsg : Msg -> msg
+        , deleteVote : { voterIdStr : String, actionIdStr : String } -> msg
         , signingLink : Transaction -> List { keyName : String, keyHash : Bytes CredentialHash } -> List (Html msg) -> Html msg
     }
 
@@ -563,23 +592,23 @@ viewPreparingCart : ViewContext a msg -> CartPreparation -> Html msg
 viewPreparingCart ctx { votersIntents, error } =
     div []
         [ div [] <|
-            List.map viewVoterIntents (Dict.toList votersIntents)
+            List.map (viewVoterIntents ctx) (Dict.toList votersIntents)
         , Html.button [ HE.onClick <| ctx.wrapMsg BuildTx ] [ text "build Tx" ]
         , viewError error
         ]
 
 
-viewVoterIntents : ( String, { voter : Witness.Voter, voteRecords : Dict String VoteRecord } ) -> Html msg
-viewVoterIntents ( voterIdStr, { voteRecords } ) =
+viewVoterIntents : ViewContext a msg -> ( String, { voter : Witness.Voter, voteRecords : Dict String VoteRecord } ) -> Html msg
+viewVoterIntents ctx ( voterIdStr, { voteRecords } ) =
     div []
         -- TODO: improve voter details
         [ Html.h4 [] [ text <| "Voter: " ++ voterIdStr ]
-        , div [] <| List.map viewVoteRecord <| Dict.toList voteRecords
+        , div [] <| List.map (viewVoteRecord ctx voterIdStr) <| Dict.toList voteRecords
         ]
 
 
-viewVoteRecord : ( String, VoteRecord ) -> Html msg
-viewVoteRecord ( actionIdStr, { proposalTitle, voteIntent } ) =
+viewVoteRecord : ViewContext a msg -> String -> ( String, VoteRecord ) -> Html msg
+viewVoteRecord ctx voterIdStr ( actionIdStr, { proposalTitle, voteIntent } ) =
     let
         { vote, rationale } =
             voteIntent
@@ -600,6 +629,10 @@ viewVoteRecord ( actionIdStr, { proposalTitle, voteIntent } ) =
         , text actionIdStr
         , text " | rationale: "
         , text viewRationale
+        , text " "
+        , Html.button
+            [ HE.onClick <| ctx.deleteVote { voterIdStr = voterIdStr, actionIdStr = actionIdStr } ]
+            [ text "🗑" ]
         ]
 
 
@@ -616,7 +649,7 @@ viewReadyCart ctx { votersIntents, maxResources, currentResources, txFinalized }
             else
                 div [] <|
                     (Html.h3 [] [ text "Votes ready for submission" ]
-                        :: List.map viewVoterIntents (Dict.toList votersIntents)
+                        :: List.map (viewVoterIntents ctx) (Dict.toList votersIntents)
                     )
     in
     div []

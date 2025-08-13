@@ -311,6 +311,7 @@ type Msg
     | SigningPageMsg Page.Signing.Msg
       -- Cart page
     | CartPageMsg Page.Cart.Msg
+    | DeleteVote { voterIdStr : String, actionIdStr : String }
       -- Multisig DRep registration page
     | MultisigPageMsg Page.MultisigRegistration.Msg
       -- PDF page
@@ -667,6 +668,18 @@ update msg model =
                     Page.Cart.update ctx pageMsg cart
             in
             ( { model | cart = updatedCart }, cmds )
+
+        ( DeleteVote { voterIdStr, actionIdStr }, { cart, networkId } ) ->
+            let
+                updatedCart =
+                    Page.Cart.deleteVote voterIdStr actionIdStr cart
+
+                writeCartToDb =
+                    Storage.write { db = model.db, storeName = "app" } Page.Cart.serialize { key = "cart:" ++ networkIdToString networkId } updatedCart
+                        |> ConcurrentTask.map (always Ignore)
+            in
+            ConcurrentTask.attempt { pool = model.taskPool, send = sendTask, onComplete = OnTaskComplete } writeCartToDb
+                |> Tuple.mapFirst (\newTaskPool -> { model | taskPool = newTaskPool, cart = updatedCart })
 
         ( MultisigPageMsg pageMsg, { page } ) ->
             case page of
@@ -1392,6 +1405,7 @@ viewContent model =
         CartPage ->
             Page.Cart.view
                 { wrapMsg = CartPageMsg
+                , deleteVote = DeleteVote
                 , signingLink =
                     \tx expectedSigners ->
                         link (RouteSigning { networkId = model.networkId, tx = Just tx, expectedSigners = expectedSigners }) []
