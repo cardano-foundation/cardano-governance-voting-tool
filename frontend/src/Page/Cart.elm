@@ -1,4 +1,4 @@
-module Page.Cart exposing (Model, Msg, UpdateContext, ViewContext, VoteRecord, addVote, deleteVote, deserialize, init, serialize, update, view)
+module Page.Cart exposing (Model, Msg, UpdateContext, ViewContext, VoteRecord, addVote, contains, deleteVote, deserialize, get, init, serialize, update, view)
 
 import Bytes.Comparable as Bytes exposing (Bytes)
 import Cardano.Address as Address exposing (Address, CredentialHash)
@@ -73,6 +73,33 @@ type alias Resources =
     , steps : Int
     , mem : Int
     }
+
+
+{-| Check if a given proposal is present in the cart.
+-}
+contains : String -> ActionId -> Model -> Bool
+contains voterId actionId model =
+    get voterId actionId model
+        |> Maybe.map (\_ -> True)
+        |> Maybe.withDefault False
+
+
+{-| Try to retrieve a vote from the cart.
+-}
+get : String -> ActionId -> Model -> Maybe VoteRecord
+get voterId actionId model =
+    let
+        actionIdStr =
+            Gov.idToBech32 <| GovActionId actionId
+    in
+    case model of
+        Preparing { votersIntents } ->
+            Dict.get voterId votersIntents
+                |> Maybe.andThen (\{ voteRecords } -> Dict.get actionIdStr voteRecords)
+
+        Ready { votersIntents } ->
+            Dict.get voterId votersIntents
+                |> Maybe.andThen (\{ voteRecords } -> Dict.get actionIdStr voteRecords)
 
 
 

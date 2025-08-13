@@ -59,7 +59,7 @@ import List.Extra
 import Markdown.Block
 import Markdown.Parser as Md
 import Natural
-import Page.Cart as Cart
+import Page.Cart as Cart exposing (VoteRecord)
 import Platform.Cmd as Cmd
 import ProposalMetadata exposing (AuthorWitness, ProposalMetadata)
 import RemoteData exposing (RemoteData, WebData)
@@ -2568,6 +2568,7 @@ type alias ViewContext msg =
     , loadedWallet : Maybe LoadedWallet
     , drepId : Maybe (Bytes CredentialHash)
     , epoch : Maybe Int
+    , cart : Cart.Model
     , proposals : WebData (Dict String ActiveProposal)
     , jsonLdContexts : JsonLdContexts
     , costModels : Maybe CostModels
@@ -2991,12 +2992,17 @@ viewProposalSelectionForm ctx model =
                     ]
 
             RemoteData.Success proposalsDict ->
-                viewProposalList ctx proposalsDict model.visibleProposalCount
+                case model.voterStep of
+                    Done _ voter ->
+                        viewProposalList ctx (Just voter) proposalsDict model.visibleProposalCount
+
+                    _ ->
+                        viewProposalList ctx Nothing proposalsDict model.visibleProposalCount
         ]
 
 
-viewProposalList : ViewContext msg -> Dict String ActiveProposal -> Int -> Html msg
-viewProposalList ctx proposalsDict visibleCount =
+viewProposalList : ViewContext msg -> Maybe Witness.Voter -> Dict String ActiveProposal -> Int -> Html msg
+viewProposalList ctx maybeVoter proposalsDict visibleCount =
     if Dict.isEmpty proposalsDict then
         div [ HA.style "text-align" "center", HA.style "padding" "2rem", HA.style "color" "#666" ]
             [ text "No active proposals found." ]
@@ -3006,9 +3012,26 @@ viewProposalList ctx proposalsDict visibleCount =
             currentEpoch =
                 Maybe.withDefault 0 ctx.epoch
 
-            allProposals =
+            proposalsDictValues =
                 Dict.values proposalsDict
-                    |> List.filter (\p -> p.epoch_validity.end > currentEpoch)
+
+            maybeVoterId =
+                Maybe.map (Witness.toVoter >> Gov.voterToId >> Gov.idToBech32) maybeVoter
+
+            -- Remove proposals already in the cart from that list for this voter
+            allProposals =
+                case maybeVoterId of
+                    Just voterId ->
+                        proposalsDictValues
+                            |> List.filter
+                                (\p ->
+                                    (p.epoch_validity.end > currentEpoch)
+                                        && not (Cart.contains voterId p.id ctx.cart)
+                                )
+
+                    Nothing ->
+                        proposalsDictValues
+                            |> List.filter (\p -> p.epoch_validity.end > currentEpoch)
 
             totalProposalCount =
                 List.length allProposals
@@ -3019,6 +3042,17 @@ viewProposalList ctx proposalsDict visibleCount =
 
             hasMore =
                 totalProposalCount > visibleCount
+
+            -- Filter proposals already in the cart for this voter
+            proposalsInCart : List VoteRecord
+            proposalsInCart =
+                case maybeVoterId of
+                    Nothing ->
+                        []
+
+                    Just voterId ->
+                        proposalsDictValues
+                            |> List.filterMap (\p -> Cart.get voterId p.id ctx.cart)
         in
         div []
             [ Helper.proposalListContainer
@@ -3030,6 +3064,7 @@ viewProposalList ctx proposalsDict visibleCount =
                 visibleCount
                 totalProposalCount
                 (ctx.wrapMsg (ShowMoreProposals visibleCount))
+            , Helper.viewProposalsListInCart proposalsInCart
             ]
 
 

@@ -1379,6 +1379,7 @@ viewContent model =
                 , loadedWallet = loadedWallet
                 , drepId = model.walletDrepId
                 , epoch = RemoteData.toMaybe model.epoch
+                , cart = model.cart
                 , proposals = model.proposals
                 , jsonLdContexts = model.jsonLdContexts
                 , costModels = Maybe.map .costModels model.protocolParams
