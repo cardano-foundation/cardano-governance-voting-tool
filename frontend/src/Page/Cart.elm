@@ -601,6 +601,7 @@ type alias ViewContext a msg =
     { a
         | wrapMsg : Msg -> msg
         , deleteVote : { voterIdStr : String, actionIdStr : String } -> msg
+        , clearCart : msg
         , signingLink : Transaction -> List { keyName : String, keyHash : Bytes CredentialHash } -> List (Html msg) -> Html msg
     }
 
@@ -618,7 +619,8 @@ view ctx model =
 viewPreparingCart : ViewContext a msg -> CartPreparation -> Html msg
 viewPreparingCart ctx { votersIntents, error } =
     div []
-        [ div [] <|
+        [ Html.button [ HE.onClick ctx.clearCart ] [ text "Clear Cart" ]
+        , div [] <|
             List.map (viewVoterIntents ctx) (Dict.toList votersIntents)
         , Html.button [ HE.onClick <| ctx.wrapMsg BuildTx ] [ text "build Tx" ]
         , viewError error
@@ -681,6 +683,7 @@ viewReadyCart ctx { votersIntents, maxResources, currentResources, txFinalized }
     in
     div []
         [ viewResources maxResources currentResources
+        , Html.button [ HE.onClick ctx.clearCart ] [ text "Clear Cart" ]
         , viewVotersIntents
         , viewSigningButton ctx txFinalized
         ]
