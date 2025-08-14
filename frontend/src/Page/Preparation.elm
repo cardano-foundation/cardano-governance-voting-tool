@@ -31,14 +31,12 @@ import Bytes as ElmBytes
 import Bytes.Comparable as Bytes exposing (Bytes)
 import Cardano.Address as Address exposing (Address, Credential(..), CredentialHash, NetworkId(..))
 import Cardano.Cip30 as Cip30
-import Cardano.CoinSelection as CoinSelection
 import Cardano.Gov as Gov exposing (ActionId, Anchor, CostModels, Id(..), Vote)
 import Cardano.Pool as Pool
 import Cardano.Script as Script
 import Cardano.Transaction as Transaction exposing (Transaction, VKeyWitness)
 import Cardano.TxExamples exposing (prettyTx)
-import Cardano.TxIntent as TxIntent exposing (Fee(..), TxFinalized)
-import Cardano.Uplc as Uplc
+import Cardano.TxIntent exposing (TxFinalized)
 import Cardano.Utxo as Utxo exposing (Output, OutputReference, TransactionId)
 import Cardano.Witness as Witness
 import Cbor.Encode
@@ -61,6 +59,7 @@ import List.Extra
 import Markdown.Block
 import Markdown.Parser as Md
 import Natural
+import Page.Cart as Cart exposing (VoteRecord)
 import Platform.Cmd as Cmd
 import ProposalMetadata exposing (AuthorWitness, ProposalMetadata)
 import RemoteData exposing (RemoteData, WebData)
@@ -500,6 +499,7 @@ type MsgToParent
     | CachePoolInfo PoolInfo
     | CacheVoterGovId Gov.Id
     | CacheStorageConfig StorageConfig
+    | AddVoteToCart Witness.Voter Cart.VoteRecord
     | RunTask (ConcurrentTask String TaskCompleted)
     | BatchToParent MsgToParent MsgToParent
 
@@ -577,7 +577,7 @@ type Msg
     | GotIpfsAnswer (Result String IpfsAnswer)
     | AddOtherStorageButtonCLicked
       -- Build Tx Step
-    | BuildTxButtonClicked Vote
+    | AddVoteToCartButtonClicked Vote
     | ChangeVoteButtonClicked
 
 
@@ -1186,9 +1186,9 @@ innerUpdate ctx msg model =
                     )
 
         --
-        -- Build Tx Step
+        -- Add Vote to Cart
         --
-        BuildTxButtonClicked vote ->
+        AddVoteToCartButtonClicked vote ->
             case allPrepSteps ctx model of
                 Err error ->
                     ( { model | buildTxStep = Preparing { error = Just error } }
@@ -1196,73 +1196,19 @@ innerUpdate ctx msg model =
                     , Nothing
                     )
 
-                Ok { voter, actionId, rationaleAnchor, localStateUtxos, walletAddress, costModels } ->
+                Ok { voter, actionId, proposalTitle, rationaleAnchor } ->
                     let
-                        -- Use any address (enterprise / full) with the same payment cred
-                        -- as the one from the default wallet address to pay the fee
-                        walletOutputs =
-                            Dict.Any.values localStateUtxos
-
-                        potentialFeeSources =
-                            case Address.extractPubKeyHash walletAddress of
-                                Just paymentCred ->
-                                    walletOutputs
-                                        |> List.map (\output -> output.address)
-                                        |> List.filter (\addr -> Address.extractPubKeyHash addr == Just paymentCred)
-
-                                Nothing ->
-                                    []
-
-                        -- Helper function to gather free Ada for a given address
-                        -- Convert Natural amounts to Int (1 = 1 ada) for easy comparison
-                        freeAdaForAddress address =
-                            let
-                                freeAda output =
-                                    if output.address == address then
-                                        Utxo.freeAda output
-
-                                    else
-                                        Natural.zero
-                            in
-                            walletOutputs
-                                |> List.foldl (\output sum -> Natural.add sum <| freeAda output) Natural.zero
-                                -- divide by 1000000 to get ada amount from lovelace amount
-                                |> (\n -> n |> Natural.divBy (Natural.fromSafeInt 1000000))
-                                |> Maybe.withDefault Natural.zero
-                                |> Natural.toInt
-
-                        -- Pick the one with most free Ada as the payment source
-                        feeSource =
-                            List.sortBy freeAdaForAddress potentialFeeSources
-                                |> List.reverse
-                                |> List.head
-                                |> Maybe.withDefault walletAddress
-
-                        tryTx =
-                            [ TxIntent.Vote voter [ { actionId = actionId, vote = vote, rationale = Just rationaleAnchor } ]
-                            ]
-                                |> TxIntent.finalizeAdvanced
-                                    { govState = TxIntent.emptyGovernanceState
-                                    , localStateUtxos = localStateUtxos
-                                    , coinSelectionAlgo = CoinSelection.largestFirst
-                                    , evalScriptsCosts = Uplc.evalScriptsCosts Uplc.defaultVmConfig
-                                    , costModels = costModels
-                                    }
-                                    (AutoFee { paymentSource = feeSource })
-                                    []
+                        voteIntent =
+                            { actionId = actionId
+                            , vote = vote
+                            , rationale = Just rationaleAnchor
+                            }
                     in
-                    case tryTx of
-                        Err error ->
-                            ( { model | buildTxStep = Preparing { error = Just <| "Error while building the Tx: " ++ TxIntent.errorToString error } }
-                            , Cmd.none
-                            , Nothing
-                            )
-
-                        Ok tx ->
-                            ( { model | buildTxStep = Done { error = Nothing } tx }
-                            , Cmd.none
-                            , Nothing
-                            )
+                    -- TODO: update the model to mark proposals already in the cart
+                    ( model
+                    , Cmd.none
+                    , Just <| AddVoteToCart voter <| Cart.VoteRecord proposalTitle voteIntent
+                    )
 
         ChangeVoteButtonClicked ->
             ( { model | buildTxStep = Preparing { error = Nothing } }
@@ -2557,6 +2503,7 @@ handleRationaleIpfsAnswer model ipfsAnswer =
 type alias TxRequirements =
     { voter : Witness.Voter
     , actionId : ActionId
+    , proposalTitle : String
     , rationaleAnchor : Anchor
     , localStateUtxos : Utxo.RefDict Output
     , walletAddress : Address
@@ -2568,9 +2515,20 @@ allPrepSteps : { a | loadedWallet : Maybe LoadedWallet, costModels : Maybe CostM
 allPrepSteps { loadedWallet, costModels } m =
     case ( costModels, ( m.voterStep, m.pickProposalStep, m.rationaleSignatureStep ), ( m.permanentStorageStep, loadedWallet ) ) of
         ( Just theCostModels, ( Done _ voter, Done _ p, Done _ r ), ( Done _ s, Just { utxos, wallet } ) ) ->
+            let
+                proposalTitle =
+                    case p.metadata of
+                        RemoteData.Success metadata ->
+                            metadata.body.title
+                                |> Maybe.withDefault "??? Unknown Proposal Title"
+
+                        _ ->
+                            "??? Unknown Proposal Title"
+            in
             Ok
                 { voter = voter
                 , actionId = p.id
+                , proposalTitle = proposalTitle
                 , rationaleAnchor =
                     { url = "ipfs://" ++ s.jsonFile.cid
                     , dataHash =
@@ -2616,6 +2574,7 @@ type alias ViewContext msg =
     , loadedWallet : Maybe LoadedWallet
     , drepId : Maybe (Bytes CredentialHash)
     , epoch : Maybe Int
+    , cart : Cart.Model
     , proposals : WebData (Dict String ActiveProposal)
     , jsonLdContexts : JsonLdContexts
     , costModels : Maybe CostModels
@@ -3039,12 +2998,17 @@ viewProposalSelectionForm ctx model =
                     ]
 
             RemoteData.Success proposalsDict ->
-                viewProposalList ctx proposalsDict model.visibleProposalCount
+                case model.voterStep of
+                    Done _ voter ->
+                        viewProposalList ctx (Just voter) proposalsDict model.visibleProposalCount
+
+                    _ ->
+                        viewProposalList ctx Nothing proposalsDict model.visibleProposalCount
         ]
 
 
-viewProposalList : ViewContext msg -> Dict String ActiveProposal -> Int -> Html msg
-viewProposalList ctx proposalsDict visibleCount =
+viewProposalList : ViewContext msg -> Maybe Witness.Voter -> Dict String ActiveProposal -> Int -> Html msg
+viewProposalList ctx maybeVoter proposalsDict visibleCount =
     if Dict.isEmpty proposalsDict then
         div [ HA.style "text-align" "center", HA.style "padding" "2rem", HA.style "color" "#666" ]
             [ text "No active proposals found." ]
@@ -3054,9 +3018,26 @@ viewProposalList ctx proposalsDict visibleCount =
             currentEpoch =
                 Maybe.withDefault 0 ctx.epoch
 
-            allProposals =
+            proposalsDictValues =
                 Dict.values proposalsDict
-                    |> List.filter (\p -> p.epoch_validity.end > currentEpoch)
+
+            maybeVoterId =
+                Maybe.map (Witness.toVoter >> Gov.voterToId >> Gov.idToBech32) maybeVoter
+
+            -- Remove proposals already in the cart from that list for this voter
+            allProposals =
+                case maybeVoterId of
+                    Just voterId ->
+                        proposalsDictValues
+                            |> List.filter
+                                (\p ->
+                                    (p.epoch_validity.end > currentEpoch)
+                                        && not (Cart.contains voterId p.id ctx.cart)
+                                )
+
+                    Nothing ->
+                        proposalsDictValues
+                            |> List.filter (\p -> p.epoch_validity.end > currentEpoch)
 
             totalProposalCount =
                 List.length allProposals
@@ -3067,6 +3048,17 @@ viewProposalList ctx proposalsDict visibleCount =
 
             hasMore =
                 totalProposalCount > visibleCount
+
+            -- Filter proposals already in the cart for this voter
+            proposalsInCart : List VoteRecord
+            proposalsInCart =
+                case maybeVoterId of
+                    Nothing ->
+                        []
+
+                    Just voterId ->
+                        proposalsDictValues
+                            |> List.filterMap (\p -> Cart.get voterId p.id ctx.cart)
         in
         div []
             [ Helper.proposalListContainer
@@ -3078,6 +3070,7 @@ viewProposalList ctx proposalsDict visibleCount =
                 visibleCount
                 totalProposalCount
                 (ctx.wrapMsg (ShowMoreProposals visibleCount))
+            , Helper.viewProposalsListInCart proposalsInCart
             ]
 
 
@@ -4114,9 +4107,9 @@ viewBuildTxStep ctx model =
                         , HA.style "flex-wrap" "wrap"
                         , HA.style "gap" "1rem"
                         ]
-                        [ Helper.voteButton "Vote YES" "#10B981" (BuildTxButtonClicked Gov.VoteYes)
-                        , Helper.voteButton "Vote NO" "#EF4444" (BuildTxButtonClicked Gov.VoteNo)
-                        , Helper.voteButton "ABSTAIN" "#6B7280" (BuildTxButtonClicked Gov.VoteAbstain)
+                        [ Helper.voteButton "Vote YES" "#10B981" (AddVoteToCartButtonClicked Gov.VoteYes)
+                        , Helper.voteButton "Vote NO" "#EF4444" (AddVoteToCartButtonClicked Gov.VoteNo)
+                        , Helper.voteButton "ABSTAIN" "#6B7280" (AddVoteToCartButtonClicked Gov.VoteAbstain)
                         ]
                     , viewError error
                     ]

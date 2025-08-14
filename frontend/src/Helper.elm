@@ -10,7 +10,7 @@ module Helper exposing
     , viewStepWithCircle, viewPageHeader
     , PreconfVoter, viewVoterGrid, viewVoterCard, voterCustomCard, votingPowerDisplay, scriptInfoContainer, viewVoterCredDetails, viewVoterDetailsItem, viewCredInfo
     , viewUtxoRefForm, scriptSignerSection, scriptSignerCheckbox, viewIdentifiedVoterCard, viewVoterInfoItem
-    , proposalListContainer, showMoreButton, proposalCard, selectedProposalCard, proposalDetailsItem
+    , proposalListContainer, showMoreButton, proposalCard, selectedProposalCard, proposalDetailsItem, viewProposalsListInCart
     , storageConfigCard, storageMethodOption, storageProviderForm, storageProviderCard, storageConfigItem, addHeaderButton, storageHeaderInput
     , storageHeaderForm, storageInfoGrid, storageNotAvailableCard, storageUploadCard, uploadingSpinner, storageSuccessCard, fileInfoItem, externalLinkDisplay
     , rationaleCard, checkbox, rationaleMarkdownInput, rationaleTextArea, pdfAutogenCheckbox, voteNumberInput, referenceCard, referenceForm
@@ -78,7 +78,7 @@ and are potentially useful in multiple places.
 
 # Proposal Selection Components
 
-@docs proposalListContainer, showMoreButton, proposalCard, selectedProposalCard, proposalDetailsItem
+@docs proposalListContainer, showMoreButton, proposalCard, selectedProposalCard, proposalDetailsItem, viewProposalsListInCart
 
 
 # Storage Configuration Components
@@ -110,6 +110,7 @@ and are potentially useful in multiple places.
 
 -}
 
+import Cardano.TxIntent exposing (VoteIntent)
 import Html exposing (Html, div, text)
 import Html.Attributes as HA
 import Html.Events exposing (onCheck, onClick)
@@ -1444,6 +1445,22 @@ proposalDetailsItem label content =
             ]
             [ text (label ++ ":") ]
         , content
+        ]
+
+
+{-| Helper function to quickly view proposals that are already in the cart.
+-}
+viewProposalsListInCart : List { proposalTitle : String, voteIntent : VoteIntent } -> Html msg
+viewProposalsListInCart proposalsInCart =
+    div []
+        (List.map viewProposalRow proposalsInCart)
+
+
+viewProposalRow : { proposalTitle : String, voteIntent : VoteIntent } -> Html msg
+viewProposalRow proposal =
+    div []
+        [ text proposal.proposalTitle
+        , text " todo: display one-liner for the vote"
         ]
 
 
