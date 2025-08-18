@@ -1,4 +1,4 @@
-module Api exposing (ActiveProposal, ApiProvider, CcInfo, DrepInfo, IpfsAnswer(..), IpfsFile, PoolInfo, ProtocolParams, defaultApiProvider)
+module Api exposing (ActiveProposal, ApiProvider, CcInfo, DrepInfo, IpfsAnswer(..), IpfsFile, OnchainVote, PoolInfo, ProtocolParams, defaultApiProvider)
 
 {-| Module gathering all the remote HTTP calls made by the app.
 -}
@@ -6,7 +6,7 @@ module Api exposing (ActiveProposal, ApiProvider, CcInfo, DrepInfo, IpfsAnswer(.
 import Bytes as ElmBytes
 import Bytes.Comparable as Bytes exposing (Bytes)
 import Cardano.Address exposing (Credential(..), CredentialHash, NetworkId(..))
-import Cardano.Gov exposing (ActionId, CostModels)
+import Cardano.Gov as Gov exposing (ActionId, CostModels)
 import Cardano.Pool as Pool
 import Cardano.Transaction exposing (Transaction)
 import Cardano.Utxo exposing (TransactionId)
@@ -55,6 +55,7 @@ type alias ApiProvider msg =
     , getDrepInfo : NetworkId -> Credential -> (Result Http.Error DrepInfo -> msg) -> Cmd msg
     , getCcInfo : NetworkId -> Credential -> (Result Http.Error CcInfo -> msg) -> Cmd msg
     , getPoolLiveStake : NetworkId -> Bytes Pool.Id -> (Result Http.Error PoolInfo -> msg) -> Cmd msg
+    , getVotes : NetworkId -> Gov.Id -> (Result Http.Error (List OnchainVote) -> msg) -> Cmd msg
     , ipfsAddFileCustom : { rpc : String, headers : List ( String, String ), file : File } -> (Result String IpfsAnswer -> msg) -> Cmd msg
     , ipfsAddFileNmkr : { userId : String, apiToken : String, file : File } -> (Result String IpfsAnswer -> msg) -> Cmd msg
     , ipfsAddFileBlockfrost : { projectId : String, file : File } -> (Result String IpfsAnswer -> msg) -> Cmd msg
@@ -328,6 +329,41 @@ poolStakeDecoder poolId =
 
 
 
+-- On-chain votes
+
+
+type alias OnchainVote =
+    { voterId : String
+    , proposalId : String
+    , blockHeight : Int
+    , vote : Gov.Vote
+    }
+
+
+onchainVotesDecoder : Decoder (List OnchainVote)
+onchainVotesDecoder =
+    JD.list <|
+        JD.map4 OnchainVote
+            (JD.field "voter_id" JD.string)
+            (JD.field "proposal_id" JD.string)
+            (JD.field "block_height" JD.int)
+            (JD.field "vote" <| JD.map voteFromString JD.string)
+
+
+voteFromString : String -> Gov.Vote
+voteFromString str =
+    case String.toLower str of
+        "yes" ->
+            Gov.VoteYes
+
+        "no" ->
+            Gov.VoteNo
+
+        _ ->
+            Gov.VoteAbstain
+
+
+
 -- IPFS
 
 
@@ -567,6 +603,30 @@ defaultApiProvider =
                             ]
                         )
                 , expect = Http.expectJson toMsg (poolStakeDecoder poolId)
+                , timeout = Nothing
+                , tracker = Nothing
+                }
+
+    -- Load past votes for a given voter
+    , getVotes =
+        \networkId govId toMsg ->
+            let
+                selected_rows =
+                    [ "voter_id"
+                    , "proposal_id"
+                    , "block_height"
+                    , "vote"
+                    ]
+                        |> String.join ","
+            in
+            Http.request
+                { method = "GET"
+
+                -- TODO: improve efficiency by filtering out old epochs
+                , url = koiosUrl networkId ++ "/vote_list?select=" ++ selected_rows ++ "&voter_id=eq." ++ Gov.idToBech32 govId
+                , headers = [ Http.header "Authorization" <| "Bearer " ++ koiosApiToken ]
+                , body = Http.emptyBody
+                , expect = Http.expectJson toMsg onchainVotesDecoder
                 , timeout = Nothing
                 , tracker = Nothing
                 }

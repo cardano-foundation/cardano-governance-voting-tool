@@ -110,6 +110,7 @@ and are potentially useful in multiple places.
 
 -}
 
+import Cardano.Gov as Gov
 import Cardano.TxIntent exposing (VoteIntent)
 import Html exposing (Html, div, text)
 import Html.Attributes as HA
@@ -1260,8 +1261,8 @@ showMoreButton hasMore visibleCount totalCount clickMsg =
 
 {-| Card for an individual proposal
 -}
-proposalCard : { title : String, hashIsValid : Bool, isRatifying : Bool, abstract : String, actionType : String, linkUrl : String, linkHex : String, index : Int } -> msg -> Html msg -> Html msg
-proposalCard { title, hashIsValid, isRatifying, abstract, actionType, linkUrl, linkHex, index } selectMsg actionIcon =
+proposalCard : { title : String, hashIsValid : Bool, pastVote : Maybe Gov.Vote, isRatifying : Bool, abstract : String, actionType : String, linkUrl : String, linkHex : String, index : Int } -> msg -> Html msg -> Html msg
+proposalCard { title, hashIsValid, pastVote, isRatifying, abstract, actionType, linkUrl, linkHex, index } selectMsg actionIcon =
     div
         [ HA.style "border" "1px solid #E2E8F0"
         , HA.style "border-radius" "0.75rem"
@@ -1310,6 +1311,35 @@ proposalCard { title, hashIsValid, isRatifying, abstract, actionType, linkUrl, l
                         [ Html.span [] [ text "⚠️" ]
                         , text "INVALID HASH"
                         ]
+                , case pastVote of
+                    Nothing ->
+                        text ""
+
+                    Just vote ->
+                        let
+                            ( voteText, voteColor ) =
+                                case vote of
+                                    Gov.VoteYes ->
+                                        ( "voted YES", "#10B981" )
+
+                                    Gov.VoteNo ->
+                                        ( "voted NO", "#EF4444" )
+
+                                    Gov.VoteAbstain ->
+                                        ( "voted ABSTAIN", "#6B7280" )
+                        in
+                        Html.span
+                            [ HA.style "display" "inline-flex"
+                            , HA.style "align-items" "center"
+                            , HA.style "background-color" voteColor
+                            , HA.style "color" "white"
+                            , HA.style "font-weight" "bold"
+                            , HA.style "padding" "0.25rem 0.5rem"
+                            , HA.style "border-radius" "0.375rem"
+                            , HA.style "font-size" "0.875rem"
+                            , HA.style "gap" "0.25rem"
+                            ]
+                            [ text voteText ]
                 , if isRatifying then
                     Html.span
                         [ HA.style "display" "inline-flex"

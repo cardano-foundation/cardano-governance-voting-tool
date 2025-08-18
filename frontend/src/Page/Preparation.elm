@@ -25,7 +25,7 @@ The steps are sequential but allow going back to modify previous steps.
 
 -}
 
-import Api exposing (ActiveProposal, CcInfo, DrepInfo, IpfsAnswer(..), PoolInfo)
+import Api exposing (ActiveProposal, CcInfo, DrepInfo, IpfsAnswer(..), OnchainVote, PoolInfo)
 import Blake2b exposing (blake2b256)
 import Bytes as ElmBytes
 import Bytes.Comparable as Bytes exposing (Bytes)
@@ -46,6 +46,7 @@ import ConcurrentTask.Extra
 import ConcurrentTask.Http
 import Dict exposing (Dict)
 import Dict.Any
+import Dict.Extra
 import File exposing (File)
 import File.Select
 import Helper exposing (PreconfVoter)
@@ -141,6 +142,7 @@ type alias VoterPreparationForm =
     , drepInfo : WebData DrepInfo
     , ccInfo : WebData CcInfo
     , poolInfo : WebData PoolInfo
+    , votesInfo : WebData (Dict String (Dict String OnchainVote))
     , utxoRef : String
     , expectedSigners : Dict String { expected : Bool, key : Bytes CredentialHash }
     , error : Maybe String
@@ -154,6 +156,7 @@ initVoterForm =
     , drepInfo = RemoteData.NotAsked
     , ccInfo = RemoteData.NotAsked
     , poolInfo = RemoteData.NotAsked
+    , votesInfo = RemoteData.NotAsked
     , utxoRef = ""
     , expectedSigners = Dict.empty
     , error = Nothing
@@ -558,6 +561,7 @@ type Msg
     | GotDrepInfo (Result Http.Error DrepInfo)
     | GotCcInfo (Result Http.Error CcInfo)
     | GotPoolInfo (Result Http.Error PoolInfo)
+    | GotVotes (Result Http.Error (List Api.OnchainVote))
     | UtxoRefChange String
     | ToggleExpectedSigner String Bool
     | ValidateVoterFormButtonClicked
@@ -695,12 +699,12 @@ innerUpdate ctx msg model =
             case model.voterStep of
                 Preparing form ->
                     let
-                        ( newVoterStep, toParent ) =
+                        ( newVoterStep, cmds, toParent ) =
                             confirmVoter ctx form model.someRefUtxos
                                 |> saveValidVoter
                     in
                     ( { model | voterStep = newVoterStep }
-                    , Cmd.none
+                    , cmds
                     , toParent
                     )
 
@@ -787,6 +791,24 @@ innerUpdate ctx msg model =
                     , Just <| CachePoolInfo poolInfo
                     )
 
+        GotVotes result ->
+            case result of
+                Err error ->
+                    ( updateVoterForm (\form -> { form | votesInfo = RemoteData.Failure error }) model
+                    , Cmd.none
+                    , Nothing
+                    )
+
+                Ok votes ->
+                    -- This isn’t info that should prevent voting,
+                    -- se we can just save that data inside the voter form maybe,
+                    -- so we don’t have to modify the Done type of Witness.voter?
+                    -- That information will be reloaded on page reload or on voter changes.
+                    ( updateVoterForm (\form -> { form | votesInfo = RemoteData.Success <| addVotesInfo votes form.votesInfo }) model
+                    , Cmd.none
+                    , Nothing
+                    )
+
         UtxoRefChange utxoRef ->
             ( updateVoterForm (\form -> { form | utxoRef = utxoRef }) model
             , Cmd.none
@@ -797,7 +819,7 @@ innerUpdate ctx msg model =
             case model.voterStep of
                 Done prep _ ->
                     ( { model | voterStep = Preparing prep }
-                      -- TODO: also reset all dependents steps
+                      -- TODO: also reset all dependents steps???
                       -- |> resetProposal
                       -- |> resetRationaleCreation
                       -- |> resetRationaleSignature
@@ -1573,29 +1595,30 @@ checkGovId ctx str =
                         }
 
 
-saveValidVoter : ( Step VoterPreparationForm Witness.Voter Witness.Voter, Maybe MsgToParent ) -> ( Step VoterPreparationForm Witness.Voter Witness.Voter, Maybe MsgToParent )
-saveValidVoter ( step, msgToParent ) =
+saveValidVoter : ( Step VoterPreparationForm Witness.Voter Witness.Voter, Cmd msg, Maybe MsgToParent ) -> ( Step VoterPreparationForm Witness.Voter Witness.Voter, Cmd msg, Maybe MsgToParent )
+saveValidVoter ( step, cmds, msgToParent ) =
     case step of
         Done form _ ->
             case ( form.govId, msgToParent ) of
                 ( Just govId, Nothing ) ->
-                    ( step, Just <| CacheVoterGovId govId )
+                    ( step, cmds, Just <| CacheVoterGovId govId )
 
                 ( Just govId, Just msg ) ->
-                    ( step, Just <| BatchToParent msg <| CacheVoterGovId govId )
+                    ( step, cmds, Just <| BatchToParent msg <| CacheVoterGovId govId )
 
                 ( Nothing, _ ) ->
-                    ( step, msgToParent )
+                    ( step, cmds, msgToParent )
 
         _ ->
-            ( step, msgToParent )
+            ( step, cmds, msgToParent )
 
 
-confirmVoter : UpdateContext msg -> VoterPreparationForm -> Utxo.RefDict Output -> ( Step VoterPreparationForm Witness.Voter Witness.Voter, Maybe MsgToParent )
+confirmVoter : UpdateContext msg -> VoterPreparationForm -> Utxo.RefDict Output -> ( Step VoterPreparationForm Witness.Voter Witness.Voter, Cmd msg, Maybe MsgToParent )
 confirmVoter ctx form loadedRefUtxos =
     let
         justError errorMsg =
             ( Preparing { form | error = Just errorMsg }
+            , Cmd.none
             , Nothing
             )
     in
@@ -1609,22 +1632,25 @@ confirmVoter ctx form loadedRefUtxos =
         Just (GovActionId _) ->
             justError "The proposal to vote on is selected later. For now please provide you voter ID. It can be a bech32 pool ID, a CIP 129 DRep ID or CC hot ID."
 
-        Just (PoolId poolId) ->
+        Just ((PoolId poolId) as govId) ->
             ( Done form <| Witness.WithPoolCred poolId
+            , Cmd.map ctx.wrapMsg <| Api.defaultApiProvider.getVotes ctx.networkId govId GotVotes
             , Nothing
             )
 
-        Just (DrepId (VKeyHash keyHash)) ->
+        Just ((DrepId (VKeyHash keyHash)) as govId) ->
             ( Done form <| Witness.WithDrepCred (Witness.WithKey keyHash)
+            , Cmd.map ctx.wrapMsg <| Api.defaultApiProvider.getVotes ctx.networkId govId GotVotes
             , Nothing
             )
 
-        Just (CcHotCredId (VKeyHash keyHash)) ->
+        Just ((CcHotCredId (VKeyHash keyHash)) as govId) ->
             ( Done form <| Witness.WithCommitteeHotCred (Witness.WithKey keyHash)
+            , Cmd.map ctx.wrapMsg <| Api.defaultApiProvider.getVotes ctx.networkId govId GotVotes
             , Nothing
             )
 
-        Just (DrepId (ScriptHash _)) ->
+        Just ((DrepId (ScriptHash _)) as govId) ->
             case form.scriptInfo of
                 RemoteData.NotAsked ->
                     justError "Script info isn’t loading yet govId is a script. Please report the error."
@@ -1636,9 +1662,9 @@ confirmVoter ctx form loadedRefUtxos =
                     justError <| "There was an error loading the script info. Are you sure you registered? " ++ Debug.toString error
 
                 RemoteData.Success scriptInfo ->
-                    validateScriptVoter ctx form loadedRefUtxos Witness.WithDrepCred scriptInfo
+                    validateScriptVoter ctx form loadedRefUtxos Witness.WithDrepCred scriptInfo govId
 
-        Just (CcHotCredId (ScriptHash _)) ->
+        Just ((CcHotCredId (ScriptHash _)) as govId) ->
             case form.scriptInfo of
                 RemoteData.NotAsked ->
                     justError "Script info isn’t loading yet govId is a script. Please report the error."
@@ -1650,14 +1676,15 @@ confirmVoter ctx form loadedRefUtxos =
                     justError <| "There was an error loading the script info. Are you sure you registered? " ++ Debug.toString error
 
                 RemoteData.Success scriptInfo ->
-                    validateScriptVoter ctx form loadedRefUtxos Witness.WithCommitteeHotCred scriptInfo
+                    validateScriptVoter ctx form loadedRefUtxos Witness.WithCommitteeHotCred scriptInfo govId
 
 
-validateScriptVoter : UpdateContext msg -> VoterPreparationForm -> Utxo.RefDict Output -> (Witness.Credential -> Witness.Voter) -> ScriptInfo -> ( Step VoterPreparationForm Witness.Voter Witness.Voter, Maybe MsgToParent )
-validateScriptVoter ctx form loadedRefUtxos toVoter scriptInfo =
+validateScriptVoter : UpdateContext msg -> VoterPreparationForm -> Utxo.RefDict Output -> (Witness.Credential -> Witness.Voter) -> ScriptInfo -> Gov.Id -> ( Step VoterPreparationForm Witness.Voter Witness.Voter, Cmd msg, Maybe MsgToParent )
+validateScriptVoter ctx form loadedRefUtxos toVoter scriptInfo govId =
     let
         justError errorMsg =
             ( Preparing { form | error = Just errorMsg }
+            , Cmd.none
             , Nothing
             )
     in
@@ -1675,6 +1702,7 @@ validateScriptVoter ctx form loadedRefUtxos toVoter scriptInfo =
                                 }
                         in
                         ( Done { form | error = Nothing } <| toVoter <| Witness.WithScript scriptInfo.scriptHash <| Witness.Native witness
+                        , Cmd.map ctx.wrapMsg <| Api.defaultApiProvider.getVotes ctx.networkId govId GotVotes
                         , Nothing
                         )
 
@@ -1691,6 +1719,7 @@ validateScriptVoter ctx form loadedRefUtxos toVoter scriptInfo =
                             }
                     in
                     ( Done { form | error = Nothing } <| toVoter <| Witness.WithScript scriptInfo.scriptHash <| Witness.Plutus witness
+                    , Cmd.map ctx.wrapMsg <| Api.defaultApiProvider.getVotes ctx.networkId govId GotVotes
                     , Nothing
                     )
 
@@ -1712,11 +1741,13 @@ validateScriptVoter ctx form loadedRefUtxos toVoter scriptInfo =
                     in
                     if Dict.Any.member outputRef loadedRefUtxos then
                         ( Done { form | error = Nothing } voter
+                        , Cmd.map ctx.wrapMsg <| Api.defaultApiProvider.getVotes ctx.networkId govId GotVotes
                         , Nothing
                         )
 
                     else
                         ( Validating form voter
+                        , Cmd.map ctx.wrapMsg <| Api.defaultApiProvider.getVotes ctx.networkId govId GotVotes
                         , Api.defaultApiProvider.retrieveTx ctx.networkId outputRef.transactionId
                             |> Storage.cacheWrap
                                 { db = ctx.db, storeName = "tx" }
@@ -1767,6 +1798,61 @@ utxoRefFromStr str =
 
         _ ->
             Err "An output reference must have the shape: {txid}#0, for example: 10e7c91aca541c47c2a03debf6ebfc894ce553d0d0d3c01d053ebfca4e2893cb#0"
+
+
+addVotesInfo : List OnchainVote -> WebData (Dict String (Dict String OnchainVote)) -> Dict String (Dict String OnchainVote)
+addVotesInfo votes webdata =
+    let
+        newVotesAsDict : Dict String (Dict String OnchainVote)
+        newVotesAsDict =
+            Dict.Extra.groupBy .voterId votes
+                -- Dict String (List OnchainVote)
+                |> Dict.map
+                    (\_ voterVotes ->
+                        Dict.Extra.groupBy .proposalId voterVotes
+                            |> keepNewestVoteInList
+                    )
+
+        -- We make the assumption that the newest votes
+        -- are first in the list, since that’s how Koios
+        -- seems to behave.
+        -- TODO: actually check the blockHeight,
+        -- to be more robust to Koios changes,
+        -- even if that still would not be a perfect solution.
+        keepNewestVoteInList : Dict String (List OnchainVote) -> Dict String OnchainVote
+        keepNewestVoteInList dict =
+            Dict.foldl
+                (\key value acc ->
+                    case List.head value of
+                        Nothing ->
+                            acc
+
+                        Just firstValue ->
+                            Dict.insert key firstValue acc
+                )
+                Dict.empty
+                dict
+    in
+    case webdata of
+        RemoteData.Success oldVotesAsDict ->
+            let
+                keepNewestVote : Dict String OnchainVote -> Dict String OnchainVote -> Dict String OnchainVote
+                keepNewestVote oldVotes newVotes =
+                    Dict.Extra.unionWith
+                        (\_ v1 v2 ->
+                            if v2.blockHeight > v1.blockHeight then
+                                v2
+
+                            else
+                                v1
+                        )
+                        oldVotes
+                        newVotes
+            in
+            Dict.Extra.unionWith (always keepNewestVote) oldVotesAsDict newVotesAsDict
+
+        _ ->
+            newVotesAsDict
 
 
 
@@ -3038,16 +3124,19 @@ viewProposalSelectionForm ctx model =
 
             RemoteData.Success proposalsDict ->
                 case model.voterStep of
-                    Done _ voter ->
-                        viewProposalList ctx (Just voter) proposalsDict model.visibleProposalCount
+                    Preparing form ->
+                        viewProposalList ctx form Nothing proposalsDict model.visibleProposalCount
 
-                    _ ->
-                        viewProposalList ctx Nothing proposalsDict model.visibleProposalCount
+                    Validating form _ ->
+                        viewProposalList ctx form Nothing proposalsDict model.visibleProposalCount
+
+                    Done form voter ->
+                        viewProposalList ctx form (Just voter) proposalsDict model.visibleProposalCount
         ]
 
 
-viewProposalList : ViewContext msg -> Maybe Witness.Voter -> Dict String ActiveProposal -> Int -> Html msg
-viewProposalList ctx maybeVoter proposalsDict visibleCount =
+viewProposalList : ViewContext msg -> VoterPreparationForm -> Maybe Witness.Voter -> Dict String ActiveProposal -> Int -> Html msg
+viewProposalList ctx form maybeVoter proposalsDict visibleCount =
     if Dict.isEmpty proposalsDict then
         div [ HA.style "text-align" "center", HA.style "padding" "2rem", HA.style "color" "#666" ]
             [ text "No active proposals found." ]
@@ -3088,6 +3177,15 @@ viewProposalList ctx maybeVoter proposalsDict visibleCount =
             hasMore =
                 totalProposalCount > visibleCount
 
+            getPastVote actionId =
+                maybeVoterId
+                    |> Maybe.andThen
+                        (\voterId ->
+                            RemoteData.toMaybe form.votesInfo
+                                |> Maybe.andThen (Dict.get voterId)
+                                |> Maybe.andThen (Dict.get <| Gov.idToBech32 <| GovActionId actionId)
+                        )
+
             -- Filter proposals already in the cart for this voter
             proposalsInCart : List VoteRecord
             proposalsInCart =
@@ -3103,7 +3201,7 @@ viewProposalList ctx maybeVoter proposalsDict visibleCount =
             [ Helper.proposalListContainer
                 "Select a proposal to vote on"
                 totalProposalCount
-                (List.map (viewProposalCardHelper ctx.wrapMsg ctx.networkId ctx.epoch) visibleProposals)
+                (List.map (viewProposalCardHelper ctx.wrapMsg ctx.networkId ctx.epoch getPastVote) visibleProposals)
             , Helper.showMoreButton
                 hasMore
                 visibleCount
@@ -3113,8 +3211,8 @@ viewProposalList ctx maybeVoter proposalsDict visibleCount =
             ]
 
 
-viewProposalCardHelper : (Msg -> msg) -> NetworkId -> Maybe Int -> ActiveProposal -> Html msg
-viewProposalCardHelper wrapMsg networkId currentEpoch proposal =
+viewProposalCardHelper : (Msg -> msg) -> NetworkId -> Maybe Int -> (ActionId -> Maybe OnchainVote) -> ActiveProposal -> Html msg
+viewProposalCardHelper wrapMsg networkId currentEpoch getPastVote proposal =
     let
         idString =
             Gov.actionIdToString proposal.id
@@ -3126,6 +3224,10 @@ viewProposalCardHelper wrapMsg networkId currentEpoch proposal =
 
                 _ ->
                     True
+
+        pastVote =
+            getPastVote proposal.id
+                |> Maybe.map .vote
 
         title =
             case proposal.metadata of
@@ -3157,6 +3259,7 @@ viewProposalCardHelper wrapMsg networkId currentEpoch proposal =
     in
     Helper.proposalCard
         { hashIsValid = hashIsValid
+        , pastVote = pastVote
         , isRatifying = proposal.ratified == currentEpoch
         , title = title
         , abstract = abstract
