@@ -336,7 +336,12 @@ type alias StorageForm =
 
 initStorageForm : { label : String, description : String } -> StorageForm
 initStorageForm ipfsPreconfig =
-    { storageMethod = PreconfigIPFS ipfsPreconfig
+    initStorageFormWithMethod <| PreconfigIPFS ipfsPreconfig
+
+
+initStorageFormWithMethod : StorageMethod -> StorageForm
+initStorageFormWithMethod method =
+    { storageMethod = method
     , nmkrUserId = ""
     , nmkrApiToken = ""
     , blockfrostProjectId = ""
@@ -344,6 +349,34 @@ initStorageForm ipfsPreconfig =
     , headers = [ ( "Authorization", "Basic {token}" ) ]
     , error = Nothing
     }
+
+
+storageFormFromConfig : StorageConfig -> StorageForm
+storageFormFromConfig config =
+    case config of
+        UsePreconfigIpfs preconfig ->
+            initStorageForm preconfig
+
+        UseBlockfrostIpfs { projectId } ->
+            let
+                form =
+                    initStorageFormWithMethod BlockfrostIPFS
+            in
+            { form | blockfrostProjectId = projectId }
+
+        UseNmkrIpfs { userId, apiToken } ->
+            let
+                form =
+                    initStorageFormWithMethod NmkrIPFS
+            in
+            { form | nmkrUserId = userId, nmkrApiToken = apiToken }
+
+        UseCustomIpfs { ipfsServer, headers } ->
+            let
+                form =
+                    initStorageFormWithMethod CustomIPFS
+            in
+            { form | ipfsServer = ipfsServer, headers = headers }
 
 
 type StorageConfig
@@ -1742,35 +1775,8 @@ utxoRefFromStr str =
 
 setLastStorageConfig : StorageConfig -> Model -> ( Model, Msg )
 setLastStorageConfig storageConfig (Model innerModel) =
-    let
-        form =
-            case storageConfig of
-                UsePreconfigIpfs labelAndDescription ->
-                    initStorageForm labelAndDescription
-
-                UseBlockfrostIpfs { label, description, projectId } ->
-                    let
-                        empty =
-                            initStorageForm { label = label, description = description }
-                    in
-                    { empty | blockfrostProjectId = projectId }
-
-                UseNmkrIpfs { label, description, userId, apiToken } ->
-                    let
-                        empty =
-                            initStorageForm { label = label, description = description }
-                    in
-                    { empty | nmkrUserId = userId, nmkrApiToken = apiToken }
-
-                UseCustomIpfs { label, description, ipfsServer, headers } ->
-                    let
-                        empty =
-                            initStorageForm { label = label, description = description }
-                    in
-                    { empty | ipfsServer = ipfsServer, headers = headers }
-    in
-    ( Model { innerModel | storageConfigStep = Preparing form }
-    , ValidateStorageConfigButtonClicked
+    ( Model { innerModel | storageConfigStep = Done (storageFormFromConfig storageConfig) storageConfig }
+    , NoMsg
     )
 
 
