@@ -3152,6 +3152,37 @@ viewProposalList ctx form maybeVoter proposalsDict visibleCount =
             maybeVoterId =
                 Maybe.map (Witness.toVoter >> Gov.voterToId >> Gov.idToBech32) maybeVoter
 
+            -- Helper function to filter proposals based on the current voter role
+            roleCanVoteOn actionType =
+                case maybeVoter of
+                    Nothing ->
+                        True
+
+                    Just (Witness.WithDrepCred _) ->
+                        True
+
+                    Just (Witness.WithPoolCred _) ->
+                        case actionType of
+                            "TreasuryWithdrawals" ->
+                                False
+
+                            "NewConstitution" ->
+                                False
+
+                            _ ->
+                                True
+
+                    Just (Witness.WithCommitteeHotCred _) ->
+                        case actionType of
+                            "NewCommittee" ->
+                                False
+
+                            "NoConfidence" ->
+                                False
+
+                            _ ->
+                                True
+
             -- Remove proposals already in the cart from that list for this voter
             allProposals =
                 case maybeVoterId of
@@ -3160,6 +3191,7 @@ viewProposalList ctx form maybeVoter proposalsDict visibleCount =
                             |> List.filter
                                 (\p ->
                                     (p.epoch_validity.end > currentEpoch)
+                                        && roleCanVoteOn p.actionType
                                         && not (Cart.contains voterId p.id ctx.cart)
                                 )
 
