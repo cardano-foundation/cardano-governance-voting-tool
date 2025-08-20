@@ -1209,6 +1209,9 @@ updateModelWithPrepToParentMsg msgToParent model =
             ConcurrentTask.attempt { pool = model.taskPool, send = sendTask, onComplete = OnTaskComplete } writeCartToDb
                 |> Tuple.mapFirst (\newTaskPool -> { model | taskPool = newTaskPool, cart = updatedCart })
 
+        Just Page.Preparation.GoToCart ->
+            handleUrlChange (RouteCart { networkId = model.networkId }) model
+
         Just (Page.Preparation.RunTask task) ->
             ConcurrentTask.attempt { pool = model.taskPool, send = sendTask, onComplete = OnTaskComplete }
                 (ConcurrentTask.map PreparationTaskCompleted task)
