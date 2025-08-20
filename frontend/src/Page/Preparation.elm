@@ -703,7 +703,7 @@ innerUpdate ctx msg model =
                         { model | reloadedLastVoter = False }
                       -- If we are reloading the last voter,
                       -- confirm automatically the voter’s gov ID.
-                    , if model.reloadedLastVoter then
+                    , if model.reloadedLastVoter && isKeyVoter govId then
                         Cmd.map ctx.wrapMsg <|
                             Cmd.batch [ cmd, Cmd.Extra.perform ValidateVoterFormButtonClicked ]
 
@@ -1336,6 +1336,24 @@ updateVoterForm f ({ voterStep } as model) =
 
         Done form done ->
             { model | voterStep = Done (f form) done }
+
+
+{-| Check if the voter is using a public key and not a script.
+-}
+isKeyVoter : Gov.Id -> Bool
+isKeyVoter govId =
+    case govId of
+        Gov.CcHotCredId (VKeyHash _) ->
+            True
+
+        Gov.DrepId (VKeyHash _) ->
+            True
+
+        Gov.PoolId _ ->
+            True
+
+        _ ->
+            False
 
 
 type alias GovIdCheck =
