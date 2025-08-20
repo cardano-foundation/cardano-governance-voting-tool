@@ -1214,7 +1214,6 @@ innerUpdate ctx msg model =
                             , rationale = Just rationaleAnchor
                             }
                     in
-                    -- TODO: update the model to mark proposals already in the cart
                     ( model
                     , Cmd.none
                     , Just <| AddVoteToCart voter <| Cart.VoteRecord proposalTitle voteIntent

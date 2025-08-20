@@ -70,6 +70,7 @@ import Html.Events exposing (preventDefaultOn)
 import Http
 import Json.Decode as JD exposing (Decoder, Value)
 import Json.Encode as JE
+import List.Extra
 import Page.Cart
 import Page.Disclaimer
 import Page.MultisigRegistration
@@ -168,6 +169,7 @@ type alias Model =
     , networkDropdownIsOpen : Bool
     , walletsDiscovered : List WalletDescriptor
     , wallet : Maybe Cip30.Wallet
+    , lastConnectedWalletId : Maybe String
     , walletUtxos : Maybe (Utxo.RefDict Output)
     , walletDrepId : Maybe (Bytes CredentialHash)
     , protocolParams : Maybe ProtocolParams
@@ -200,6 +202,7 @@ type Page
 
 type TaskCompleted
     = Ignore
+    | GotLastConnectedWalletId (Result String String)
     | GotLastVoter (Maybe Gov.Id)
     | GotLastStorageConfig Page.Preparation.StorageConfig
     | GotProposalMetadataTask String (Result String ProposalMetadata)
@@ -225,6 +228,13 @@ initHelper route config =
         ( model, cmd ) =
             handleUrlChange route (initialModel config)
 
+        loadLastConnectedWalletId =
+            Storage.read { db = config.db, storeName = "app" }
+                JD.string
+                { key = "walletId" }
+                |> ConcurrentTask.Extra.toResult
+                |> ConcurrentTask.map GotLastConnectedWalletId
+
         loadCart =
             Storage.read { db = config.db, storeName = "app" }
                 Page.Cart.deserialize
@@ -233,14 +243,17 @@ initHelper route config =
                 |> ConcurrentTask.onError (\_ -> ConcurrentTask.succeed Ignore)
 
         ( updatedTaskPool, tasksCmds ) =
-            ConcurrentTask.attempt { pool = model.taskPool, send = sendTask, onComplete = OnTaskComplete } loadCart
+            ConcurrentTask.Extra.attemptEach
+                { pool = model.taskPool, send = sendTask, onComplete = OnTaskComplete }
+                [ loadLastConnectedWalletId
+                , loadCart
+                ]
     in
     ( { model | taskPool = updatedTaskPool }
     , Cmd.batch
         [ cmd
-        , toWallet (Cip30.encodeRequest Cip30.discoverWallets)
         , Api.defaultApiProvider.loadProtocolParams model.networkId GotProtocolParams
-        , tasksCmds
+        , Cmd.batch tasksCmds
         ]
     )
 
@@ -263,6 +276,7 @@ initialModel { jsonLdContexts, db, networkId, ipfsPreconfig, voterPreconfig } =
     , networkDropdownIsOpen = False
     , walletsDiscovered = []
     , wallet = Nothing
+    , lastConnectedWalletId = Nothing
     , walletUtxos = Nothing
     , walletDrepId = Nothing
     , protocolParams = Nothing
@@ -816,7 +830,7 @@ update msg model =
             ( model, toWallet (Cip30.encodeRequest (Cip30.enableWallet { id = id, extensions = List.filter (\ext -> ext == 95) supportedExtensions, watchInterval = Just 5 })) )
 
         ( DisconnectWalletClicked, _ ) ->
-            ( { model | wallet = Nothing, walletUtxos = Nothing, walletDrepId = Nothing }
+            ( { model | wallet = Nothing, lastConnectedWalletId = Nothing, walletUtxos = Nothing, walletDrepId = Nothing }
             , Cmd.none
             )
 
@@ -986,13 +1000,45 @@ handleWalletResponse response model =
     case response of
         -- We just discovered available wallets
         Cip30.AvailableWallets wallets ->
-            ( { model | walletsDiscovered = wallets }
-            , Cmd.none
-            )
+            let
+                -- If the wallet isn’t connected already,
+                -- and if the last connected wallet is enabled in the discovered list,
+                -- then try to connect to it.
+                shouldAutoReconnect : Maybe WalletDescriptor
+                shouldAutoReconnect =
+                    if model.wallet == Nothing then
+                        List.Extra.find (\{ id, isEnabled } -> isEnabled && Just id == model.lastConnectedWalletId) wallets
+
+                    else
+                        Nothing
+            in
+            case shouldAutoReconnect of
+                Just { id, supportedExtensions } ->
+                    ( { model | walletsDiscovered = wallets }
+                    , toWallet (Cip30.encodeRequest (Cip30.enableWallet { id = id, extensions = List.filter (\ext -> ext == 95) supportedExtensions, watchInterval = Just 5 }))
+                    )
+
+                Nothing ->
+                    ( { model | walletsDiscovered = wallets }
+                    , Cmd.none
+                    )
 
         -- We just connected to the wallet, let’s ask for all that is still missing
         Cip30.EnabledWallet wallet ->
-            ( { model | wallet = Just wallet, walletUtxos = Nothing }
+            let
+                saveConnectedWalletId =
+                    Storage.write { db = model.db, storeName = "app" } JE.string { key = "walletId" } (Cip30.walletDescriptor wallet).id
+                        |> ConcurrentTask.map (always Ignore)
+
+                ( updatedTaskPool, saveConnectedWalletIdCmd ) =
+                    ConcurrentTask.attempt { pool = model.taskPool, send = sendTask, onComplete = OnTaskComplete } saveConnectedWalletId
+            in
+            ( { model
+                | wallet = Just wallet
+                , walletUtxos = Nothing
+                , lastConnectedWalletId = Just (Cip30.walletDescriptor wallet).id
+                , taskPool = updatedTaskPool
+              }
             , Cmd.batch
                 -- Retrieve UTXOs from the main wallet
                 [ Cip30.getUtxos wallet { amount = Nothing, paginate = Nothing }
@@ -1007,6 +1053,9 @@ handleWalletResponse response model =
 
                   else
                     Cmd.none
+
+                -- Save the connected wallet ID to reconnect it automatically next time
+                , saveConnectedWalletIdCmd
                 ]
             )
 
@@ -1197,6 +1246,19 @@ handleCompletedTask response model =
         ( ConcurrentTask.Success Ignore, _ ) ->
             ( model, Cmd.none )
 
+        ( ConcurrentTask.Success (GotLastConnectedWalletId walletIdResult), _ ) ->
+            -- Discover wallets after having loaded the last connected wallet ID
+            case walletIdResult of
+                Ok walletId ->
+                    ( { model | lastConnectedWalletId = Just walletId }
+                    , toWallet (Cip30.encodeRequest Cip30.discoverWallets)
+                    )
+
+                Err _ ->
+                    ( model
+                    , toWallet (Cip30.encodeRequest Cip30.discoverWallets)
+                    )
+
         ( ConcurrentTask.Success (GotLastVoter maybeGovId), PreparationPage pageModel ) ->
             let
                 ( newPageModel, pageCmd ) =
@@ -1333,11 +1395,7 @@ viewHeader : Model -> Html Msg
 viewHeader model =
     let
         navigationItems =
-            [ { label = "Home"
-              , link = link RouteLanding
-              , isActive = model.page == LandingPage
-              }
-            , { label = "Vote Preparation"
+            [ { label = "Vote Preparation"
               , link = link <| RoutePreparation { networkId = model.networkId }
               , isActive =
                     case model.page of
