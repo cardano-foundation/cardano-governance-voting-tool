@@ -1388,11 +1388,7 @@ viewHeader : Model -> Html Msg
 viewHeader model =
     let
         navigationItems =
-            [ { label = "Home"
-              , link = link RouteLanding
-              , isActive = model.page == LandingPage
-              }
-            , { label = "Vote Preparation"
+            [ { label = "Vote Preparation"
               , link = link <| RoutePreparation { networkId = model.networkId }
               , isActive =
                     case model.page of
