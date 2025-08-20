@@ -27,16 +27,15 @@ The steps are sequential but allow going back to modify previous steps.
 
 import Api exposing (ActiveProposal, CcInfo, DrepInfo, IpfsAnswer(..), OnchainVote, PoolInfo)
 import Blake2b exposing (blake2b256)
+import Browser.Dom
 import Bytes as ElmBytes
 import Bytes.Comparable as Bytes exposing (Bytes)
-import Cardano.Address as Address exposing (Address, Credential(..), CredentialHash, NetworkId(..))
+import Cardano.Address exposing (Credential(..), CredentialHash, NetworkId(..))
 import Cardano.Cip30 as Cip30
 import Cardano.Gov as Gov exposing (ActionId, Anchor, CostModels, Id(..), Vote)
 import Cardano.Pool as Pool
 import Cardano.Script as Script
 import Cardano.Transaction as Transaction exposing (Transaction, VKeyWitness)
-import Cardano.TxExamples exposing (prettyTx)
-import Cardano.TxIntent exposing (TxFinalized)
 import Cardano.Utxo as Utxo exposing (Output, OutputReference, TransactionId)
 import Cardano.Witness as Witness
 import Cbor.Encode
@@ -94,7 +93,7 @@ type alias InnerModel =
     , rationaleCreationStep : Step RationaleForm Rationale Rationale
     , rationaleSignatureStep : Step RationaleSignatureForm {} RationaleSignature
     , permanentStorageStep : Step { error : Maybe String } {} Storage
-    , buildTxStep : Step BuildTxPrep {} TxFinalized
+    , buildTxStep : Step BuildTxPrep {} {}
     , signTxStep : Step { error : Maybe String } SigningTx SignedTx
     , visibleProposalCount : Int
     }
@@ -539,6 +538,7 @@ type MsgToParent
     | CacheVoterGovId Gov.Id
     | CacheStorageConfig StorageConfig
     | AddVoteToCart Witness.Voter Cart.VoteRecord
+    | GoToCart
     | RunTask (ConcurrentTask String TaskCompleted)
     | BatchToParent MsgToParent MsgToParent
 
@@ -619,6 +619,8 @@ type Msg
       -- Build Tx Step
     | AddVoteToCartButtonClicked Vote
     | ChangeVoteButtonClicked
+    | PickAnotherProposalButtonClicked
+    | GoToCartButtonClicked
 
 
 {-| Configuration required by the update function.
@@ -1254,7 +1256,7 @@ innerUpdate ctx msg model =
         -- Add Vote to Cart
         --
         AddVoteToCartButtonClicked vote ->
-            case allPrepSteps ctx model of
+            case allPrepSteps model of
                 Err error ->
                     ( { model | buildTxStep = Preparing { error = Just error } }
                     , Cmd.none
@@ -1269,7 +1271,7 @@ innerUpdate ctx msg model =
                             , rationale = Just rationaleAnchor
                             }
                     in
-                    ( model
+                    ( { model | buildTxStep = Done { error = Nothing } {} }
                     , Cmd.none
                     , Just <| AddVoteToCart voter <| Cart.VoteRecord proposalTitle voteIntent
                     )
@@ -1278,6 +1280,21 @@ innerUpdate ctx msg model =
             ( { model | buildTxStep = Preparing { error = Nothing } }
             , Cmd.none
             , Nothing
+            )
+
+        PickAnotherProposalButtonClicked ->
+            ( { model
+                | buildTxStep = Preparing { error = Nothing }
+                , pickProposalStep = Preparing {}
+              }
+            , Task.perform (always <| ctx.wrapMsg NoMsg) (Browser.Dom.setViewport 0 1000000)
+            , Nothing
+            )
+
+        GoToCartButtonClicked ->
+            ( { model | buildTxStep = Preparing { error = Nothing } }
+            , Cmd.none
+            , Just GoToCart
             )
 
 
@@ -2630,16 +2647,13 @@ type alias TxRequirements =
     , actionId : ActionId
     , proposalTitle : String
     , rationaleAnchor : Anchor
-    , localStateUtxos : Utxo.RefDict Output
-    , walletAddress : Address
-    , costModels : CostModels
     }
 
 
-allPrepSteps : { a | loadedWallet : Maybe LoadedWallet, costModels : Maybe CostModels } -> InnerModel -> Result String TxRequirements
-allPrepSteps { loadedWallet, costModels } m =
-    case ( costModels, ( m.voterStep, m.pickProposalStep, m.rationaleSignatureStep ), ( m.permanentStorageStep, loadedWallet ) ) of
-        ( Just theCostModels, ( Done _ voter, Done _ p, Done _ r ), ( Done _ s, Just { utxos, wallet } ) ) ->
+allPrepSteps : InnerModel -> Result String TxRequirements
+allPrepSteps m =
+    case ( ( m.voterStep, m.pickProposalStep, m.rationaleSignatureStep ), m.permanentStorageStep ) of
+        ( ( Done _ voter, Done _ p, Done _ r ), Done _ s ) ->
             let
                 proposalTitle =
                     case p.metadata of
@@ -2662,13 +2676,7 @@ allPrepSteps { loadedWallet, costModels } m =
                             |> blake2b256 Nothing
                             |> Bytes.fromU8
                     }
-                , localStateUtxos = Dict.Any.union m.someRefUtxos utxos
-                , walletAddress = Cip30.walletChangeAddress wallet
-                , costModels = theCostModels
                 }
-
-        ( Nothing, _, _ ) ->
-            Err "Somehow cost models are missing, please report this issue"
 
         _ ->
             Err "Incomplete steps before Tx building"
@@ -2739,7 +2747,6 @@ view ctx (Model model) =
             , Helper.viewStepWithCircle 5 "rationale-signature-step" (viewRationaleSignatureStep ctx model.pickProposalStep model.rationaleCreationStep model.rationaleSignatureStep)
             , Helper.viewStepWithCircle 6 "storage-step" (viewPermanentStorageStep ctx model.rationaleSignatureStep model.storageConfigStep model.permanentStorageStep)
             , Html.map ctx.wrapMsg <| Helper.viewStepWithCircle 7 "build-tx-step" (viewBuildTxStep ctx model)
-            , Helper.viewStepWithCircle 8 "sign-tx-step" (viewSignTxStep ctx model.voterStep model.buildTxStep)
             ]
         ]
 
@@ -4263,10 +4270,10 @@ viewCompletedStorage r storage =
 viewBuildTxStep : ViewContext msg -> InnerModel -> Html Msg
 viewBuildTxStep ctx model =
     div []
-        [ Helper.sectionTitle "Tx Building"
-        , case ( allPrepSteps ctx model, model.buildTxStep ) of
+        [ Helper.sectionTitle "Vote"
+        , case ( allPrepSteps model, model.buildTxStep ) of
             ( Err _, _ ) ->
-                viewMissingStepsMessage ctx model
+                viewMissingStepsMessage model
 
             ( Ok _, Preparing { error } ) ->
                 Helper.stepCard
@@ -4291,27 +4298,50 @@ viewBuildTxStep ctx model =
             ( Ok _, Validating _ _ ) ->
                 Helper.loadingSpinner "Building transaction..."
 
-            ( Ok _, Done _ { tx } ) ->
+            ( Ok { voter, actionId }, Done _ _ ) ->
                 div []
-                    [ Helper.txResultCard
-                        "Transaction Built"
-                        "Your vote transaction has been created successfully"
-                        [ Html.p
-                            [ HA.style "color" "#4A5568"
-                            , HA.style "font-size" "0.9375rem"
-                            , HA.style "margin-bottom" "1rem"
+                    [ Helper.stepCard
+                        [ div
+                            [ HA.style "display" "flex"
+                            , HA.style "flex-wrap" "wrap"
+                            , HA.style "gap" "1rem"
+                            , HA.style "font-size" "1.5rem"
                             ]
-                            [ text "Transaction details (₳ displayed as lovelaces):" ]
-                        , Helper.txDetailsContainer
-                            [ Helper.txPreContainer <| prettyTx tx ]
+                            (viewVoteInCart voter actionId ctx.cart)
                         ]
                     , Helper.viewButton "Change vote" ChangeVoteButtonClicked
+                    , text " "
+                    , Helper.viewButton "Pick another proposal" PickAnotherProposalButtonClicked
+                    , text " "
+                    , Helper.viewButton "Go to Cart" GoToCartButtonClicked
                     ]
         ]
 
 
-viewMissingStepsMessage : ViewContext msg -> InnerModel -> Html Msg
-viewMissingStepsMessage ctx model =
+viewVoteInCart : Witness.Voter -> ActionId -> Cart.Model -> List (Html msg)
+viewVoteInCart voter actionId cart =
+    let
+        voterIdStr =
+            Witness.toVoter voter |> Gov.voterToId |> Gov.idToBech32
+    in
+    case Cart.get voterIdStr actionId cart of
+        Nothing ->
+            [ text "No vote found in cart. Try again picking a vote decision." ]
+
+        Just { voteIntent } ->
+            case voteIntent.vote of
+                Gov.VoteNo ->
+                    [ text "NO vote added to the cart." ]
+
+                Gov.VoteYes ->
+                    [ text "YES vote added to the cart." ]
+
+                Gov.VoteAbstain ->
+                    [ text "ABSTAIN vote added to the cart." ]
+
+
+viewMissingStepsMessage : InnerModel -> Html Msg
+viewMissingStepsMessage model =
     Helper.stepNotAvailableCard
         [ Html.p
             [ HA.style "color" "#4A5568"
@@ -4324,8 +4354,6 @@ viewMissingStepsMessage ctx model =
             , Helper.missingStepItem "Proposal selection" (isStepIncomplete model.pickProposalStep) (Just "proposal-step")
             , Helper.missingStepItem "Rationale creation" (isStepIncomplete model.rationaleCreationStep) (Just "rationale-step")
             , Helper.missingStepItem "Rationale storage" (isStepIncomplete model.permanentStorageStep) (Just "storage-step")
-            , Helper.missingStepItem "Connect wallet" (ctx.loadedWallet == Nothing) Nothing
-            , Helper.missingStepItem "Protocol parameters" (ctx.costModels == Nothing) Nothing
             ]
         ]
 
@@ -4338,129 +4366,6 @@ isStepIncomplete step =
 
         _ ->
             True
-
-
-
---
--- Tx Signing Step
---
-
-
-viewSignTxStep : ViewContext msg -> Step a b Witness.Voter -> Step BuildTxPrep {} TxFinalized -> Html msg
-viewSignTxStep ctx voterStep buildTxStep =
-    case ( buildTxStep, voterStep ) of
-        ( Done _ { tx, expectedSignatures }, Done _ voterWitness ) ->
-            let
-                voterId =
-                    case voterWitness of
-                        Witness.WithCommitteeHotCred (Witness.WithKey hotkey) ->
-                            [ ( Bytes.toHex hotkey, "Committee hot key" ) ]
-
-                        Witness.WithCommitteeHotCred (Witness.WithScript scriptHash witness) ->
-                            ( Bytes.toHex scriptHash, "Committee governance script" )
-                                :: extractMultisigKeys witness
-
-                        Witness.WithDrepCred (Witness.WithKey credKey) ->
-                            [ ( Bytes.toHex credKey, "DRep key" ) ]
-
-                        Witness.WithDrepCred (Witness.WithScript scriptHash witness) ->
-                            ( Bytes.toHex scriptHash, "DRep governance script" )
-                                :: extractMultisigKeys witness
-
-                        Witness.WithPoolCred poolKey ->
-                            [ ( Bytes.toHex poolKey, "SPO key" ) ]
-
-                extractMultisigKeys : Witness.Script -> List ( String, String )
-                extractMultisigKeys witness =
-                    case witness of
-                        Witness.Native { expectedSigners } ->
-                            List.map (\signer -> ( Bytes.toHex signer, "Multisig signer" )) expectedSigners
-
-                        Witness.Plutus _ ->
-                            []
-
-                walletSpendingCredential =
-                    case ctx.loadedWallet of
-                        Just { wallet } ->
-                            Address.extractPubKeyHash (Cip30.walletChangeAddress wallet)
-                                |> Maybe.map (\hash -> [ ( Bytes.toHex hash, "Wallet spending key" ) ])
-                                |> Maybe.withDefault []
-
-                        Nothing ->
-                            []
-
-                walletStakeCredential =
-                    case ctx.loadedWallet of
-                        Just { wallet } ->
-                            Address.extractStakeKeyHash (Cip30.walletChangeAddress wallet)
-                                |> Maybe.map (\hash -> [ ( Bytes.toHex hash, "Wallet stake key" ) ])
-                                |> Maybe.withDefault []
-
-                        Nothing ->
-                            []
-
-                keyNames : Dict String String
-                keyNames =
-                    Dict.fromList (voterId ++ walletSpendingCredential ++ walletStakeCredential)
-            in
-            div []
-                [ Helper.sectionTitle "Tx Signing"
-                , Helper.signingStepCard
-                    "Finalize Your Vote"
-                    "The following keys will need to sign the transaction:"
-                    [ Helper.infoBox []
-                        [ Html.ul
-                            [ HA.style "list-style-type" "none"
-                            , HA.style "padding" "0"
-                            , HA.style "margin" "0"
-                            , HA.style "display" "flex"
-                            , HA.style "flex-direction" "column"
-                            , HA.style "gap" "0.75rem"
-                            ]
-                            (List.map
-                                (\hash ->
-                                    let
-                                        hashHex =
-                                            Bytes.toHex hash
-
-                                        keyName =
-                                            Dict.get hashHex keyNames
-                                                |> Maybe.withDefault "Unknown key"
-                                    in
-                                    Helper.keyListItem keyName hashHex
-                                )
-                                expectedSignatures
-                            )
-                        ]
-                    , Html.p
-                        [ HA.style "color" "#4A5568"
-                        , HA.style "font-size" "0.9375rem"
-                        , HA.style "margin-bottom" "1.5rem"
-                        ]
-                        [ text "Click the button below to proceed to the signing page where you can sign and submit your voting transaction." ]
-                    ]
-                , ctx.signingLink tx
-                    (expectedSignatures
-                        |> List.map
-                            (\keyHash ->
-                                { keyHash = keyHash
-                                , keyName =
-                                    Dict.get (Bytes.toHex keyHash) keyNames
-                                        |> Maybe.withDefault "Key hash"
-                                }
-                            )
-                    )
-                    [ Helper.signingButton "Go to Signing Page" ]
-                ]
-
-        _ ->
-            div []
-                [ Helper.sectionTitle "Tx Signing"
-                , Helper.signingStepCard
-                    "Step Not Available"
-                    "Please complete the transaction building step first."
-                    []
-                ]
 
 
 

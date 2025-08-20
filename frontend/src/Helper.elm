@@ -5,7 +5,7 @@ module Helper exposing
     , viewButton, viewWalletButton, externalLink, externalLinkButton
     , applyDropdownContainerStyle, applyDropdownItemStyle, applyMobileDropdownContainerStyle, applyWalletIconContainerStyle, applyWalletIconStyle
     , viewActionTypeIcon
-    , sectionTitle, infoBox, viewError
+    , sectionTitle, viewError
     , renderMarkdownContent
     , viewStepWithCircle, viewPageHeader
     , PreconfVoter, viewVoterGrid, viewVoterCard, voterCustomCard, votingPowerDisplay, scriptInfoContainer, viewVoterCredDetails, viewVoterDetailsItem, viewCredInfo
@@ -17,8 +17,8 @@ module Helper exposing
     , rationaleCompletedCard, optionalSection, formattedInternalVote, formattedReferences
     , stepNotAvailableCard, downloadJSONButton, authorsCard, addAuthorButton, codeSnippetBox, noAuthorsPlaceholder
     , signerCard, authorForm, labeledField, readOnlyField, signatureField, formButtonsRow, secondaryButton, primaryButton, loadSignatureButton
-    , stepCard, txResultCard, voteButton, txDetailsContainer, txPreContainer, missingStepsList, missingStepItem, loadingSpinner
-    , signingStepCard, keyListItem, signingButton
+    , stepCard, voteButton, missingStepsList, missingStepItem, loadingSpinner
+    , signingButton
     )
 
 {-| Helper module for miscellaneous functions that didn't fit elsewhere,
@@ -57,7 +57,7 @@ and are potentially useful in multiple places.
 
 # UI Structure Components
 
-@docs sectionTitle, infoBox, viewError
+@docs sectionTitle, viewError
 
 
 # Markdown Processing
@@ -101,12 +101,12 @@ and are potentially useful in multiple places.
 
 # Transaction Components
 
-@docs stepCard, txResultCard, voteButton, txDetailsContainer, txPreContainer, missingStepsList, missingStepItem, loadingSpinner
+@docs stepCard, voteButton, missingStepsList, missingStepItem, loadingSpinner
 
 
 # Signing Components
 
-@docs signingStepCard, keyListItem, signingButton
+@docs signingButton
 
 -}
 
@@ -544,25 +544,6 @@ cardContent attributes content =
 
 
 -- INFORMATION BOXES ###########################################################
-
-
-{-| Standard information box for displaying notices
--}
-infoBox : List (Html.Attribute msg) -> List (Html msg) -> Html msg
-infoBox attributes content =
-    div
-        ([ HA.style "background-color" "#F9FAFB"
-         , HA.style "border" "1px solid #E2E8F0"
-         , HA.style "border-radius" "0.5rem"
-         , HA.style "padding" "1rem"
-         , HA.style "margin-bottom" "1rem"
-         ]
-            ++ attributes
-        )
-        content
-
-
-
 -- FORM INPUT STYLING #########################################################
 -- UI COMPONENTS ##############################################################
 
@@ -2643,23 +2624,6 @@ stepCard content =
         [ cardContent [] content ]
 
 
-{-| Creates a transaction result card with header and status badge
--}
-txResultCard : String -> String -> List (Html msg) -> Html msg
-txResultCard title subtitle content =
-    cardContainer []
-        [ cardHeader
-            [ HA.style "display" "flex"
-            , HA.style "justify-content" "space-between"
-            , HA.style "align-items" "center"
-            ]
-            title
-            subtitle
-            [ successBadge "Ready" ]
-        , cardContent [] content
-        ]
-
-
 {-| Success badge used to show completed status
 -}
 successBadge : String -> Html msg
@@ -2698,37 +2662,6 @@ voteButton label color clickMsg =
         , onClick clickMsg
         ]
         [ text label ]
-
-
-{-| Monospaced container for transaction details
--}
-txDetailsContainer : List (Html msg) -> Html msg
-txDetailsContainer content =
-    div
-        [ HA.style "background-color" "#F9FAFB"
-        , HA.style "border" "1px solid #E2E8F0"
-        , HA.style "border-radius" "0.5rem"
-        , HA.style "padding" "1rem"
-        , HA.style "margin-bottom" "1.5rem"
-        , HA.style "overflow-x" "auto"
-        ]
-        content
-
-
-{-| Pre-formatted text container for code/json
--}
-txPreContainer : String -> Html msg
-txPreContainer content =
-    Html.pre
-        [ HA.style "font-family" "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
-        , HA.style "font-size" "0.875rem"
-        , HA.style "white-space" "pre-wrap"
-        , HA.style "word-break" "break-all"
-        , HA.style "max-height" "300px"
-        , HA.style "overflow-y" "auto"
-        , HA.style "margin" "0"
-        ]
-        [ text content ]
 
 
 {-| Missing steps list container
@@ -2848,52 +2781,6 @@ loadingSpinner message =
 
 
 -- TX SIGNING STEP STYLING #########################################################
-
-
-{-| Renders a card for the signing step with consistent styling
--}
-signingStepCard : String -> String -> List (Html msg) -> Html msg
-signingStepCard title description content =
-    cardContainer []
-        [ cardHeader [] title "" []
-        , cardContent []
-            [ Html.p
-                [ HA.style "color" "#4A5568"
-                , HA.style "font-size" "0.9375rem"
-                , HA.style "margin-bottom" "1rem"
-                ]
-                [ text description ]
-            , div [] content
-            ]
-        ]
-
-
-{-| Renders a styled list item for a key/signature in the signing step
--}
-keyListItem : String -> String -> Html msg
-keyListItem keyName hashHex =
-    Html.li
-        [ HA.style "display" "flex"
-        , HA.style "flex-direction" "column"
-        , HA.style "padding-bottom" "0.75rem"
-        , HA.style "border-bottom" "1px solid #EDF2F7"
-        , HA.style "last:border-bottom" "none"
-        , HA.style "last:padding-bottom" "0"
-        ]
-        [ Html.div
-            [ HA.style "font-weight" "500"
-            , HA.style "color" "#4A5568"
-            , HA.style "margin-bottom" "0.25rem"
-            ]
-            [ text keyName ]
-        , Html.div
-            [ HA.style "font-family" "monospace"
-            , HA.style "font-size" "0.875rem"
-            , HA.style "color" "#718096"
-            , HA.style "word-break" "break-all"
-            ]
-            [ text hashHex ]
-        ]
 
 
 {-| Renders a standardized signing button with consistent styling
