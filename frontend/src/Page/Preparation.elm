@@ -40,6 +40,7 @@ import Cardano.TxIntent exposing (TxFinalized)
 import Cardano.Utxo as Utxo exposing (Output, OutputReference, TransactionId)
 import Cardano.Witness as Witness
 import Cbor.Encode
+import Cmd.Extra
 import ConcurrentTask exposing (ConcurrentTask)
 import ConcurrentTask.Extra
 import ConcurrentTask.Http
@@ -85,6 +86,7 @@ Each step uses the Step type to track its progress.
 -}
 type alias InnerModel =
     { someRefUtxos : Utxo.RefDict Output
+    , reloadedLastVoter : Bool
     , voterStep : Step VoterPreparationForm Witness.Voter Witness.Voter
     , pickProposalStep : Step {} {} ActiveProposal
     , storageConfigStep : Step StorageForm {} StorageConfig
@@ -116,6 +118,7 @@ init : { label : String, description : String } -> Model
 init ipfsPreconfig =
     Model
         { someRefUtxos = Utxo.emptyRefDict
+        , reloadedLastVoter = False
         , voterStep = Preparing initVoterForm
         , pickProposalStep = Preparing {}
         , storageConfigStep = Done (initStorageForm ipfsPreconfig) (UsePreconfigIpfs ipfsPreconfig)
@@ -674,13 +677,13 @@ innerUpdate ctx msg model =
         VoterGovIdChange govIdStr ->
             case ( govIdStr, checkGovId ctx govIdStr ) of
                 ( "", _ ) ->
-                    ( updateVoterForm (\_ -> initVoterForm) model
+                    ( updateVoterForm (\_ -> initVoterForm) { model | reloadedLastVoter = False }
                     , Cmd.none
                     , Nothing
                     )
 
                 ( _, Err error ) ->
-                    ( updateVoterForm (\_ -> { initVoterForm | error = Just error }) model
+                    ( updateVoterForm (\_ -> { initVoterForm | error = Just error }) { model | reloadedLastVoter = False }
                     , Cmd.none
                     , Nothing
                     )
@@ -697,8 +700,15 @@ innerUpdate ctx msg model =
                                 , poolInfo = poolInfo
                             }
                         )
-                        model
-                    , Cmd.map ctx.wrapMsg cmd
+                        { model | reloadedLastVoter = False }
+                      -- If we are reloading the last voter,
+                      -- confirm automatically the voter’s gov ID.
+                    , if model.reloadedLastVoter && isKeyVoter govId then
+                        Cmd.map ctx.wrapMsg <|
+                            Cmd.batch [ cmd, Cmd.Extra.perform ValidateVoterFormButtonClicked ]
+
+                      else
+                        Cmd.map ctx.wrapMsg cmd
                     , msgToParent
                     )
 
@@ -1304,11 +1314,14 @@ handleTaskCompleted task (Model model) =
 -- Voter Step
 
 
-setLastVoter : Maybe Gov.Id -> Msg
-setLastVoter maybeGovId =
-    Maybe.map Gov.idToBech32 maybeGovId
+setLastVoter : Maybe Gov.Id -> Model -> ( Model, Cmd Msg )
+setLastVoter maybeGovId (Model model) =
+    ( Model { model | reloadedLastVoter = True }
+    , Maybe.map Gov.idToBech32 maybeGovId
         |> Maybe.withDefault ""
         |> VoterGovIdChange
+        |> Cmd.Extra.perform
+    )
 
 
 updateVoterForm : (VoterPreparationForm -> VoterPreparationForm) -> InnerModel -> InnerModel
@@ -1317,8 +1330,29 @@ updateVoterForm f ({ voterStep } as model) =
         Preparing form ->
             { model | voterStep = Preparing (f form) }
 
+        Validating form validating ->
+            { model | voterStep = Validating (f form) validating }
+
+        Done form done ->
+            { model | voterStep = Done (f form) done }
+
+
+{-| Check if the voter is using a public key and not a script.
+-}
+isKeyVoter : Gov.Id -> Bool
+isKeyVoter govId =
+    case govId of
+        Gov.CcHotCredId (VKeyHash _) ->
+            True
+
+        Gov.DrepId (VKeyHash _) ->
+            True
+
+        Gov.PoolId _ ->
+            True
+
         _ ->
-            model
+            False
 
 
 type alias GovIdCheck =

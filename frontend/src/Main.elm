@@ -1259,10 +1259,17 @@ handleCompletedTask response model =
                     , toWallet (Cip30.encodeRequest Cip30.discoverWallets)
                     )
 
-        ( ConcurrentTask.Success (GotLastVoter maybeGovId), _ ) ->
-            ( model
-            , Cmd.Extra.perform <| PreparationPageMsg <| Page.Preparation.setLastVoter maybeGovId
+        ( ConcurrentTask.Success (GotLastVoter maybeGovId), PreparationPage pageModel ) ->
+            let
+                ( newPageModel, pageCmd ) =
+                    Page.Preparation.setLastVoter maybeGovId pageModel
+            in
+            ( { model | page = PreparationPage newPageModel }
+            , Cmd.map PreparationPageMsg pageCmd
             )
+
+        ( ConcurrentTask.Success (GotLastVoter _), _ ) ->
+            ( model, Cmd.none )
 
         ( ConcurrentTask.Success (GotLastStorageConfig storageConfig), PreparationPage pageModel ) ->
             let
