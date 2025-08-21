@@ -110,6 +110,7 @@ main =
                     , onUrlChange (locationHrefToRoute >> UrlChanged)
                     , gotRationaleAsFile GotRationaleAsFile
                     , gotPdfAsFile GotPdfAsFile
+                    , onBroadcast CartBroadcastReceived
                     , ConcurrentTask.onProgress
                         { send = sendTask
                         , receive = receiveTask
@@ -143,6 +144,12 @@ port pdfBytesToFile : { fileContentHex : String, fileName : String } -> Cmd msg
 
 
 port gotPdfAsFile : (Value -> msg) -> Sub msg
+
+
+port broadcast : Value -> Cmd msg
+
+
+port onBroadcast : (Value -> msg) -> Sub msg
 
 
 
@@ -327,6 +334,7 @@ type Msg
     | CartPageMsg Page.Cart.Msg
     | DeleteVote { voterIdStr : String, actionIdStr : String }
     | ClearCart
+    | CartBroadcastReceived Value
       -- Multisig DRep registration page
     | MultisigPageMsg Page.MultisigRegistration.Msg
       -- PDF page
@@ -695,6 +703,7 @@ update msg model =
             in
             ConcurrentTask.attempt { pool = model.taskPool, send = sendTask, onComplete = OnTaskComplete } writeCartToDb
                 |> Tuple.mapFirst (\newTaskPool -> { model | taskPool = newTaskPool, cart = updatedCart })
+                |> Cmd.Extra.add (broadcast <| Page.Cart.serialize updatedCart)
 
         ( ClearCart, { networkId } ) ->
             let
@@ -707,6 +716,15 @@ update msg model =
             in
             ConcurrentTask.attempt { pool = model.taskPool, send = sendTask, onComplete = OnTaskComplete } writeCartToDb
                 |> Tuple.mapFirst (\newTaskPool -> { model | taskPool = newTaskPool, cart = emptyCart })
+                |> Cmd.Extra.add (broadcast <| Page.Cart.serialize emptyCart)
+
+        ( CartBroadcastReceived value, _ ) ->
+            case JD.decodeValue Page.Cart.deserialize value of
+                Ok cart ->
+                    ( { model | cart = cart }, Cmd.none )
+
+                Err err ->
+                    ( { model | errors = [ JD.errorToString err ] }, Cmd.none )
 
         ( MultisigPageMsg pageMsg, { page } ) ->
             case page of
@@ -1111,7 +1129,10 @@ handleWalletResponse response model =
                         , cart = emptyCart
                         , taskPool = updatedTaskPool
                       }
-                    , taskCmds
+                    , Cmd.batch
+                        [ taskCmds
+                        , broadcast <| Page.Cart.serialize emptyCart
+                        ]
                     )
 
                 -- No other page expects to submit a Tx
@@ -1208,6 +1229,7 @@ updateModelWithPrepToParentMsg msgToParent model =
             in
             ConcurrentTask.attempt { pool = model.taskPool, send = sendTask, onComplete = OnTaskComplete } writeCartToDb
                 |> Tuple.mapFirst (\newTaskPool -> { model | taskPool = newTaskPool, cart = updatedCart })
+                |> Cmd.Extra.add (broadcast <| Page.Cart.serialize updatedCart)
 
         Just Page.Preparation.GoToCart ->
             handleUrlChange (RouteCart { networkId = model.networkId }) model
