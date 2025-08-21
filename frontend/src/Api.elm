@@ -322,10 +322,35 @@ type alias PoolInfo =
     }
 
 
-poolStakeDecoder : Bytes Pool.Id -> Decoder PoolInfo
-poolStakeDecoder poolId =
-    JD.map (\stake -> { pool = poolId, stake = stake })
-        (JD.at [ "result", Pool.toBech32 poolId, "stake", "ada", "lovelace" ] JD.int)
+koiosPoolSnapshotDecoder : Bytes Pool.Id -> Decoder PoolInfo
+koiosPoolSnapshotDecoder poolId =
+    JD.list poolSnapshotDecoder
+        |> JD.andThen
+            (\snapshots ->
+                List.sortBy .epoch snapshots
+                    |> List.reverse
+                    |> List.head
+                    |> Maybe.map (\{ stake } -> JD.succeed { pool = poolId, stake = stake })
+                    |> Maybe.withDefault (JD.fail ("Stake not found for pool: " ++ Bytes.toHex poolId))
+            )
+
+
+poolSnapshotDecoder : Decoder { epoch : Int, stake : Int }
+poolSnapshotDecoder =
+    JD.map2
+        (\epoch stake -> { epoch = epoch, stake = stake })
+        (JD.field "epoch_no" JD.int)
+        (JD.field "pool_stake" JD.string
+            |> JD.andThen
+                (\intStr ->
+                    case String.toInt intStr of
+                        Just n ->
+                            JD.succeed n
+
+                        Nothing ->
+                            JD.fail <| "Invalid stake number: " ++ intStr
+                )
+        )
 
 
 
@@ -578,31 +603,19 @@ defaultApiProvider =
                 , tracker = Nothing
                 }
 
-    -- Retrieve Pool live stake (end of previous epoch)
+    -- Retrieve Pool live stake
     , getPoolLiveStake =
         \networkId poolId toMsg ->
+            let
+                poolIdBech32 =
+                    Pool.toBech32 poolId
+            in
             Http.request
-                { method = "POST"
-                , url = koiosUrl networkId ++ "/ogmios"
+                { method = "GET"
+                , url = koiosUrl networkId ++ "/pool_stake_snapshot?_pool_bech32=" ++ poolIdBech32
                 , headers = [ Http.header "Authorization" <| "Bearer " ++ koiosApiToken ]
-                , body =
-                    Http.jsonBody
-                        (JE.object
-                            [ ( "jsonrpc", JE.string "2.0" )
-                            , ( "method", JE.string "queryLedgerState/stakePools" )
-                            , ( "params"
-                              , JE.object
-                                    [ ( "includeStake", JE.bool True )
-                                    , ( "stakePools"
-                                      , JE.list
-                                            (\p -> JE.object [ ( "id", JE.string <| Bytes.toHex p ) ])
-                                            [ poolId ]
-                                      )
-                                    ]
-                              )
-                            ]
-                        )
-                , expect = Http.expectJson toMsg (poolStakeDecoder poolId)
+                , body = Http.emptyBody
+                , expect = Http.expectJson toMsg (koiosPoolSnapshotDecoder poolId)
                 , timeout = Nothing
                 , tracker = Nothing
                 }
