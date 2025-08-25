@@ -93,6 +93,15 @@
             },
         });
 
+        // Listen and post messages for the cart broadcast channel
+        const cartChannel = new BroadcastChannel("votesCart");
+        mainApp.ports.broadcast.subscribe(function (data) {
+            cartChannel.postMessage(data);
+        });
+        cartChannel.addEventListener("message", function (args) {
+            mainApp.ports.onBroadcast.send(args.data);
+        });
+
         // Navigation
 
         // Inform app of browser navigation (the BACK and FORWARD buttons)
