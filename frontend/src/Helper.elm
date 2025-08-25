@@ -1,6 +1,6 @@
 module Helper exposing
     ( shortenedHex, prettyAdaLovelace
-    , textFieldInline
+    , textFieldInline, textInputField
     , formContainer, boxContainer, viewGrid, cardContainer, cardHeader, cardContent
     , viewButton, viewWalletButton, externalLink, externalLinkButton
     , applyDropdownContainerStyle, applyDropdownItemStyle, applyMobileDropdownContainerStyle, applyWalletIconContainerStyle, applyWalletIconStyle
@@ -11,7 +11,7 @@ module Helper exposing
     , PreconfVoter, viewVoterGrid, viewVoterCard, voterCustomCard, votingPowerDisplay, scriptInfoContainer, viewVoterCredDetails, viewVoterDetailsItem, viewCredInfo
     , viewUtxoRefForm, scriptSignerSection, scriptSignerCheckbox, viewIdentifiedVoterCard, viewVoterInfoItem
     , proposalListContainer, showMoreButton, proposalCard, selectedProposalCard, proposalDetailsItem, viewProposalsListInCart
-    , storageConfigCard, storageMethodOption, storageProviderForm, storageProviderCard, storageConfigItem, addHeaderButton, storageHeaderInput
+    , storageConfigCard, storageMethodOption, storageProviderForm, storageProviderCard, storageConfigItem, addHeaderButton
     , storageHeaderForm, storageInfoGrid, storageNotAvailableCard, storageUploadCard, uploadingSpinner, storageSuccessCard, fileInfoItem, externalLinkDisplay
     , rationaleCard, checkbox, rationaleMarkdownInput, rationaleTextArea, pdfAutogenCheckbox, voteNumberInput, referenceCard, referenceForm
     , rationaleCompletedCard, optionalSection, formattedInternalVote, formattedReferences
@@ -32,7 +32,7 @@ and are potentially useful in multiple places.
 
 # Form elements
 
-@docs textFieldInline
+@docs textFieldInline, textInputField
 
 
 # Containers
@@ -83,7 +83,7 @@ and are potentially useful in multiple places.
 
 # Storage Configuration Components
 
-@docs storageConfigCard, storageMethodOption, storageProviderForm, storageProviderCard, storageConfigItem, addHeaderButton, storageHeaderInput
+@docs storageConfigCard, storageMethodOption, storageProviderForm, storageProviderCard, storageConfigItem, addHeaderButton
 @docs storageHeaderForm, storageInfoGrid, storageNotAvailableCard, storageUploadCard, uploadingSpinner, storageSuccessCard, fileInfoItem, externalLinkDisplay
 
 
@@ -1590,8 +1590,8 @@ addHeaderButton addHeaderMsg =
 
 {-| Input for HTTP header
 -}
-storageHeaderInput : { label : String, value : String, onInputMsg : String -> msg } -> Html msg
-storageHeaderInput { label, value, onInputMsg } =
+textInputField : { label : String, value : String, onInputMsg : String -> msg } -> Html msg
+textInputField { label, value, onInputMsg } =
     div []
         [ Html.label
             [ HA.style "display" "block"
@@ -1630,14 +1630,14 @@ storageHeaderForm _ name value deleteMsg nameChangeMsg valueChangeMsg =
             , HA.style "align-items" "flex-end"
             ]
             [ div [ HA.style "flex" "1" ]
-                [ storageHeaderInput
+                [ textInputField
                     { label = "Header Name"
                     , value = name
                     , onInputMsg = nameChangeMsg
                     }
                 ]
             , div [ HA.style "flex" "1" ]
-                [ storageHeaderInput
+                [ textInputField
                     { label = "Header Value"
                     , value = value
                     , onInputMsg = valueChangeMsg
@@ -2550,7 +2550,7 @@ storageSuccessCard content =
             , HA.style "align-items" "center"
             ]
             "Upload Successful"
-            "Your rationale has been successfully uploaded to IPFS"
+            "Your rationale has been successfully uploaded"
             [ successBadge "Uploaded" ]
         , cardContent [] content
         ]

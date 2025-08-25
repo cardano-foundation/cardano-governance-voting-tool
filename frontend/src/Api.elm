@@ -61,6 +61,7 @@ type alias ApiProvider msg =
     , ipfsAddFileBlockfrost : { projectId : String, file : File } -> (Result String IpfsAnswer -> msg) -> Cmd msg
     , ipfsAddFile : { file : File } -> (Result String IpfsAnswer -> msg) -> Cmd msg
     , convertToPdf : String -> (Result Http.Error ElmBytes.Bytes -> msg) -> Cmd msg
+    , getFromIpfsGateway : (Result Http.Error String -> msg) -> String -> String -> Cmd msg
     }
 
 
@@ -763,6 +764,12 @@ defaultApiProvider =
                 { url = "/pretty-gov-pdf"
                 , body = Http.stringBody "application/json" jsonFileContent
                 , expect = Http.expectBytesResponse toMsg bytesResponseToResult
+                }
+    , getFromIpfsGateway =
+        \toMsg gateway cid ->
+            Http.get
+                { url = gateway ++ "/" ++ cid
+                , expect = Http.expectString toMsg
                 }
     }
 

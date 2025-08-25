@@ -89,10 +89,10 @@ type alias InnerModel =
     , reloadedLastVoter : Bool
     , voterStep : Step VoterPreparationForm Witness.Voter Witness.Voter
     , pickProposalStep : Step {} {} ActiveProposal
-    , storageConfigStep : Step StorageForm {} StorageConfig
+    , storageConfigStep : Step StorageConfigForm {} StorageConfig
     , rationaleCreationStep : Step RationaleForm Rationale Rationale
     , rationaleSignatureStep : Step RationaleSignatureForm {} RationaleSignature
-    , permanentStorageStep : Step { error : Maybe String } {} Storage
+    , permanentStorageStep : Step StorageForm {} Storage
     , buildTxStep : Step BuildTxPrep {} {}
     , signTxStep : Step { error : Maybe String } SigningTx SignedTx
     , visibleProposalCount : Int
@@ -121,10 +121,10 @@ init ipfsPreconfig =
         , reloadedLastVoter = False
         , voterStep = Preparing initVoterForm
         , pickProposalStep = Preparing {}
-        , storageConfigStep = Done (initStorageForm ipfsPreconfig) (UsePreconfigIpfs ipfsPreconfig)
+        , storageConfigStep = Done (initStorageConfigForm ipfsPreconfig) (UsePreconfigIpfs ipfsPreconfig)
         , rationaleCreationStep = Preparing initRationaleForm
         , rationaleSignatureStep = Preparing initRationaleSignatureForm
-        , permanentStorageStep = Preparing { error = Nothing }
+        , permanentStorageStep = Preparing initStorageForm
         , buildTxStep = Preparing { error = Nothing }
         , signTxStep = Preparing { error = Nothing }
         , visibleProposalCount = 10
@@ -323,9 +323,12 @@ type StorageMethod
     | NmkrIPFS
     | BlockfrostIPFS
     | CustomIPFS
+    | CustomHosting
+    | CustomPrepublished
+    | NoStorage
 
 
-type alias StorageForm =
+type alias StorageConfigForm =
     { storageMethod : StorageMethod
     , nmkrUserId : String
     , nmkrApiToken : String
@@ -336,13 +339,13 @@ type alias StorageForm =
     }
 
 
-initStorageForm : { label : String, description : String } -> StorageForm
-initStorageForm ipfsPreconfig =
-    initStorageFormWithMethod <| PreconfigIPFS ipfsPreconfig
+initStorageConfigForm : { label : String, description : String } -> StorageConfigForm
+initStorageConfigForm ipfsPreconfig =
+    initStorageConfigFormWithMethod <| PreconfigIPFS ipfsPreconfig
 
 
-initStorageFormWithMethod : StorageMethod -> StorageForm
-initStorageFormWithMethod method =
+initStorageConfigFormWithMethod : StorageMethod -> StorageConfigForm
+initStorageConfigFormWithMethod method =
     { storageMethod = method
     , nmkrUserId = ""
     , nmkrApiToken = ""
@@ -353,32 +356,41 @@ initStorageFormWithMethod method =
     }
 
 
-storageFormFromConfig : StorageConfig -> StorageForm
-storageFormFromConfig config =
+formFromStorageConfig : StorageConfig -> StorageConfigForm
+formFromStorageConfig config =
     case config of
         UsePreconfigIpfs preconfig ->
-            initStorageForm preconfig
+            initStorageConfigForm preconfig
 
         UseBlockfrostIpfs { projectId } ->
             let
                 form =
-                    initStorageFormWithMethod BlockfrostIPFS
+                    initStorageConfigFormWithMethod BlockfrostIPFS
             in
             { form | blockfrostProjectId = projectId }
 
         UseNmkrIpfs { userId, apiToken } ->
             let
                 form =
-                    initStorageFormWithMethod NmkrIPFS
+                    initStorageConfigFormWithMethod NmkrIPFS
             in
             { form | nmkrUserId = userId, nmkrApiToken = apiToken }
 
         UseCustomIpfs { ipfsServer, headers } ->
             let
                 form =
-                    initStorageFormWithMethod CustomIPFS
+                    initStorageConfigFormWithMethod CustomIPFS
             in
             { form | ipfsServer = ipfsServer, headers = headers }
+
+        UseCustomHosting _ ->
+            initStorageConfigFormWithMethod CustomHosting
+
+        UseCustomPrepublished _ ->
+            initStorageConfigFormWithMethod CustomPrepublished
+
+        UseNoStorage _ ->
+            initStorageConfigFormWithMethod NoStorage
 
 
 type StorageConfig
@@ -386,6 +398,9 @@ type StorageConfig
     | UseBlockfrostIpfs { label : String, description : String, projectId : String }
     | UseNmkrIpfs { label : String, description : String, userId : String, apiToken : String }
     | UseCustomIpfs { label : String, description : String, ipfsServer : String, headers : List ( String, String ) }
+    | UseCustomHosting { label : String, description : String }
+    | UseCustomPrepublished { label : String, description : String }
+    | UseNoStorage { label : String, description : String }
 
 
 {-| Initialize the default storage config.
@@ -429,6 +444,27 @@ encodeStorageConfig config =
                 , ( "description", JE.string description )
                 , ( "ipfsServer", JE.string ipfsServer )
                 , ( "headers", JE.list encodeHttpHeader headers )
+                ]
+
+        UseCustomHosting { label, description } ->
+            JE.object
+                [ ( "storageType", JE.string "UseCustomHosting" )
+                , ( "label", JE.string label )
+                , ( "description", JE.string description )
+                ]
+
+        UseCustomPrepublished { label, description } ->
+            JE.object
+                [ ( "storageType", JE.string "UseCustomPrepublished" )
+                , ( "label", JE.string label )
+                , ( "description", JE.string description )
+                ]
+
+        UseNoStorage { label, description } ->
+            JE.object
+                [ ( "storageType", JE.string "UseNoStorage" )
+                , ( "label", JE.string label )
+                , ( "description", JE.string description )
                 ]
 
 
@@ -475,21 +511,85 @@ storageConfigDecoder =
                             (JD.field "ipfsServer" JD.string)
                             (JD.field "headers" (JD.list httpHeaderDecoder))
 
+                    "UseCustomHosting" ->
+                        JD.map2 (\label description -> UseCustomHosting { label = label, description = description })
+                            (JD.field "label" JD.string)
+                            (JD.field "description" JD.string)
+
+                    "UseCustomPrepublished" ->
+                        JD.map2 (\label description -> UseCustomPrepublished { label = label, description = description })
+                            (JD.field "label" JD.string)
+                            (JD.field "description" JD.string)
+
+                    "UseNoStorage" ->
+                        JD.map2 (\label description -> UseNoStorage { label = label, description = description })
+                            (JD.field "label" JD.string)
+                            (JD.field "description" JD.string)
+
                     _ ->
                         JD.fail "Unknown storage type"
             )
 
 
+type alias StorageForm =
+    { publishedRationaleUri : String
+    , error : Maybe String
+    }
+
+
+initStorageForm : StorageForm
+initStorageForm =
+    { publishedRationaleUri = ""
+    , error = Nothing
+    }
+
+
 type alias Storage =
-    { jsonFile : IpfsFile
+    { jsonFile : UploadedFile
     }
 
 
-type alias IpfsFile =
+type alias UploadedFile =
     { name : String
-    , cid : String
     , size : String
+    , identifier : UploadedIdentifier
+    , raw : String
+    , dataHash : Bytes {}
     }
+
+
+type UploadedIdentifier
+    = IpfsIdentifier String
+    | HttpsIdentifier String
+
+
+uploadedIdentifierFromUri : String -> UploadedIdentifier
+uploadedIdentifierFromUri uri =
+    if String.startsWith "ipfs://" uri then
+        IpfsIdentifier (String.dropLeft 7 uri)
+
+    else
+        HttpsIdentifier uri
+
+
+uploadedIdentifierToString : UploadedIdentifier -> String
+uploadedIdentifierToString identifier =
+    case identifier of
+        IpfsIdentifier cid ->
+            "ipfs://" ++ cid
+
+        HttpsIdentifier url ->
+            url
+
+
+uploadedIdentifierToLink : UploadedIdentifier -> String
+uploadedIdentifierToLink identifier =
+    case identifier of
+        IpfsIdentifier cid ->
+            "https://ipfs.io/ipfs/" ++ cid
+
+        HttpsIdentifier url ->
+            url
 
 
 
@@ -599,7 +699,7 @@ type Msg
     | ReferenceLabelChange Int String
     | ReferenceUriChange Int String
     | ReferenceTypeChange Int String
-    | ValidateRationaleButtonClicked
+    | ValidateRationaleButtonClicked { hostingIsAppControlled : Bool }
     | GotUnsignedPdfFile (Result Http.Error ElmBytes.Bytes)
     | EditRationaleButtonClicked
       -- Rationale Signature
@@ -615,7 +715,10 @@ type Msg
       -- Rationale Storage
     | PinJsonIpfsButtonClicked
     | GotIpfsAnswer (Result String IpfsAnswer)
+    | PublishedRationaleUriChanged String
+    | CheckRationaleUrlButtonClicked
     | AddOtherStorageButtonCLicked
+    | GotRawPublishedRationale (Maybe String) (Result Http.Error String)
       -- Build Tx Step
     | AddVoteToCartButtonClicked Vote
     | ChangeVoteButtonClicked
@@ -1051,8 +1154,8 @@ innerUpdate ctx msg model =
             , Nothing
             )
 
-        ValidateRationaleButtonClicked ->
-            case ( validateRationaleForm model.rationaleCreationStep, model.pickProposalStep ) of
+        ValidateRationaleButtonClicked { hostingIsAppControlled } ->
+            case ( validateRationaleForm hostingIsAppControlled model.rationaleCreationStep, model.pickProposalStep ) of
                 -- If validation fails, it will return back to the form editing step with an error message
                 ( Preparing formWithError, _ ) ->
                     ( { model | rationaleCreationStep = Preparing formWithError }, Cmd.none, Nothing )
@@ -1195,8 +1298,8 @@ innerUpdate ctx msg model =
         --
         PinJsonIpfsButtonClicked ->
             case ( model.storageConfigStep, model.permanentStorageStep ) of
-                ( Done _ _, Preparing _ ) ->
-                    sendPinRequest ctx model
+                ( Done _ _, Preparing form ) ->
+                    sendPinRequest ctx form model
 
                 _ ->
                     ( model, Cmd.none, Nothing )
@@ -1232,8 +1335,46 @@ innerUpdate ctx msg model =
 
                 -- Otherwise, if we are validating the permanent storage step, it means the IPFS answer
                 -- is most likely for the signed JSON rationale.
-                ( _, Validating _ _ ) ->
-                    handleRationaleIpfsAnswer model ipfsAnswer
+                ( _, Validating form _ ) ->
+                    handleRationaleIpfsAnswer model form ipfsAnswer
+
+                _ ->
+                    ( model, Cmd.none, Nothing )
+
+        PublishedRationaleUriChanged uri ->
+            case model.permanentStorageStep of
+                Preparing _ ->
+                    ( { model | permanentStorageStep = Preparing { publishedRationaleUri = uri, error = Nothing } }
+                    , Cmd.none
+                    , Nothing
+                    )
+
+                _ ->
+                    ( model, Cmd.none, Nothing )
+
+        CheckRationaleUrlButtonClicked ->
+            case ( model.storageConfigStep, model.rationaleSignatureStep, model.permanentStorageStep ) of
+                ( Done _ storageConfig, Done _ { signedJson }, Preparing form ) ->
+                    if String.startsWith "ipfs://" form.publishedRationaleUri || String.startsWith "https://" form.publishedRationaleUri then
+                        let
+                            raw =
+                                case storageConfig of
+                                    UseCustomHosting _ ->
+                                        Just signedJson
+
+                                    _ ->
+                                        Nothing
+                        in
+                        ( { model | permanentStorageStep = Validating form {} }
+                        , Cmd.map ctx.wrapMsg <| checkPublishedRationaleUrl { raw = raw, uri = form.publishedRationaleUri }
+                        , Nothing
+                        )
+
+                    else
+                        ( { model | permanentStorageStep = Preparing { form | error = Just "Invalid URI. It must either start with ipfs:// or https://" } }
+                        , Cmd.none
+                        , Nothing
+                        )
 
                 _ ->
                     ( model, Cmd.none, Nothing )
@@ -1252,6 +1393,43 @@ innerUpdate ctx msg model =
                     , Nothing
                     )
 
+        GotRawPublishedRationale maybeRaw result ->
+            case ( result, model.permanentStorageStep ) of
+                ( Err httpError, Validating form _ ) ->
+                    ( { model | permanentStorageStep = Preparing { form | error = Just <| Debug.toString httpError } }
+                    , Cmd.none
+                    , Nothing
+                    )
+
+                ( Ok rawJson, Validating form _ ) ->
+                    if maybeRaw == Nothing || maybeRaw == Just rawJson then
+                        let
+                            uploadedFile =
+                                { name = "rationale.json"
+                                , size = "?"
+                                , identifier = uploadedIdentifierFromUri form.publishedRationaleUri
+                                , raw = rawJson
+                                , dataHash =
+                                    Bytes.fromText rawJson
+                                        |> Bytes.toU8
+                                        |> blake2b256 Nothing
+                                        |> Bytes.fromU8
+                                }
+                        in
+                        ( { model | permanentStorageStep = Done { form | error = Nothing } { jsonFile = uploadedFile } }
+                        , Cmd.none
+                        , Nothing
+                        )
+
+                    else
+                        ( { model | permanentStorageStep = Preparing { form | error = Just <| "The JSON rationale generated by this app and the one published do not match exactly. Please double check that you didn’t introduced additional whitespace or other line ending issues. You should publish the raw JSON file as downloaded above. Do not just copy-paste its contents." } }
+                        , Cmd.none
+                        , Nothing
+                        )
+
+                _ ->
+                    ( model, Cmd.none, Nothing )
+
         --
         -- Add Vote to Cart
         --
@@ -1268,7 +1446,7 @@ innerUpdate ctx msg model =
                         voteIntent =
                             { actionId = actionId
                             , vote = vote
-                            , rationale = Just rationaleAnchor
+                            , rationale = rationaleAnchor
                             }
                     in
                     ( { model | buildTxStep = Done { error = Nothing } {} }
@@ -1878,12 +2056,12 @@ addVotesInfo votes webdata =
 
 setLastStorageConfig : StorageConfig -> Model -> ( Model, Msg )
 setLastStorageConfig storageConfig (Model innerModel) =
-    ( Model { innerModel | storageConfigStep = Done (storageFormFromConfig storageConfig) storageConfig }
+    ( Model { innerModel | storageConfigStep = Done (formFromStorageConfig storageConfig) storageConfig }
     , NoMsg
     )
 
 
-updateStorageConfigForm : (StorageForm -> StorageForm) -> InnerModel -> InnerModel
+updateStorageConfigForm : (StorageConfigForm -> StorageConfigForm) -> InnerModel -> InnerModel
 updateStorageConfigForm formUpdate model =
     case model.storageConfigStep of
         Preparing form ->
@@ -1896,7 +2074,7 @@ updateStorageConfigForm formUpdate model =
             model
 
 
-validateIpfsForm : StorageForm -> Result String StorageConfig
+validateIpfsForm : StorageConfigForm -> Result String StorageConfig
 validateIpfsForm form =
     case form.storageMethod of
         -- For standard IPFS, no validation needed
@@ -1961,6 +2139,27 @@ validateIpfsForm form =
                             }
                     )
 
+        CustomHosting ->
+            Ok <|
+                UseCustomHosting
+                    { label = "Custom Hosting"
+                    , description = "Prepare the rationale with this app, but host it with a custom solution (e.g. on GitHub). This is NOT RECOMMENDED, and your responsibility to make sure your storage solution is immutable and sustainable."
+                    }
+
+        CustomPrepublished ->
+            Ok <|
+                UseCustomPrepublished
+                    { label = "Custom Hosting - Prepublished"
+                    , description = "Your rationale is already published, we’ll just link to it. This is NOT RECOMMENDED, and your responsibility to make sure your storage solution is immutable and sustainable."
+                    }
+
+        NoStorage ->
+            Ok <|
+                UseNoStorage
+                    { label = "No Rationale"
+                    , description = "Are you REALLY sure you don’t want to add a rationale? This is NOT RECOMMENDED because proposers, reviewers, and delegators cannot understand the reasoning behind your decision."
+                    }
+
 
 
 -- Rationale Step
@@ -2007,8 +2206,8 @@ isH1Block block =
             False
 
 
-validateRationaleForm : Step RationaleForm Rationale Rationale -> Step RationaleForm Rationale Rationale
-validateRationaleForm step =
+validateRationaleForm : Bool -> Step RationaleForm Rationale Rationale -> Step RationaleForm Rationale Rationale
+validateRationaleForm hostingIsAppControlled step =
     case step of
         Preparing form ->
             let
@@ -2020,8 +2219,11 @@ validateRationaleForm step =
                         |> Result.andThen (\_ -> validateRationaleConclusion form.conclusion)
                         |> Result.andThen (\_ -> validateRationaleInternVote form.internalVote)
                         |> Result.andThen (\_ -> validateRationaleRefs form.references)
+
+                doPdfAutogen =
+                    hostingIsAppControlled && form.pdfAutogen
             in
-            case ( rationaleValidation, form.pdfAutogen ) of
+            case ( rationaleValidation, doPdfAutogen ) of
                 -- Without PDF autogeneration, validation is considered complete
                 ( Ok _, False ) ->
                     let
@@ -2217,6 +2419,16 @@ pinPdfFile fileAsValue (Model model) =
                         , file = file
                         }
                         GotIpfsAnswer
+
+                -- There isn’t supposed to be any PDF to pin for the rest
+                UseCustomHosting _ ->
+                    Cmd.none
+
+                UseCustomPrepublished _ ->
+                    Cmd.none
+
+                UseNoStorage _ ->
+                    Cmd.none
             )
 
         -- Ignore if we aren't validating the rationale storage step
@@ -2491,11 +2703,11 @@ reduceResults results =
 -- Rationale Storage Step
 
 
-sendPinRequest : UpdateContext msg -> InnerModel -> ( InnerModel, Cmd msg, Maybe MsgToParent )
-sendPinRequest ctx model =
+sendPinRequest : UpdateContext msg -> StorageForm -> InnerModel -> ( InnerModel, Cmd msg, Maybe MsgToParent )
+sendPinRequest ctx form model =
     case model.rationaleSignatureStep of
         Done _ ratSig ->
-            ( { model | permanentStorageStep = Validating { error = Nothing } {} }
+            ( { model | permanentStorageStep = Validating { form | error = Nothing } {} }
             , ctx.jsonRationaleToFile
                 { fileContent = ratSig.signedJson
                 , fileName = "rationale-signed.json"
@@ -2504,7 +2716,7 @@ sendPinRequest ctx model =
             )
 
         _ ->
-            ( { model | permanentStorageStep = Preparing { error = Just "Validate the rationale signature step first." } }
+            ( { model | permanentStorageStep = Preparing { form | error = Just "Validate the rationale signature step first." } }
             , Cmd.none
             , Nothing
             )
@@ -2513,8 +2725,8 @@ sendPinRequest ctx model =
 pinRationaleFile : JD.Value -> Model -> ( Model, Cmd Msg )
 pinRationaleFile fileAsValue (Model model) =
     case ( JD.decodeValue File.decoder fileAsValue, model.storageConfigStep, model.permanentStorageStep ) of
-        ( Err error, _, Validating _ _ ) ->
-            ( Model { model | permanentStorageStep = Preparing { error = Just <| JD.errorToString error } }
+        ( Err error, _, Validating form _ ) ->
+            ( Model { model | permanentStorageStep = Preparing { form | error = Just <| JD.errorToString error } }
             , Cmd.none
             )
 
@@ -2548,6 +2760,16 @@ pinRationaleFile fileAsValue (Model model) =
                         , file = file
                         }
                         GotIpfsAnswer
+
+                -- There is nothing to pin for the rest
+                UseCustomHosting _ ->
+                    Cmd.none
+
+                UseCustomPrepublished _ ->
+                    Cmd.none
+
+                UseNoStorage _ ->
+                    Cmd.none
             )
 
         -- Ignore if we aren't validating the rationale storage step
@@ -2613,20 +2835,53 @@ handlePdfIpfsAnswer ctx model form rationale ipfsAnswer =
             ( model, Cmd.none, Nothing )
 
 
-handleRationaleIpfsAnswer : InnerModel -> IpfsAnswer -> ( InnerModel, Cmd msg, Maybe MsgToParent )
-handleRationaleIpfsAnswer model ipfsAnswer =
-    case ipfsAnswer of
-        IpfsError error ->
-            ( { model | permanentStorageStep = Preparing { error = Just error } }
+handleRationaleIpfsAnswer : InnerModel -> StorageForm -> IpfsAnswer -> ( InnerModel, Cmd msg, Maybe MsgToParent )
+handleRationaleIpfsAnswer model form ipfsAnswer =
+    case ( ipfsAnswer, model.rationaleSignatureStep ) of
+        ( IpfsError error, _ ) ->
+            ( { model | permanentStorageStep = Preparing { form | error = Just error } }
             , Cmd.none
             , Nothing
             )
 
-        IpfsAddSuccessful file ->
-            ( { model | permanentStorageStep = Done { error = Nothing } { jsonFile = file } }
+        ( IpfsAddSuccessful file, Done _ r ) ->
+            let
+                rawJson =
+                    r.signedJson
+
+                uploadedFile =
+                    { name = file.name
+                    , size = file.size
+                    , identifier = IpfsIdentifier file.cid
+                    , raw = rawJson
+                    , dataHash =
+                        Bytes.fromText rawJson
+                            |> Bytes.toU8
+                            |> blake2b256 Nothing
+                            |> Bytes.fromU8
+                    }
+            in
+            ( { model | permanentStorageStep = Done { form | error = Nothing } { jsonFile = uploadedFile } }
             , Cmd.none
             , Nothing
             )
+
+        _ ->
+            ( model, Cmd.none, Nothing )
+
+
+checkPublishedRationaleUrl : { raw : Maybe String, uri : String } -> Cmd Msg
+checkPublishedRationaleUrl { raw, uri } =
+    -- Make a request to retrieve the rationale at the given URI.
+    -- If that is an IPFS url (ipfs://<cid>), try to fetch it with a gateway over HTTP.
+    if String.startsWith "ipfs://" uri then
+        Api.defaultApiProvider.getFromIpfsGateway (GotRawPublishedRationale raw) "https://ipfs.io/ipfs" (String.dropLeft 7 uri)
+
+    else
+        Http.get
+            { url = uri
+            , expect = Http.expectString (GotRawPublishedRationale raw)
+            }
 
 
 
@@ -2646,14 +2901,14 @@ type alias TxRequirements =
     { voter : Witness.Voter
     , actionId : ActionId
     , proposalTitle : String
-    , rationaleAnchor : Anchor
+    , rationaleAnchor : Maybe Anchor
     }
 
 
 allPrepSteps : InnerModel -> Result String TxRequirements
 allPrepSteps m =
-    case ( ( m.voterStep, m.pickProposalStep, m.rationaleSignatureStep ), m.permanentStorageStep ) of
-        ( ( Done _ voter, Done _ p, Done _ r ), Done _ s ) ->
+    case ( m.voterStep, m.pickProposalStep ) of
+        ( Done _ voter, Done _ p ) ->
             let
                 proposalTitle =
                     case p.metadata of
@@ -2664,19 +2919,35 @@ allPrepSteps m =
                         _ ->
                             "??? Unknown Proposal Title"
             in
-            Ok
-                { voter = voter
-                , actionId = p.id
-                , proposalTitle = proposalTitle
-                , rationaleAnchor =
-                    { url = "ipfs://" ++ s.jsonFile.cid
-                    , dataHash =
-                        Bytes.fromText r.signedJson
-                            |> Bytes.toU8
-                            |> blake2b256 Nothing
-                            |> Bytes.fromU8
-                    }
-                }
+            case ( m.storageConfigStep, m.rationaleSignatureStep, m.permanentStorageStep ) of
+                -- When there is no rationale:
+                ( Done _ (UseNoStorage _), _, _ ) ->
+                    Ok
+                        { voter = voter
+                        , actionId = p.id
+                        , proposalTitle = proposalTitle
+                        , rationaleAnchor = Nothing
+                        }
+
+                -- When there is a rationale:
+                ( _, Done _ r, Done _ s ) ->
+                    Ok
+                        { voter = voter
+                        , actionId = p.id
+                        , proposalTitle = proposalTitle
+                        , rationaleAnchor =
+                            Just
+                                { url = uploadedIdentifierToString s.jsonFile.identifier
+                                , dataHash =
+                                    Bytes.fromText r.signedJson
+                                        |> Bytes.toU8
+                                        |> blake2b256 Nothing
+                                        |> Bytes.fromU8
+                                }
+                        }
+
+                _ ->
+                    Err "Incomplete steps before Tx building"
 
         _ ->
             Err "Incomplete steps before Tx building"
@@ -2744,7 +3015,7 @@ view ctx (Model model) =
             , Helper.viewStepWithCircle 2 "proposal-step" (viewProposalSelectionStep ctx model)
             , Helper.viewStepWithCircle 3 "storage-config-step" (viewStorageConfigStep ctx model.storageConfigStep)
             , Helper.viewStepWithCircle 4 "rationale-step" (viewRationaleStep ctx model.pickProposalStep model.storageConfigStep model.rationaleCreationStep)
-            , Helper.viewStepWithCircle 5 "rationale-signature-step" (viewRationaleSignatureStep ctx model.pickProposalStep model.rationaleCreationStep model.rationaleSignatureStep)
+            , Helper.viewStepWithCircle 5 "rationale-signature-step" (viewRationaleSignatureStep ctx model.pickProposalStep model.storageConfigStep model.rationaleCreationStep model.rationaleSignatureStep)
             , Helper.viewStepWithCircle 6 "storage-step" (viewPermanentStorageStep ctx model.rationaleSignatureStep model.storageConfigStep model.permanentStorageStep)
             , Html.map ctx.wrapMsg <| Helper.viewStepWithCircle 7 "build-tx-step" (viewBuildTxStep ctx model)
             ]
@@ -3526,7 +3797,7 @@ getProposalContent metadata metadataUrl =
 --
 
 
-viewStorageConfigStep : ViewContext msg -> Step StorageForm {} StorageConfig -> Html msg
+viewStorageConfigStep : ViewContext msg -> Step StorageConfigForm {} StorageConfig -> Html msg
 viewStorageConfigStep ctx step =
     case step of
         Preparing form ->
@@ -3544,6 +3815,9 @@ viewStorageConfigStep ctx step =
                             , Helper.storageMethodOption "Own Blockfrost IPFS" (form.storageMethod == BlockfrostIPFS) (StorageMethodSelected BlockfrostIPFS)
                             , Helper.storageMethodOption "Own NMKR IPFS" (form.storageMethod == NmkrIPFS) (StorageMethodSelected NmkrIPFS)
                             , Helper.storageMethodOption "Custom IPFS server" (form.storageMethod == CustomIPFS) (StorageMethodSelected CustomIPFS)
+                            , Helper.storageMethodOption "Custom Hosting" (form.storageMethod == CustomHosting) (StorageMethodSelected CustomHosting)
+                            , Helper.storageMethodOption "Custom Hosting - Prepublished" (form.storageMethod == CustomPrepublished) (StorageMethodSelected CustomPrepublished)
+                            , Helper.storageMethodOption "No Rationale" (form.storageMethod == NoStorage) (StorageMethodSelected NoStorage)
                             ]
                         , case form.storageMethod of
                             BlockfrostIPFS ->
@@ -3556,6 +3830,15 @@ viewStorageConfigStep ctx step =
                                 viewCustomIpfsForm form
 
                             PreconfigIPFS _ ->
+                                text ""
+
+                            CustomHosting ->
+                                text ""
+
+                            CustomPrepublished ->
+                                text ""
+
+                            NoStorage ->
                                 text ""
                         ]
                     , Html.p [ HA.class "mt-6" ] [ Helper.viewButton "Validate storage config" ValidateStorageConfigButtonClicked ]
@@ -3578,10 +3861,10 @@ viewStorageConfigStep ctx step =
                 ]
 
 
-viewBlockfrostForm : StorageForm -> Html Msg
+viewBlockfrostForm : StorageConfigForm -> Html Msg
 viewBlockfrostForm form =
     Helper.storageProviderForm
-        [ Helper.storageHeaderInput
+        [ Helper.textInputField
             { label = "Blockfrost project ID"
             , value = form.blockfrostProjectId
             , onInputMsg = BlockfrostProjectIdChange
@@ -3589,7 +3872,7 @@ viewBlockfrostForm form =
         ]
 
 
-viewNmkrForm : StorageForm -> Html Msg
+viewNmkrForm : StorageConfigForm -> Html Msg
 viewNmkrForm form =
     Helper.storageProviderForm
         [ div
@@ -3597,12 +3880,12 @@ viewNmkrForm form =
             , HA.style "grid-template-columns" "1fr 1fr"
             , HA.style "gap" "1rem"
             ]
-            [ Helper.storageHeaderInput
+            [ Helper.textInputField
                 { label = "NMKR user ID"
                 , value = form.nmkrUserId
                 , onInputMsg = NmkrUserIdChange
                 }
-            , Helper.storageHeaderInput
+            , Helper.textInputField
                 { label = "NMKR API token"
                 , value = form.nmkrApiToken
                 , onInputMsg = NmkrApiTokenChange
@@ -3611,11 +3894,11 @@ viewNmkrForm form =
         ]
 
 
-viewCustomIpfsForm : StorageForm -> Html Msg
+viewCustomIpfsForm : StorageConfigForm -> Html Msg
 viewCustomIpfsForm form =
     div []
         [ Helper.storageProviderForm
-            [ Helper.storageHeaderInput
+            [ Helper.textInputField
                 { label = "IPFS RPC server"
                 , value = form.ipfsServer
                 , onInputMsg = IpfsServerChange
@@ -3662,8 +3945,8 @@ viewCustomIpfsForm form =
 
 viewStorageConfigInfo : StorageConfig -> Html msg
 viewStorageConfigInfo config =
-    case config of
-        UsePreconfigIpfs { label, description } ->
+    let
+        defaultStorageConfigInfo label description =
             Helper.storageProviderCard
                 [ Html.h4
                     [ HA.style "font-weight" "600"
@@ -3676,6 +3959,10 @@ viewStorageConfigInfo config =
                     ]
                     [ text description ]
                 ]
+    in
+    case config of
+        UsePreconfigIpfs { label, description } ->
+            defaultStorageConfigInfo label description
 
         UseBlockfrostIpfs { label, description, projectId } ->
             Helper.storageProviderCard
@@ -3699,18 +3986,7 @@ viewStorageConfigInfo config =
                 ]
 
         UseNmkrIpfs { label, description } ->
-            Helper.storageProviderCard
-                [ Html.h4
-                    [ HA.style "font-weight" "600"
-                    , HA.style "margin-bottom" "0.5rem"
-                    ]
-                    [ text label ]
-                , Html.p
-                    [ HA.style "color" "#4A5568"
-                    , HA.style "font-size" "0.875rem"
-                    ]
-                    [ text description ]
-                ]
+            defaultStorageConfigInfo label description
 
         UseCustomIpfs { label, description, ipfsServer } ->
             Helper.storageProviderCard
@@ -3736,6 +4012,15 @@ viewStorageConfigInfo config =
                     )
                 ]
 
+        UseCustomHosting { label, description } ->
+            defaultStorageConfigInfo label description
+
+        UseCustomPrepublished { label, description } ->
+            defaultStorageConfigInfo label description
+
+        UseNoStorage { label, description } ->
+            defaultStorageConfigInfo label description
+
 
 
 --
@@ -3746,14 +4031,26 @@ viewStorageConfigInfo config =
 viewRationaleStep :
     ViewContext msg
     -> Step {} {} ActiveProposal
-    -> Step StorageForm {} StorageConfig
+    -> Step StorageConfigForm {} StorageConfig
     -> Step RationaleForm Rationale Rationale
     -> Html msg
 viewRationaleStep ctx pickProposalStep storageConfigStep step =
     Html.map ctx.wrapMsg <|
         case ( pickProposalStep, storageConfigStep, step ) of
-            ( Done _ _, Done _ _, Preparing form ) ->
-                viewRationaleForm form
+            ( Done _ _, Done _ (UseCustomPrepublished { description }), _ ) ->
+                div []
+                    [ Helper.sectionTitle "Vote Rationale"
+                    , Helper.stepNotAvailableCard [ text description ]
+                    ]
+
+            ( Done _ _, Done _ (UseNoStorage { description }), _ ) ->
+                div []
+                    [ Helper.sectionTitle "Vote Rationale"
+                    , Helper.stepNotAvailableCard [ text description ]
+                    ]
+
+            ( Done _ _, Done _ storageConfig, Preparing form ) ->
+                viewRationaleForm { hostingIsAppControlled = isHostingAppControlled storageConfig } form
 
             ( Done _ _, Done _ _, Validating _ _ ) ->
                 div []
@@ -3776,18 +4073,37 @@ viewRationaleStep ctx pickProposalStep storageConfigStep step =
             ( Done _ _, _, _ ) ->
                 div []
                     [ Helper.sectionTitle "Vote Rationale"
-                    , Helper.stepNotAvailableCard [ text "Please validate the IPFS config step first." ]
+                    , Helper.stepNotAvailableCard [ text "Please validate the storage config step first." ]
                     ]
 
             _ ->
                 div []
                     [ Helper.sectionTitle "Vote Rationale"
-                    , Helper.stepNotAvailableCard [ text "Please pick a proposal and validate the IPFS config step first." ]
+                    , Helper.stepNotAvailableCard [ text "Please pick a proposal and validate the storage config step first." ]
                     ]
 
 
-viewRationaleForm : RationaleForm -> Html Msg
-viewRationaleForm form =
+isHostingAppControlled : StorageConfig -> Bool
+isHostingAppControlled storageConfig =
+    case storageConfig of
+        UsePreconfigIpfs _ ->
+            True
+
+        UseBlockfrostIpfs _ ->
+            True
+
+        UseNmkrIpfs _ ->
+            True
+
+        UseCustomIpfs _ ->
+            True
+
+        _ ->
+            False
+
+
+viewRationaleForm : { hostingIsAppControlled : Bool } -> RationaleForm -> Html Msg
+viewRationaleForm { hostingIsAppControlled } form =
     div []
         [ Helper.sectionTitle "Vote Rationale"
         , div [ HA.style "display" "grid", HA.style "gap" "1.5rem", HA.style "position" "relative" ]
@@ -3798,7 +4114,7 @@ viewRationaleForm form =
             , Helper.rationaleCard
                 "Rationale Statement"
                 "Fully describe your rationale, with your arguments in full details. Use markdown with heading level 2 (##) or higher."
-                (viewStatementInput form.pdfAutogen form.rationaleStatement)
+                (viewStatementInput { hostingIsAppControlled = hostingIsAppControlled, hasAutoGen = form.pdfAutogen } form.rationaleStatement)
             , Helper.rationaleCard
                 "Optional Fields"
                 ""
@@ -3829,15 +4145,19 @@ viewRationaleForm form =
               else
                 text ""
             ]
-        , Html.p [ HA.class "mt-6" ] [ Helper.viewButton "Confirm rationale" ValidateRationaleButtonClicked ]
+        , Html.p [ HA.class "mt-6" ] [ Helper.viewButton "Confirm rationale" (ValidateRationaleButtonClicked { hostingIsAppControlled = hostingIsAppControlled }) ]
         , viewError form.error
         ]
 
 
-viewStatementInput : Bool -> String -> Html Msg
-viewStatementInput hasAutoGen form =
+viewStatementInput : { hostingIsAppControlled : Bool, hasAutoGen : Bool } -> String -> Html Msg
+viewStatementInput { hostingIsAppControlled, hasAutoGen } form =
     div []
-        [ Helper.pdfAutogenCheckbox hasAutoGen TogglePdfAutogen
+        [ if hostingIsAppControlled then
+            Helper.pdfAutogenCheckbox hasAutoGen TogglePdfAutogen
+
+          else
+            text ""
         , div
             [ HA.style "margin-bottom" "0.5rem"
             , HA.style "color" "#4A5568"
@@ -3972,31 +4292,40 @@ viewCompletedRationale rationale =
 viewRationaleSignatureStep :
     ViewContext msg
     -> Step {} {} ActiveProposal
+    -> Step StorageConfigForm {} StorageConfig
     -> Step RationaleForm Rationale Rationale
     -> Step RationaleSignatureForm {} RationaleSignature
     -> Html msg
-viewRationaleSignatureStep ctx pickProposalStep rationaleCreationStep step =
+viewRationaleSignatureStep ctx pickProposalStep storageConfigStep rationaleCreationStep step =
     div []
         [ Helper.sectionTitle "Rationale Signature" -- Always show the title
-        , case ( pickProposalStep, rationaleCreationStep, step ) of
-            ( _, Preparing _, _ ) ->
-                Helper.stepNotAvailableCard [ text "Please complete the rationale creation step first." ]
+        , case storageConfigStep of
+            Done _ (UseCustomPrepublished _) ->
+                Helper.stepNotAvailableCard [ text "Rationale is already published." ]
 
-            ( _, Validating _ _, _ ) ->
-                Helper.stepNotAvailableCard [ text "Please wait for the rationale creation to complete." ]
+            Done _ (UseNoStorage _) ->
+                Helper.stepNotAvailableCard [ text "No rationale." ]
 
-            ( Done _ _, Done _ _, Preparing form ) ->
-                Html.map ctx.wrapMsg <| viewRationaleSignatureForm form
+            _ ->
+                case ( pickProposalStep, rationaleCreationStep, step ) of
+                    ( _, Preparing _, _ ) ->
+                        Helper.stepNotAvailableCard [ text "Please complete the rationale creation step first." ]
 
-            ( _, Done _ _, Preparing _ ) ->
-                Helper.stepNotAvailableCard [ text "Please select a proposal first." ]
+                    ( _, Validating _ _, _ ) ->
+                        Helper.stepNotAvailableCard [ text "Please wait for the rationale creation to complete." ]
 
-            ( _, Done _ _, Validating _ _ ) ->
-                Helper.formContainer
-                    [ Html.p [ HA.class "text-gray-600" ] [ text "Validating signatures..." ] ]
+                    ( Done _ _, Done _ _, Preparing form ) ->
+                        Html.map ctx.wrapMsg <| viewRationaleSignatureForm form
 
-            ( _, Done _ _, Done _ ratSig ) ->
-                viewCompletedRationaleSignature ctx ratSig
+                    ( _, Done _ _, Preparing _ ) ->
+                        Helper.stepNotAvailableCard [ text "Please select a proposal first." ]
+
+                    ( _, Done _ _, Validating _ _ ) ->
+                        Helper.formContainer
+                            [ Html.p [ HA.class "text-gray-600" ] [ text "Validating signatures..." ] ]
+
+                    ( _, Done _ _, Done _ ratSig ) ->
+                        viewCompletedRationaleSignature ctx ratSig
         ]
 
 
@@ -4173,70 +4502,105 @@ encodeAuthorWitness { name, witnessAlgorithm, publicKey, signature } =
 viewPermanentStorageStep :
     ViewContext msg
     -> Step RationaleSignatureForm {} RationaleSignature
-    -> Step StorageForm {} StorageConfig
-    -> Step { error : Maybe String } {} Storage
+    -> Step StorageConfigForm {} StorageConfig
+    -> Step StorageForm {} Storage
     -> Html msg
-viewPermanentStorageStep ctx rationaleSigStep storageConfigStep step =
+viewPermanentStorageStep ctx rationaleSignatureStep storageConfigStep step =
     Html.map ctx.wrapMsg <|
         div []
             [ Helper.sectionTitle "Rationale Storage"
-            , case ( rationaleSigStep, storageConfigStep, step ) of
+            , case ( storageConfigStep, rationaleSignatureStep, step ) of
+                ( Done _ (UseNoStorage _), _, _ ) ->
+                    Helper.cardContainer []
+                        [ Helper.cardHeader [] "Step Not Available" "" []
+                        , Helper.cardContent []
+                            [ Html.p [] [ text "No rationale." ] ]
+                        ]
+
+                ( Done _ (UseCustomPrepublished _), _, Preparing form ) ->
+                    div []
+                        [ Helper.cardContainer []
+                            [ Helper.cardHeader [] "Verify Published Rationale" "" []
+                            , Helper.cardContent []
+                                [ Helper.textInputField
+                                    { label = "Rationale URI (ipfs://... or https://...)"
+                                    , value = form.publishedRationaleUri
+                                    , onInputMsg = PublishedRationaleUriChanged
+                                    }
+                                , Helper.viewError form.error
+                                ]
+                            ]
+                        , Html.p [ HA.class "mt-6" ]
+                            [ Helper.viewButton "Check Rationale URI" CheckRationaleUrlButtonClicked ]
+                        ]
+
+                ( Done _ (UseCustomHosting _), Done _ _, Preparing form ) ->
+                    div []
+                        [ Helper.cardContainer []
+                            [ Helper.cardHeader [] "Verify Published Rationale" "" []
+                            , Helper.cardContent []
+                                [ Html.p [ HA.style "margin-bottom" "1.5rem" ]
+                                    [ text "Download the above finalized JSON rationale file, and upload it to your custom storage solution. Make sure you use an immutable and sustainable storage solution. If you use GitHub hosting, make sure you create a permalink." ]
+                                , Helper.textInputField
+                                    { label = "Rationale URI (ipfs://... or https://...)"
+                                    , value = form.publishedRationaleUri
+                                    , onInputMsg = PublishedRationaleUriChanged
+                                    }
+                                , Helper.viewError form.error
+                                ]
+                            ]
+                        , Html.p [ HA.class "mt-6" ]
+                            [ Helper.viewButton "Check Rationale URI" CheckRationaleUrlButtonClicked ]
+                        ]
+
                 ( Done _ _, Done _ _, Preparing form ) ->
                     Helper.storageUploadCard PinJsonIpfsButtonClicked (viewError form.error)
 
                 ( Done _ _, Done _ _, Validating _ _ ) ->
-                    Helper.uploadingSpinner "Uploading rationale to IPFS..."
+                    Helper.uploadingSpinner "Checking rationale storage..."
 
-                ( Done _ r, Done _ _, Done _ storage ) ->
-                    viewCompletedStorage r storage
+                ( Done _ _, Done _ _, Done _ storage ) ->
+                    viewCompletedStorage storage
 
                 _ ->
                     Helper.storageNotAvailableCard
             ]
 
 
-viewCompletedStorage : RationaleSignature -> Storage -> Html Msg
-viewCompletedStorage r storage =
+viewCompletedStorage : Storage -> Html Msg
+viewCompletedStorage { jsonFile } =
     let
         link =
-            "https://ipfs.io/ipfs/" ++ storage.jsonFile.cid
-
-        dataHash =
-            Bytes.fromText r.signedJson
-                |> Bytes.toU8
-                |> blake2b256 Nothing
-                |> Bytes.fromU8
+            uploadedIdentifierToLink jsonFile.identifier
 
         infoItems =
             List.concat
-                [ Helper.fileInfoItem "File name:"
+                [ Helper.fileInfoItem "File Hash:"
                     (Html.span
                         [ HA.style "font-family" "monospace"
                         , HA.style "overflow-wrap" "break-word"
                         ]
-                        [ text storage.jsonFile.name ]
-                    )
-                , Helper.fileInfoItem "CID:"
-                    (Html.span
-                        [ HA.style "font-family" "monospace"
-                        , HA.style "overflow-wrap" "break-word"
-                        ]
-                        [ text storage.jsonFile.cid ]
-                    )
-                , Helper.fileInfoItem "File Hash:"
-                    (Html.span
-                        [ HA.style "font-family" "monospace"
-                        , HA.style "overflow-wrap" "break-word"
-                        ]
-                        [ text (Bytes.toHex dataHash) ]
+                        [ text <| Bytes.toHex jsonFile.dataHash ]
                     )
                 , Helper.fileInfoItem "Size:"
                     (Html.span
                         [ HA.style "font-family" "monospace"
                         ]
-                        [ text (storage.jsonFile.size ++ " bytes") ]
+                        [ text (jsonFile.size ++ " bytes") ]
                     )
-                , Helper.fileInfoItem "IPFS Link:"
+                , case jsonFile.identifier of
+                    IpfsIdentifier cid ->
+                        Helper.fileInfoItem "CID:"
+                            (Html.span
+                                [ HA.style "font-family" "monospace"
+                                , HA.style "overflow-wrap" "break-word"
+                                ]
+                                [ text cid ]
+                            )
+
+                    HttpsIdentifier _ ->
+                        [ text "" ]
+                , Helper.fileInfoItem "Link:"
                     (Helper.externalLinkDisplay link link)
                 ]
     in
@@ -4247,11 +4611,11 @@ viewCompletedStorage r storage =
                 , HA.style "margin-bottom" "1.5rem"
                 , HA.style "font-size" "0.9375rem"
                 ]
-                [ text "Your file has been uploaded to IPFS. File pinning is ongoing and may take a few hours to complete. We recommend saving a local copy of your JSON file in case you need to re-upload it in the future." ]
-            , Html.p [ HA.style "margin" "1rem 0rem" ] [ Helper.downloadJSONButton "Download JSON rationale" { filename = "rationale.json", rawJson = r.signedJson } ]
+                [ text "Your file has been uploaded. IPFS File pinning can take a few hours to complete. We recommend saving a local copy of your JSON file in case you need to re-upload it in the future." ]
+            , Html.p [ HA.style "margin" "1rem 0rem" ] [ Helper.downloadJSONButton "Download JSON rationale" { filename = "rationale.json", rawJson = jsonFile.raw } ]
             , Helper.storageInfoGrid infoItems
             ]
-        , Helper.viewButton "Add another storage location" AddOtherStorageButtonCLicked
+        , Helper.viewButton "Change storage location" AddOtherStorageButtonCLicked
         ]
 
 
@@ -4336,6 +4700,26 @@ viewVoteInCart voter actionId cart =
 
 viewMissingStepsMessage : InnerModel -> Html Msg
 viewMissingStepsMessage model =
+    let
+        isRationaleAppCreated =
+            case model.storageConfigStep of
+                Done _ (UseCustomPrepublished _) ->
+                    False
+
+                Done _ (UseNoStorage _) ->
+                    False
+
+                _ ->
+                    True
+
+        hasRationale =
+            case model.storageConfigStep of
+                Done _ (UseNoStorage _) ->
+                    False
+
+                _ ->
+                    True
+    in
     Helper.stepNotAvailableCard
         [ Html.p
             [ HA.style "color" "#4A5568"
@@ -4346,8 +4730,9 @@ viewMissingStepsMessage model =
         , Helper.missingStepsList
             [ Helper.missingStepItem "Voter identification" (isStepIncomplete model.voterStep) (Just "voter-step")
             , Helper.missingStepItem "Proposal selection" (isStepIncomplete model.pickProposalStep) (Just "proposal-step")
-            , Helper.missingStepItem "Rationale creation" (isStepIncomplete model.rationaleCreationStep) (Just "rationale-step")
-            , Helper.missingStepItem "Rationale storage" (isStepIncomplete model.permanentStorageStep) (Just "storage-step")
+            , Helper.missingStepItem "Storage configuration" (isStepIncomplete model.storageConfigStep) (Just "storage-config-step")
+            , Helper.missingStepItem "Rationale creation" (isRationaleAppCreated && isStepIncomplete model.rationaleCreationStep) (Just "rationale-step")
+            , Helper.missingStepItem "Rationale storage" (hasRationale && isStepIncomplete model.permanentStorageStep) (Just "storage-step")
             ]
         ]
 
