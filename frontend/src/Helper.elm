@@ -17,8 +17,9 @@ module Helper exposing
     , rationaleCompletedCard, optionalSection, formattedInternalVote, formattedReferences
     , stepNotAvailableCard, downloadJSONButton, authorsCard, addAuthorButton, codeSnippetBox, noAuthorsPlaceholder
     , signerCard, authorForm, labeledField, readOnlyField, signatureField, formButtonsRow, secondaryButton, primaryButton, loadSignatureButton
-    , stepCard, voteButton, missingStepsList, missingStepItem, loadingSpinner
+    , stepCard, missingStepsList, missingStepItem, loadingSpinner
     , signingButton
+    , iconButton
     )
 
 {-| Helper module for miscellaneous functions that didn't fit elsewhere,
@@ -42,7 +43,7 @@ and are potentially useful in multiple places.
 
 # Buttons
 
-@docs viewButton, viewWalletButton, externalLink, externalLinkButton
+@docs viewButton, viewWalletButton, externalLink, externalLinkButton, iconButton
 
 
 # Wallet Styling
@@ -101,7 +102,7 @@ and are potentially useful in multiple places.
 
 # Transaction Components
 
-@docs stepCard, voteButton, missingStepsList, missingStepItem, loadingSpinner
+@docs stepCard, missingStepsList, missingStepItem, loadingSpinner
 
 
 # Signing Components
@@ -121,6 +122,8 @@ import Markdown.Renderer exposing (defaultHtmlRenderer)
 import Natural exposing (Natural)
 import Numeral
 import RemoteData
+import Svg
+import Svg.Attributes as SA
 import Url
 
 
@@ -1643,24 +1646,46 @@ storageHeaderForm _ name value deleteMsg nameChangeMsg valueChangeMsg =
                     , onInputMsg = valueChangeMsg
                     }
                 ]
-            , iconButton "🗑" deleteMsg
+            , iconButton "trash" deleteMsg
             ]
         ]
 
 
 iconButton : String -> msg -> Html msg
-iconButton icon msg =
+iconButton _ msg =
     Html.button
-        [ HA.style "background-color" "black"
+        [ HA.style "background-color" "#272727"
         , HA.style "color" "white"
-        , HA.style "font-size" "1.25rem"
         , HA.style "width" "2.2rem"
         , HA.style "height" "2.2rem"
+        , HA.style "display" "inline-flex"
+        , HA.style "align-items" "center"
+        , HA.style "justify-content" "center"
         , HA.style "border" "none"
         , HA.style "border-radius" "0.375rem"
+        , HA.style "cursor" "pointer"
+    , HA.attribute "aria-label" "Delete"
+    , HA.title "Delete"
         , onClick msg
         ]
-        [ text icon ]
+        [ Svg.svg
+            [ SA.width "18"
+            , SA.height "18"
+            , SA.viewBox "0 0 24 24"
+            , SA.fill "none"
+            , SA.stroke "#FFFFFF"
+            , SA.strokeWidth "2"
+            , SA.strokeLinecap "round"
+            , SA.strokeLinejoin "round"
+            ]
+            [ 
+              Svg.path [ SA.d "M3 6h18" ] []
+            , Svg.path [ SA.d "M8 6V4h8v2" ] []
+            , Svg.path [ SA.d "M6 6l1 14h10l1-14" ] []
+            , Svg.path [ SA.d "M10 11v7" ] []
+            , Svg.path [ SA.d "M14 11v7" ] []
+            ]
+        ]
 
 
 
@@ -1866,7 +1891,7 @@ referenceForm index typeName label uri deleteMsg typeChangeMsg labelChangeMsg ur
                 , HA.style "color" "#374151"
                 ]
                 [ text ("Reference " ++ String.fromInt (index + 1)) ]
-            , iconButton "🗑" deleteMsg
+            , iconButton "trash" deleteMsg
             ]
         , div
             [ HA.style "display" "grid"
@@ -2311,7 +2336,7 @@ authorForm index deleteMsg content =
                 , HA.style "color" "#1A202C"
                 ]
                 [ text ("Author " ++ String.fromInt (index + 1)) ]
-            , iconButton "🗑" deleteMsg
+            , iconButton "trash" deleteMsg
             ]
         , div
             [ HA.style "display" "grid"
@@ -2640,28 +2665,6 @@ successBadge label =
         , HA.style "gap" "0.375rem"
         ]
         [ text <| "✓ " ++ label ]
-
-
-{-| Vote button with consistent styling
--}
-voteButton : String -> String -> msg -> Html msg
-voteButton label color clickMsg =
-    Html.button
-        [ HA.style "background-color" color
-        , HA.style "color" "white"
-        , HA.style "font-weight" "500"
-        , HA.style "font-size" "0.9375rem"
-        , HA.style "padding" "0.75rem 2rem"
-        , HA.style "border" "none"
-        , HA.style "border-radius" "0.5rem"
-        , HA.style "cursor" "pointer"
-        , HA.style "display" "inline-flex"
-        , HA.style "align-items" "center"
-        , HA.style "justify-content" "center"
-        , HA.style "min-width" "120px"
-        , onClick clickMsg
-        ]
-        [ text label ]
 
 
 {-| Missing steps list container

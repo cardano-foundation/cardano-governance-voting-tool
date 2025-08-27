@@ -1430,10 +1430,6 @@ viewHeader model =
                         _ ->
                             False
               }
-            , { label = "Cart"
-              , link = link <| RouteCart { networkId = model.networkId }
-              , isActive = model.page == CartPage
-              }
             , { label = "PDFs"
               , link = link RoutePdf
               , isActive =
@@ -1469,6 +1465,8 @@ viewHeader model =
         , navigationItems = navigationItems
         , networkId = model.networkId
         , onNetworkChange = NetworkChanged
+        , cartCount = Page.Cart.cartCount model.cart
+        , cartLink = link <| RouteCart { networkId = model.networkId }
         }
 
 

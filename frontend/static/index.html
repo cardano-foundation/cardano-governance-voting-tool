@@ -114,6 +114,8 @@
         mainApp.ports.pushUrl.subscribe(function (url) {
             history.pushState({}, "", url);
             // mainApp.ports.onUrlChange.send(location.href);
+            // Recompute cart button position after route changes
+            updateCartCssVars();
         });
 
         // Convert hex string to binary data
@@ -139,6 +141,29 @@
                 type: "text/plain",
             });
             mainApp.ports.gotRationaleAsFile.send(file);
+        });
+
+        // Fly-to-cart animation target: keep CSS vars in sync with cart button position
+        function updateCartCssVars() {
+            const el = document.getElementById("cart-button");
+            if (!el) return;
+            const rect = el.getBoundingClientRect();
+            const dotRadius = 5;
+            const left = rect.left + rect.width / 2 - dotRadius;
+            const top = rect.top + rect.height / 2 - dotRadius;
+            document.documentElement.style.setProperty("--cart-right", `${left}px`);
+            document.documentElement.style.setProperty("--cart-top", `${top}px`);
+        }
+
+        // Initial and reactive updates
+        window.addEventListener("resize", updateCartCssVars);
+        window.addEventListener("scroll", updateCartCssVars, { passive: true });
+        
+        requestAnimationFrame(() => {
+            updateCartCssVars();
+            setTimeout(updateCartCssVars, 50);
+            setTimeout(updateCartCssVars, 200);
+            setTimeout(updateCartCssVars, 600);
         });
     </script>
 </body>

@@ -3,8 +3,10 @@ module Header exposing (ViewContext, view)
 import Cardano.Address exposing (NetworkId(..))
 import Helper
 import Html exposing (Html, button, div, img, li, nav, span, text, ul)
-import Html.Attributes exposing (alt, class, src, style)
+import Html.Attributes exposing (alt, class, id, src, style)
 import Html.Events exposing (onClick)
+import Svg
+import Svg.Attributes as SA
 import WalletConnector
 
 
@@ -24,12 +26,23 @@ type alias ViewContext msg =
             }
     , networkId : NetworkId
     , onNetworkChange : NetworkId -> msg
+    , cartCount : Int
+    , cartLink : List (Html.Attribute msg) -> List (Html msg) -> Html msg
     }
 
 
 view : ViewContext msg -> Html msg
-view { mobileMenuIsOpen, toggleMobileMenu, networkDropdownIsOpen, toggleNetworkDropdown, walletConnector, walletConnectorMsgs, logoLink, navigationItems, networkId, onNetworkChange } =
-    nav [ class "relative z-10 w-full bg-transparent" ]
+view { mobileMenuIsOpen, toggleMobileMenu, networkDropdownIsOpen, toggleNetworkDropdown, walletConnector, walletConnectorMsgs, logoLink, navigationItems, networkId, onNetworkChange, cartCount, cartLink } =
+    nav
+        [ class "w-full"
+        , style "position" "sticky"
+        , style "top" "0"
+        , style "z-index" "100"
+        , style "border-bottom" "1px solid rgba(226,232,240,0.1)"
+        , style "background-color" "rgba(255,255,255,0.05)"
+        , style "backdrop-filter" "saturate(180%) blur(16px)"
+        , style "-webkit-backdrop-filter" "saturate(180%) blur(16px)"
+        ]
         [ div [ class "container mx-auto py-6 overflow-visible" ]
             [ div [ class "flex items-center justify-between" ]
                 -- Logo section
@@ -59,7 +72,7 @@ view { mobileMenuIsOpen, toggleMobileMenu, networkDropdownIsOpen, toggleNetworkD
                 , div [ class "hidden md:flex space-x-12" ]
                     (List.map viewDesktopMenuItem navigationItems)
 
-                -- Wallet and network selector
+                -- Wallet, network selector and cart button
                 , div [ class "hidden md:flex items-center" ]
                     [ WalletConnector.view walletConnectorMsgs walletConnector
                     , viewNetworkSelector
@@ -67,6 +80,70 @@ view { mobileMenuIsOpen, toggleMobileMenu, networkDropdownIsOpen, toggleNetworkD
                         networkDropdownIsOpen
                         toggleNetworkDropdown
                         onNetworkChange
+                    , cartLink []
+                        [ button
+                            [ class "ml-3"
+                            , style "position" "relative"
+                            , style "display" "inline-flex"
+                            , style "align-items" "center"
+                            , style "justify-content" "center"
+                            , style "width" "40px"
+                            , style "height" "40px"
+                            , style "border-radius" "9999px"
+                            , style "background-color" "#272727"
+                            , style "color" "#f7fafc"
+                            , style "border" "none"
+                            , style "box-shadow" "0 2px 6px rgba(0,0,0,0.06)"
+                            , style "margin-left" "1rem"
+                            , id "cart-button"
+                            , Html.Attributes.attribute "aria-label" "Open cart"
+                            , Html.Attributes.title "Cart"
+                            ]
+                            (let
+                                badge =
+                                    if cartCount > 0 then
+                                        [ span
+                                            [ style "position" "absolute"
+                                            , style "top" "-6px"
+                                            , style "right" "-6px"
+                                            , style "min-width" "18px"
+                                            , style "height" "18px"
+                                            , style "padding" "0 4px"
+                                            , style "border-radius" "9999px"
+                                            , style "background-color" "#10B981"
+                                            , style "color" "white"
+                                            , style "font-size" "11px"
+                                            , style "font-weight" "700"
+                                            , style "line-height" "18px"
+                                            , style "display" "inline-flex"
+                                            , style "align-items" "center"
+                                            , style "justify-content" "center"
+                                            , style "box-shadow" "0 1px 2px rgba(0,0,0,0.12)"
+                                            ]
+                                            [ text (String.fromInt cartCount) ]
+                                        ]
+
+                                    else
+                                        []
+                             in
+
+                             Svg.svg
+                                [ SA.width "22"
+                                , SA.height "22"
+                                , SA.viewBox "0 0 24 24"
+                                , SA.fill "none"
+                                , SA.stroke "#FFFFFF"
+                                , SA.strokeWidth "2.5"
+                                , SA.strokeLinecap "round"
+                                , SA.strokeLinejoin "round"
+                                ]
+                                [ Svg.circle [ SA.cx "9", SA.cy "19", SA.r "1.5", SA.fill "none", SA.stroke "#FFFFFF" ] []
+                                , Svg.circle [ SA.cx "17", SA.cy "19", SA.r "1.5", SA.fill "none", SA.stroke "#FFFFFF" ] []
+                                , Svg.path [ SA.d "M3 4h2l2 9c.2.9 1 1.5 1.9 1.5H17c.9 0 1.7-.6 1.9-1.5L21 7H6", SA.fill "none", SA.stroke "#FFFFFF" ] []
+                                ]
+                                :: badge
+                            )
+                        ]
                     ]
 
                 -- Mobile menu button
