@@ -143,7 +143,7 @@
             mainApp.ports.gotRationaleAsFile.send(file);
         });
 
-        // Fly-to-cart animation target: keep CSS vars in sync with cart button position
+        // Fly-to-cart animation target: following cart button position
         function updateCartCssVars() {
             const el = document.getElementById("cart-button-desktop") || document.getElementById("cart-button-mobile");
             if (!el) return;

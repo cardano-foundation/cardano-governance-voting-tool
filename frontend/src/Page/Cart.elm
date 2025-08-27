@@ -1,6 +1,5 @@
 module Page.Cart exposing (Model, Msg, UpdateContext, ViewContext, VoteRecord, addVote, cartCount, contains, deleteVote, deserialize, get, init, serialize, update, view)
 
--- import Html.Events as HE
 
 import Bytes.Comparable as Bytes exposing (Bytes)
 import Cardano.Address as Address exposing (Address, CredentialHash)
@@ -780,7 +779,7 @@ viewVoteRecord ctx voterIdStr ( actionIdStr, { proposalTitle, voteIntent } ) =
         { vote, rationale } =
             voteIntent
 
-        -- Convert ipfs URL to a web-accessible IPFS gateway
+        -- Convert ipfs URL to a gateway link
         toWebUrl : String -> String
         toWebUrl url =
             if String.startsWith "ipfs://" url then

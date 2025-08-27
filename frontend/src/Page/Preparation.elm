@@ -1483,7 +1483,6 @@ innerUpdate ctx msg model =
 
                         hideToastLater : Cmd msg
                         hideToastLater =
-                            -- Keep the toast visible a bit longer (2.5s) for better readability
                             Process.sleep 2500 |> Task.perform (always <| ctx.wrapMsg HideCartToast)
 
                         color =
