@@ -749,10 +749,9 @@ viewVoterIntents ctx ( voterIdStr, { voteRecords } ) =
     cardContainer []
         [ cardHeader
             [ HA.style "display" "flex"
-            , HA.style "justify-content" "space-between"
-            , HA.style "align-items" "center"
-            , HA.style "gap" "0.5rem"
-            , HA.style "flex-wrap" "wrap"
+            , HA.style "flex-direction" "column"
+            , HA.style "align-items" "flex-start"
+            , HA.style "gap" "0.25rem"
             ]
             "Voter"
             ""
