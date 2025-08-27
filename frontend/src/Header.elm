@@ -173,7 +173,7 @@ view { mobileMenuIsOpen, toggleMobileMenu, networkDropdownIsOpen, toggleNetworkD
                                 , SA.strokeWidth "2.5"
                                 , SA.strokeLinecap "round"
                                 , SA.strokeLinejoin "round"
-                                , class "mr-4"
+                                , SA.class "mr-4"
                                 ]
                                 [ Svg.path [ SA.d "M6 6l12 12" ] []
                                 , Svg.path [ SA.d "M18 6L6 18" ] []
@@ -189,7 +189,7 @@ view { mobileMenuIsOpen, toggleMobileMenu, networkDropdownIsOpen, toggleNetworkD
                                 , SA.strokeWidth "2.5"
                                 , SA.strokeLinecap "round"
                                 , SA.strokeLinejoin "round"
-                                , class "mr-4"
+                                , SA.class "mr-4"
                                 ]
                                 [ Svg.path [ SA.d "M4 7h16" ] []
                                 , Svg.path [ SA.d "M4 12h16" ] []
