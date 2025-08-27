@@ -38,7 +38,7 @@ viewMobile msg state =
             viewAvailableWallets state.walletsDiscovered state.walletDropdownIsOpen msg True
 
         Just wallet ->
-            viewConnectedWallet wallet msg
+            viewConnectedWalletMobile wallet msg
 
 
 viewConnectedWallet : Cip30.Wallet -> Msgs msg -> Html msg
@@ -50,6 +50,43 @@ viewConnectedWallet wallet msg =
                 [ text (Helper.shortenedHex 9 (Address.toBech32 <| Cip30.walletChangeAddress wallet)) ]
             ]
         , viewWalletButton "Disconnect" msg.disconnectWalletClicked []
+        ]
+
+
+viewConnectedWalletMobile : Cip30.Wallet -> Msgs msg -> Html msg
+viewConnectedWalletMobile wallet msg =
+    let
+        name : String
+        name =
+            (Cip30.walletDescriptor wallet).name
+
+        addr : String
+        addr =
+            Helper.shortenedHex 9 (Address.toBech32 <| Cip30.walletChangeAddress wallet)
+    in
+    div
+        [ class "flex items-center"
+        , style "width" "100%"
+        ]
+        [ viewWalletButton "Disconnect" msg.disconnectWalletClicked []
+        , div
+            [ style "display" "flex"
+            , style "align-items" "center"
+            , style "margin-left" "0.75rem"
+            , style "flex" "1"
+            , style "min-width" "0"
+            ]
+            [ div [ style "font-weight" "500", style "margin-right" "0.5rem", style "white-space" "nowrap" ] [ text name ]
+            , span
+                [ style "font-family" "monospace"
+                , style "font-size" "0.875rem"
+                , style "color" "#6B7280"
+                , style "overflow" "hidden"
+                , style "text-overflow" "ellipsis"
+                , style "white-space" "nowrap"
+                ]
+                [ text addr ]
+            ]
         ]
 
 

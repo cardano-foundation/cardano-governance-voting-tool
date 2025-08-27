@@ -754,10 +754,19 @@ viewVoterIntents ctx ( voterIdStr, { voteRecords } ) =
             [ HA.style "display" "flex"
             , HA.style "justify-content" "space-between"
             , HA.style "align-items" "center"
+            , HA.style "gap" "0.5rem"
+            , HA.style "flex-wrap" "wrap"
             ]
             "Voter"
-            voterIdStr
-            []
+            ""
+            [ Html.div
+                [ HA.style "font-size" "0.875rem"
+                , HA.style "color" "#4A5568"
+                , HA.style "word-break" "break-all"
+                , HA.style "overflow-wrap" "anywhere"
+                ]
+                [ text voterIdStr ]
+            ]
         , cardContent []
             (Dict.toList voteRecords
                 |> List.map (viewVoteRecord ctx voterIdStr)
@@ -798,19 +807,31 @@ viewVoteRecord ctx voterIdStr ( actionIdStr, { proposalTitle, voteIntent } ) =
         row : List (Html.Attribute msg)
         row =
             [ HA.style "display" "flex"
+            , HA.style "flex-wrap" "wrap"
             , HA.style "align-items" "flex-start"
-            , HA.style "justify-content" "space-between"
+            , HA.style "justify-content" "flex-start"
             , HA.style "gap" "0.75rem"
             , HA.style "padding" "0.5rem 0"
             , HA.style "border-bottom" "1px solid #EDF2F7"
             ]
     in
     div row
-        [ div []
-            [ Html.div [ HA.style "font-weight" "600", HA.style "color" "#1A202C" ] [ text proposalTitle ]
+        [ div [ HA.style "flex" "1 1 0%", HA.style "min-width" "0" ]
+            [ Html.div
+                [ HA.style "font-weight" "600"
+                , HA.style "color" "#1A202C"
+                , HA.style "word-break" "break-word"
+                , HA.style "overflow-wrap" "anywhere"
+                ]
+                [ text proposalTitle ]
             , Html.div [ HA.style "font-size" "0.875rem", HA.style "color" "#4A5568", HA.style "margin-top" "0.35rem", HA.style "display" "flex", HA.style "align-items" "center", HA.style "gap" "0.5rem", HA.style "flex-wrap" "wrap" ]
                 [ Html.span [] [ text "Action ID:" ]
-                , Html.code [ HA.style "font-family" "monospace" ] [ text actionIdStr ]
+                , Html.code
+                    [ HA.style "font-family" "monospace"
+                    , HA.style "word-break" "break-all"
+                    , HA.style "overflow-wrap" "anywhere"
+                    ]
+                    [ text actionIdStr ]
                 , Html.span [] [ text "·" ]
                 , rationaleView
                 , Html.span [] [ text "·" ]
@@ -818,7 +839,7 @@ viewVoteRecord ctx voterIdStr ( actionIdStr, { proposalTitle, voteIntent } ) =
                 , viewDecisionBadge vote
                 ]
             ]
-    , div [ HA.style "align-self" "center" ]
+    , div [ HA.style "align-self" "center", HA.style "margin-left" "auto", HA.style "flex-shrink" "0" ]
             [ Helper.iconButton "trash" (ctx.deleteVote { voterIdStr = voterIdStr, actionIdStr = actionIdStr }) ]
         ]
 
