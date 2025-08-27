@@ -1,6 +1,5 @@
 module Page.Cart exposing (Model, Msg, UpdateContext, ViewContext, VoteRecord, addVote, cartCount, contains, deleteVote, deserialize, get, init, serialize, update, view)
 
-
 import Bytes.Comparable as Bytes exposing (Bytes)
 import Cardano.Address as Address exposing (Address, CredentialHash)
 import Cardano.Cip30 as Cip30
@@ -705,8 +704,7 @@ viewPreparingCart ctx { votersIntents, error } =
                                 , HA.style "text-align" "center"
                                 , HA.style "padding" "2rem 1rem"
                                 ]
-                                [ 
-                                  div
+                                [ div
                                     [ HA.style "width" "64px"
                                     , HA.style "height" "64px"
                                     , HA.style "border-radius" "9999px"
@@ -838,7 +836,7 @@ viewVoteRecord ctx voterIdStr ( actionIdStr, { proposalTitle, voteIntent } ) =
                 , viewDecisionBadge vote
                 ]
             ]
-    , div [ HA.style "align-self" "center", HA.style "margin-left" "auto", HA.style "flex-shrink" "0" ]
+        , div [ HA.style "align-self" "center", HA.style "margin-left" "auto", HA.style "flex-shrink" "0" ]
             [ Helper.iconButton "trash" (ctx.deleteVote { voterIdStr = voterIdStr, actionIdStr = actionIdStr }) ]
         ]
 
@@ -904,6 +902,7 @@ viewReadyCart ctx { votersIntents, maxResources, currentResources, txFinalized }
         , viewResourcesCard maxResources currentResources
         , viewSigningButton ctx txFinalized
         ]
+
 
 viewCartHeader : Html msg
 viewCartHeader =
@@ -1085,7 +1084,6 @@ viewDecisionBadge v =
         [ text label ]
 
 
-
 viewTotalVotesChip : Int -> Html msg
 viewTotalVotesChip total =
     Html.span
@@ -1157,6 +1155,6 @@ viewSigningButton ctx { tx, expectedSignatures } =
         , HA.style "gap" "0.75rem"
         , HA.style "align-items" "center"
         , HA.style "margin-top" "1rem"
-    , HA.style "margin-bottom" "2rem"
+        , HA.style "margin-bottom" "2rem"
         ]
         [ signingLinkView ]

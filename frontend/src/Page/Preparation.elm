@@ -4848,6 +4848,7 @@ viewFlyToCart maybeState =
                 ]
                 []
 
+
 viewDecisionBadge : Gov.Vote -> Html msg
 viewDecisionBadge v =
     let

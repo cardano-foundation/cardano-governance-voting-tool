@@ -43,12 +43,12 @@ view { mobileMenuIsOpen, toggleMobileMenu, networkDropdownIsOpen, toggleNetworkD
         , style "backdrop-filter" "saturate(180%) blur(16px)"
         , style "-webkit-backdrop-filter" "saturate(180%) blur(16px)"
         ]
-    [ div
-        [ class "mx-auto py-4 md:py-6 overflow-visible"
-        , style "max-width" "1100px"
-        , style "padding-left" "1rem"
-        , style "padding-right" "1rem"
-        ]
+        [ div
+            [ class "mx-auto py-4 md:py-6 overflow-visible"
+            , style "max-width" "1100px"
+            , style "padding-left" "1rem"
+            , style "padding-right" "1rem"
+            ]
             [ div [ class "flex items-center justify-between" ]
                 -- Logo section
                 [ div [ style "flex-shrink" "0" ]
@@ -131,10 +131,9 @@ view { mobileMenuIsOpen, toggleMobileMenu, networkDropdownIsOpen, toggleNetworkD
                                     else
                                         []
                              in
-
-                                      Svg.svg
-                                          [ SA.width "20"
-                                          , SA.height "20"
+                             Svg.svg
+                                [ SA.width "20"
+                                , SA.height "20"
                                 , SA.viewBox "0 0 24 24"
                                 , SA.fill "none"
                                 , SA.stroke "#FFFFFF"
@@ -155,7 +154,13 @@ view { mobileMenuIsOpen, toggleMobileMenu, networkDropdownIsOpen, toggleNetworkD
                 , div [ class "md:hidden" ]
                     [ button
                         [ class "text-gray-600 hover:text-gray-900 focus:outline-none"
-                        , Html.Attributes.attribute "aria-label" (if mobileMenuIsOpen then "Close menu" else "Open menu")
+                        , Html.Attributes.attribute "aria-label"
+                            (if mobileMenuIsOpen then
+                                "Close menu"
+
+                             else
+                                "Open menu"
+                            )
                         , onClick toggleMobileMenu
                         ]
                         [ if mobileMenuIsOpen then
@@ -207,8 +212,7 @@ view { mobileMenuIsOpen, toggleMobileMenu, networkDropdownIsOpen, toggleNetworkD
                     )
                 ]
                 [ div [ class "py-2" ]
-                    [ 
-                      div
+                    [ div
                         [ style "height" "1px"
                         , style "background-color" "#94A3B8"
                         , style "width" "100vw"
@@ -458,7 +462,7 @@ viewMobileNetworkSelector currentNetwork onNetworkChange =
     div
         [ style "display" "inline-flex"
         , style "align-items" "center"
-    , style "padding" "0.75rem 2.25rem"
+        , style "padding" "0.75rem 2.25rem"
         , style "margin-top" "0.5rem"
         , style "border-radius" "9999px"
         , style "background-color" "#272727"

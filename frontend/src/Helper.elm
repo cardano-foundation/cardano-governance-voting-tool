@@ -2,7 +2,7 @@ module Helper exposing
     ( shortenedHex, prettyAdaLovelace
     , textFieldInline, textInputField
     , formContainer, boxContainer, viewGrid, cardContainer, cardHeader, cardContent
-    , viewButton, viewWalletButton, externalLink, externalLinkButton
+    , viewButton, viewWalletButton, externalLink, externalLinkButton, iconButton
     , applyDropdownContainerStyle, applyDropdownItemStyle, applyMobileDropdownContainerStyle, applyWalletIconContainerStyle, applyWalletIconStyle
     , viewActionTypeIcon
     , sectionTitle, viewError
@@ -19,7 +19,6 @@ module Helper exposing
     , signerCard, authorForm, labeledField, readOnlyField, signatureField, formButtonsRow, secondaryButton, primaryButton, loadSignatureButton
     , stepCard, missingStepsList, missingStepItem, loadingSpinner
     , signingButton
-    , iconButton
     )
 
 {-| Helper module for miscellaneous functions that didn't fit elsewhere,
@@ -1664,8 +1663,8 @@ iconButton _ msg =
         , HA.style "border" "none"
         , HA.style "border-radius" "0.375rem"
         , HA.style "cursor" "pointer"
-    , HA.attribute "aria-label" "Delete"
-    , HA.title "Delete"
+        , HA.attribute "aria-label" "Delete"
+        , HA.title "Delete"
         , onClick msg
         ]
         [ Svg.svg
@@ -1678,8 +1677,7 @@ iconButton _ msg =
             , SA.strokeLinecap "round"
             , SA.strokeLinejoin "round"
             ]
-            [ 
-              Svg.path [ SA.d "M3 6h18" ] []
+            [ Svg.path [ SA.d "M3 6h18" ] []
             , Svg.path [ SA.d "M8 6V4h8v2" ] []
             , Svg.path [ SA.d "M6 6l1 14h10l1-14" ] []
             , Svg.path [ SA.d "M10 11v7" ] []
