@@ -3596,12 +3596,8 @@ viewProposalList ctx form maybeVoter proposalsDict visibleCount =
                         []
 
                     Just voterIdStr ->
-                        proposalsDictValues
-                            |> List.filterMap
-                                (\p ->
-                                    Cart.get voterIdStr p.id ctx.cart
-                                        |> Maybe.map (\vr -> { proposalTitle = vr.proposalTitle, voteIntent = vr.voteIntent })
-                                )
+                        Cart.getVoter voterIdStr ctx.cart
+                            |> Dict.values
         in
         div []
             [ Helper.proposalListContainer

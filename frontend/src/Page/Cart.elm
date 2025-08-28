@@ -1,4 +1,4 @@
-module Page.Cart exposing (Model, Msg, UpdateContext, ViewContext, VoteRecord, addVote, cartCount, contains, deleteVote, deserialize, get, init, serialize, update, view)
+module Page.Cart exposing (Model, Msg, UpdateContext, ViewContext, VoteRecord, addVote, cartCount, contains, deleteVote, deserialize, get, getVoter, init, serialize, update, view)
 
 import Bytes.Comparable as Bytes exposing (Bytes)
 import Cardano.Address as Address exposing (Address, CredentialHash)
@@ -103,6 +103,22 @@ get voterId actionId model =
         Ready { votersIntents } ->
             Dict.get voterId votersIntents
                 |> Maybe.andThen (\{ voteRecords } -> Dict.get actionIdStr voteRecords)
+
+
+{-| Retrieve all votes of a given voter from the cart.
+-}
+getVoter : String -> Model -> Dict String VoteRecord
+getVoter voterId model =
+    case model of
+        Preparing { votersIntents } ->
+            Dict.get voterId votersIntents
+                |> Maybe.map .voteRecords
+                |> Maybe.withDefault Dict.empty
+
+        Ready { votersIntents } ->
+            Dict.get voterId votersIntents
+                |> Maybe.map .voteRecords
+                |> Maybe.withDefault Dict.empty
 
 
 
