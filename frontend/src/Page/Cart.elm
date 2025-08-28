@@ -1,4 +1,4 @@
-module Page.Cart exposing (Model, Msg, UpdateContext, ViewContext, VoteRecord, addVote, cartCount, contains, deleteVote, deserialize, get, init, listAll, serialize, update, view)
+module Page.Cart exposing (Model, Msg, UpdateContext, ViewContext, VoteRecord, addVote, cartCount, contains, deleteVote, deserialize, get, init, serialize, update, view)
 
 import Bytes.Comparable as Bytes exposing (Bytes)
 import Cardano.Address as Address exposing (Address, CredentialHash)
@@ -59,26 +59,8 @@ type alias VoteRecord =
     }
 
 
-{-| Flat vote records across all voters.
--}
-listAll : Model -> List { voterIdStr : String, voteRecord : VoteRecord }
-listAll model =
-    let
-        toList : Dict String CartVoter -> List { voterIdStr : String, voteRecord : VoteRecord }
-        toList votersIntents =
-            Dict.toList votersIntents
-                |> List.concatMap
-                    (\( voterIdStr, { voteRecords } ) ->
-                        Dict.values voteRecords
-                            |> List.map (\vr -> { voterIdStr = voterIdStr, voteRecord = vr })
-                    )
-    in
-    case model of
-        Preparing { votersIntents } ->
-            toList votersIntents
 
-        Ready { votersIntents } ->
-            toList votersIntents
+-- (intentionally no listAll; we render per-selected-voter only)
 
 
 type alias CartReady =

@@ -1172,7 +1172,7 @@ handleWalletResponse response model =
                       }
                     , Cmd.batch
                         [ taskCmds
-                        , broadcast <| Page.Cart.serialize emptyCart
+                        , broadcastCart model.networkId emptyCart
                         ]
                     )
 
@@ -1270,7 +1270,7 @@ updateModelWithPrepToParentMsg msgToParent model =
             in
             ConcurrentTask.attempt { pool = model.taskPool, send = sendTask, onComplete = OnTaskComplete } writeCartToDb
                 |> Tuple.mapFirst (\newTaskPool -> { model | taskPool = newTaskPool, cart = updatedCart })
-                |> Cmd.Extra.add (broadcast <| Page.Cart.serialize updatedCart)
+                |> Cmd.Extra.add (broadcastCart model.networkId updatedCart)
 
         Just Page.Preparation.GoToCart ->
             handleUrlChange (RouteCart { networkId = model.networkId }) model

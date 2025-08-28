@@ -10,7 +10,7 @@ module Helper exposing
     , viewStepWithCircle, viewPageHeader
     , PreconfVoter, viewVoterGrid, viewVoterCard, voterCustomCard, votingPowerDisplay, scriptInfoContainer, viewVoterCredDetails, viewVoterDetailsItem, viewCredInfo
     , viewUtxoRefForm, scriptSignerSection, scriptSignerCheckbox, viewIdentifiedVoterCard, viewVoterInfoItem
-    , proposalListContainer, showMoreButton, proposalCard, selectedProposalCard, proposalDetailsItem, viewProposalsListInCartAll
+    , proposalListContainer, showMoreButton, proposalCard, selectedProposalCard, proposalDetailsItem, viewProposalsListInCart
     , storageConfigCard, storageMethodOption, storageProviderForm, storageProviderCard, storageConfigItem, addHeaderButton
     , storageHeaderForm, storageInfoGrid, storageNotAvailableCard, storageUploadCard, uploadingSpinner, storageSuccessCard, fileInfoItem, externalLinkDisplay
     , rationaleCard, checkbox, rationaleMarkdownInput, rationaleTextArea, pdfAutogenCheckbox, voteNumberInput, referenceCard, referenceForm
@@ -78,7 +78,7 @@ and are potentially useful in multiple places.
 
 # Proposal Selection Components
 
-@docs proposalListContainer, showMoreButton, proposalCard, selectedProposalCard, proposalDetailsItem, viewProposalsListInCartAll
+@docs proposalListContainer, showMoreButton, proposalCard, selectedProposalCard, proposalDetailsItem, viewProposalsListInCart
 
 
 # Storage Configuration Components
@@ -1489,16 +1489,16 @@ viewDecisionBadge v =
         [ text label ]
 
 
-{-| List that shows the voter associated with each proposal.
+{-| List of proposals already in the cart for the currently selected voter.
 -}
-viewProposalsListInCartAll : List { voterIdStr : String, proposalTitle : String, voteIntent : VoteIntent } -> Html msg
-viewProposalsListInCartAll items =
+viewProposalsListInCart : List { proposalTitle : String, voteIntent : VoteIntent } -> Html msg
+viewProposalsListInCart items =
     if List.isEmpty items then
         text ""
 
     else
         cardContainer [ HA.style "margin-top" "0.75rem" ]
-            [ cardHeader [] "Votes already in cart" "" []
+            [ cardHeader [] "Votes already in cart for selected voter" "" []
             , cardContent
                 [ HA.style "padding" "0.75rem 1rem" ]
                 [ Html.ul
@@ -1506,13 +1506,13 @@ viewProposalsListInCartAll items =
                     , HA.style "margin" "0"
                     , HA.style "padding" "0"
                     ]
-                    (List.indexedMap viewProposalWithVoterRowAt items)
+                    (List.indexedMap viewProposalRowAt items)
                 ]
             ]
 
 
-viewProposalWithVoterRowAt : Int -> { voterIdStr : String, proposalTitle : String, voteIntent : VoteIntent } -> Html msg
-viewProposalWithVoterRowAt index { voterIdStr, proposalTitle, voteIntent } =
+viewProposalRowAt : Int -> { proposalTitle : String, voteIntent : VoteIntent } -> Html msg
+viewProposalRowAt index { proposalTitle, voteIntent } =
     Html.li
         [ HA.style "display" "flex"
         , HA.style "justify-content" "space-between"
@@ -1540,14 +1540,6 @@ viewProposalWithVoterRowAt index { voterIdStr, proposalTitle, voteIntent } =
                 , HA.style "word-break" "break-word"
                 ]
                 [ text proposalTitle ]
-            , Html.div
-                [ HA.style "color" "#6B7280"
-                , HA.style "font-size" "0.8rem"
-                , HA.style "margin-top" "0.2rem"
-                , HA.style "word-break" "break-all"
-                , HA.style "overflow-wrap" "anywhere"
-                ]
-                [ text ("Voter: " ++ voterIdStr) ]
             ]
         , viewDecisionBadge voteIntent.vote
         ]

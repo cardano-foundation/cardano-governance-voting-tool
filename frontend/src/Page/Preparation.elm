@@ -3588,17 +3588,20 @@ viewProposalList ctx form maybeVoter proposalsDict visibleCount =
                                 |> Maybe.andThen (Dict.get <| Gov.idToBech32 <| GovActionId actionId)
                         )
 
-            -- Proposals already in the cart across all voters with their info
-            proposalsInCartAll : List { voterIdStr : String, proposalTitle : String, voteIntent : VoteIntent }
-            proposalsInCartAll =
-                Cart.listAll ctx.cart
-                    |> List.filterMap
-                        (\{ voterIdStr, voteRecord } ->
-                            proposalsDictValues
-                                |> List.filter (\p -> (Gov.idToBech32 <| GovActionId p.id) == (Gov.idToBech32 <| GovActionId voteRecord.voteIntent.actionId))
-                                |> List.head
-                                |> Maybe.map (\_ -> { voterIdStr = voterIdStr, proposalTitle = voteRecord.proposalTitle, voteIntent = voteRecord.voteIntent })
-                        )
+            -- Proposals already in the cart for the selected voter only
+            proposalsInCartSelected : List { proposalTitle : String, voteIntent : VoteIntent }
+            proposalsInCartSelected =
+                case maybeVoterId of
+                    Nothing ->
+                        []
+
+                    Just voterIdStr ->
+                        proposalsDictValues
+                            |> List.filterMap
+                                (\p ->
+                                    Cart.get voterIdStr p.id ctx.cart
+                                        |> Maybe.map (\vr -> { proposalTitle = vr.proposalTitle, voteIntent = vr.voteIntent })
+                                )
         in
         div []
             [ Helper.proposalListContainer
@@ -3610,7 +3613,7 @@ viewProposalList ctx form maybeVoter proposalsDict visibleCount =
                 visibleCount
                 totalProposalCount
                 (ctx.wrapMsg (ShowMoreProposals visibleCount))
-            , Helper.viewProposalsListInCartAll proposalsInCartAll
+            , Helper.viewProposalsListInCart proposalsInCartSelected
             ]
 
 
