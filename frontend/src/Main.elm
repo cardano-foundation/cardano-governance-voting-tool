@@ -545,6 +545,10 @@ update msg model =
                     handleUrlChange (RouteSigning { networkId = newNet, tx = Nothing, expectedSigners = [] }) updatedModel
                         |> Cmd.Extra.add tasksCmds
 
+                CartPage ->
+                    handleUrlChange (RouteCart { networkId = newNet }) updatedModel
+                        |> Cmd.Extra.add tasksCmds
+
                 _ ->
                     ( updatedModel, tasksCmds )
 
