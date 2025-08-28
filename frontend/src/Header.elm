@@ -104,34 +104,7 @@ view { mobileMenuIsOpen, toggleMobileMenu, networkDropdownIsOpen, toggleNetworkD
                             , Html.Attributes.attribute "aria-label" "Open cart"
                             , Html.Attributes.title "Cart"
                             ]
-                            (let
-                                badge =
-                                    if cartCount > 0 then
-                                        [ span
-                                            [ style "position" "absolute"
-                                            , style "top" "-6px"
-                                            , style "right" "-6px"
-                                            , style "min-width" "18px"
-                                            , style "height" "18px"
-                                            , style "padding" "0 4px"
-                                            , style "border-radius" "9999px"
-                                            , style "background-color" "#10B981"
-                                            , style "color" "white"
-                                            , style "font-size" "11px"
-                                            , style "font-weight" "700"
-                                            , style "line-height" "18px"
-                                            , style "display" "inline-flex"
-                                            , style "align-items" "center"
-                                            , style "justify-content" "center"
-                                            , style "box-shadow" "0 1px 2px rgba(0,0,0,0.12)"
-                                            ]
-                                            [ text (String.fromInt cartCount) ]
-                                        ]
-
-                                    else
-                                        []
-                             in
-                             Svg.svg
+                            (Svg.svg
                                 [ SA.width "20"
                                 , SA.height "20"
                                 , SA.viewBox "0 0 24 24"
@@ -145,7 +118,7 @@ view { mobileMenuIsOpen, toggleMobileMenu, networkDropdownIsOpen, toggleNetworkD
                                 , Svg.circle [ SA.cx "17", SA.cy "19", SA.r "1.5", SA.fill "none", SA.stroke "#FFFFFF" ] []
                                 , Svg.path [ SA.d "M3 4h2l2 9c.2.9 1 1.5 1.9 1.5H17c.9 0 1.7-.6 1.9-1.5L21 7H6", SA.fill "none", SA.stroke "#FFFFFF" ] []
                                 ]
-                                :: badge
+                                :: viewCartBadge cartCount
                             )
                         ]
                     ]
@@ -261,34 +234,7 @@ view { mobileMenuIsOpen, toggleMobileMenu, networkDropdownIsOpen, toggleNetworkD
                                         , Html.Attributes.attribute "aria-label" "Open cart"
                                         , Html.Attributes.title "Cart"
                                         ]
-                                        (let
-                                            badge =
-                                                if cartCount > 0 then
-                                                    [ span
-                                                        [ style "position" "absolute"
-                                                        , style "top" "-6px"
-                                                        , style "right" "-6px"
-                                                        , style "min-width" "18px"
-                                                        , style "height" "18px"
-                                                        , style "padding" "0 4px"
-                                                        , style "border-radius" "9999px"
-                                                        , style "background-color" "#10B981"
-                                                        , style "color" "white"
-                                                        , style "font-size" "11px"
-                                                        , style "font-weight" "700"
-                                                        , style "line-height" "18px"
-                                                        , style "display" "inline-flex"
-                                                        , style "align-items" "center"
-                                                        , style "justify-content" "center"
-                                                        , style "box-shadow" "0 1px 2px rgba(0,0,0,0.12)"
-                                                        ]
-                                                        [ text (String.fromInt cartCount) ]
-                                                    ]
-
-                                                else
-                                                    []
-                                         in
-                                         Svg.svg
+                                        (Svg.svg
                                             [ SA.width "22"
                                             , SA.height "22"
                                             , SA.viewBox "0 0 24 24"
@@ -302,7 +248,7 @@ view { mobileMenuIsOpen, toggleMobileMenu, networkDropdownIsOpen, toggleNetworkD
                                             , Svg.circle [ SA.cx "17", SA.cy "19", SA.r "1.5", SA.fill "none", SA.stroke "#FFFFFF" ] []
                                             , Svg.path [ SA.d "M3 4h2l2 9c.2.9 1 1.5 1.9 1.5H17c.9 0 1.7-.6 1.9-1.5L21 7H6", SA.fill "none", SA.stroke "#FFFFFF" ] []
                                             ]
-                                            :: badge
+                                            :: viewCartBadge cartCount
                                         )
                                     ]
                                 ]
@@ -489,3 +435,35 @@ viewMobileNetworkSelector currentNetwork onNetworkChange =
             ]
             [ text "↺" ]
         ]
+
+
+
+-- Small helper to render the cart badge consistently in desktop and mobile
+
+
+viewCartBadge : Int -> List (Html msg)
+viewCartBadge cartCount =
+    if cartCount > 0 then
+        [ span
+            [ style "position" "absolute"
+            , style "top" "-6px"
+            , style "right" "-6px"
+            , style "min-width" "18px"
+            , style "height" "18px"
+            , style "padding" "0 4px"
+            , style "border-radius" "9999px"
+            , style "background-color" "#10B981"
+            , style "color" "white"
+            , style "font-size" "11px"
+            , style "font-weight" "700"
+            , style "line-height" "18px"
+            , style "display" "inline-flex"
+            , style "align-items" "center"
+            , style "justify-content" "center"
+            , style "box-shadow" "0 1px 2px rgba(0,0,0,0.12)"
+            ]
+            [ text (String.fromInt cartCount) ]
+        ]
+
+    else
+        []

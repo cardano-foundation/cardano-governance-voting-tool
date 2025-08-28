@@ -36,6 +36,7 @@ import Cardano.Gov as Gov exposing (ActionId, Anchor, CostModels, Id(..), Vote)
 import Cardano.Pool as Pool
 import Cardano.Script as Script
 import Cardano.Transaction as Transaction exposing (Transaction, VKeyWitness)
+import Cardano.TxIntent exposing (VoteIntent)
 import Cardano.Utxo as Utxo exposing (Output, OutputReference, TransactionId)
 import Cardano.Witness as Witness
 import Cbor.Encode
@@ -60,7 +61,7 @@ import List.Extra
 import Markdown.Block
 import Markdown.Parser as Md
 import Natural
-import Page.Cart as Cart exposing (VoteRecord)
+import Page.Cart as Cart
 import Platform.Cmd as Cmd
 import Process
 import ProposalMetadata exposing (AuthorWitness, ProposalMetadata)
@@ -1481,10 +1482,6 @@ innerUpdate ctx msg model =
                             , rationale = rationaleAnchor
                             }
 
-                        hideToastLater : Cmd msg
-                        hideToastLater =
-                            Process.sleep 2500 |> Task.perform (always <| ctx.wrapMsg HideCartToast)
-
                         color =
                             case vote of
                                 Gov.VoteYes ->
@@ -1502,7 +1499,7 @@ innerUpdate ctx msg model =
                         , flyToCart = Just { x = clientX, y = clientY, moving = False, color = color }
                       }
                     , Cmd.batch
-                        [ hideToastLater
+                        [ Process.sleep 2500 |> Task.perform (always <| ctx.wrapMsg HideCartToast)
                         , Process.sleep 0 |> Task.perform (always <| ctx.wrapMsg StartFlyAnim)
                         , Process.sleep 3000 |> Task.perform (always <| ctx.wrapMsg EndFlyAnim)
                         ]
@@ -3591,16 +3588,17 @@ viewProposalList ctx form maybeVoter proposalsDict visibleCount =
                                 |> Maybe.andThen (Dict.get <| Gov.idToBech32 <| GovActionId actionId)
                         )
 
-            -- Filter proposals already in the cart for this voter
-            proposalsInCart : List VoteRecord
-            proposalsInCart =
-                case maybeVoterId of
-                    Nothing ->
-                        []
-
-                    Just voterId ->
-                        proposalsDictValues
-                            |> List.filterMap (\p -> Cart.get voterId p.id ctx.cart)
+            -- Proposals already in the cart across all voters with their info
+            proposalsInCartAll : List { voterIdStr : String, proposalTitle : String, voteIntent : VoteIntent }
+            proposalsInCartAll =
+                Cart.listAll ctx.cart
+                    |> List.filterMap
+                        (\{ voterIdStr, voteRecord } ->
+                            proposalsDictValues
+                                |> List.filter (\p -> (Gov.idToBech32 <| GovActionId p.id) == (Gov.idToBech32 <| GovActionId voteRecord.voteIntent.actionId))
+                                |> List.head
+                                |> Maybe.map (\_ -> { voterIdStr = voterIdStr, proposalTitle = voteRecord.proposalTitle, voteIntent = voteRecord.voteIntent })
+                        )
         in
         div []
             [ Helper.proposalListContainer
@@ -3612,7 +3610,7 @@ viewProposalList ctx form maybeVoter proposalsDict visibleCount =
                 visibleCount
                 totalProposalCount
                 (ctx.wrapMsg (ShowMoreProposals visibleCount))
-            , Helper.viewProposalsListInCart proposalsInCart
+            , Helper.viewProposalsListInCartAll proposalsInCartAll
             ]
 
 

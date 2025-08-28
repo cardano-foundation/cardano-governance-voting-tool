@@ -2,7 +2,7 @@ module Helper exposing
     ( shortenedHex, prettyAdaLovelace
     , textFieldInline, textInputField
     , formContainer, boxContainer, viewGrid, cardContainer, cardHeader, cardContent
-    , viewButton, viewWalletButton, externalLink, externalLinkButton, iconButton
+    , viewButton, viewWalletButton, externalLink, externalLinkButton, trashButton
     , applyDropdownContainerStyle, applyDropdownItemStyle, applyMobileDropdownContainerStyle, applyWalletIconContainerStyle, applyWalletIconStyle
     , viewActionTypeIcon
     , sectionTitle, viewError
@@ -10,7 +10,7 @@ module Helper exposing
     , viewStepWithCircle, viewPageHeader
     , PreconfVoter, viewVoterGrid, viewVoterCard, voterCustomCard, votingPowerDisplay, scriptInfoContainer, viewVoterCredDetails, viewVoterDetailsItem, viewCredInfo
     , viewUtxoRefForm, scriptSignerSection, scriptSignerCheckbox, viewIdentifiedVoterCard, viewVoterInfoItem
-    , proposalListContainer, showMoreButton, proposalCard, selectedProposalCard, proposalDetailsItem, viewProposalsListInCart
+    , proposalListContainer, showMoreButton, proposalCard, selectedProposalCard, proposalDetailsItem, viewProposalsListInCartAll
     , storageConfigCard, storageMethodOption, storageProviderForm, storageProviderCard, storageConfigItem, addHeaderButton
     , storageHeaderForm, storageInfoGrid, storageNotAvailableCard, storageUploadCard, uploadingSpinner, storageSuccessCard, fileInfoItem, externalLinkDisplay
     , rationaleCard, checkbox, rationaleMarkdownInput, rationaleTextArea, pdfAutogenCheckbox, voteNumberInput, referenceCard, referenceForm
@@ -42,7 +42,7 @@ and are potentially useful in multiple places.
 
 # Buttons
 
-@docs viewButton, viewWalletButton, externalLink, externalLinkButton, iconButton
+@docs viewButton, viewWalletButton, externalLink, externalLinkButton, trashButton
 
 
 # Wallet Styling
@@ -78,7 +78,7 @@ and are potentially useful in multiple places.
 
 # Proposal Selection Components
 
-@docs proposalListContainer, showMoreButton, proposalCard, selectedProposalCard, proposalDetailsItem, viewProposalsListInCart
+@docs proposalListContainer, showMoreButton, proposalCard, selectedProposalCard, proposalDetailsItem, viewProposalsListInCartAll
 
 
 # Storage Configuration Components
@@ -1461,19 +1461,95 @@ proposalDetailsItem label content =
         ]
 
 
-{-| Helper function to quickly view proposals that are already in the cart.
+viewDecisionBadge : Gov.Vote -> Html msg
+viewDecisionBadge v =
+    let
+        ( label, bg, fg ) =
+            case v of
+                Gov.VoteYes ->
+                    ( "YES", "#10B981", "#FFFFFF" )
+
+                Gov.VoteNo ->
+                    ( "NO", "#EF4444", "#FFFFFF" )
+
+                Gov.VoteAbstain ->
+                    ( "ABSTAIN", "#6B7280", "#FFFFFF" )
+    in
+    Html.span
+        [ HA.style "display" "inline-flex"
+        , HA.style "align-items" "center"
+        , HA.style "height" "1.5rem"
+        , HA.style "padding" "0 0.5rem"
+        , HA.style "border-radius" "9999px"
+        , HA.style "background-color" bg
+        , HA.style "color" fg
+        , HA.style "font-weight" "600"
+        , HA.style "font-size" "0.75rem"
+        ]
+        [ text label ]
+
+
+{-| List that shows the voter associated with each proposal.
 -}
-viewProposalsListInCart : List { proposalTitle : String, voteIntent : VoteIntent } -> Html msg
-viewProposalsListInCart proposalsInCart =
-    div []
-        (List.map viewProposalRow proposalsInCart)
+viewProposalsListInCartAll : List { voterIdStr : String, proposalTitle : String, voteIntent : VoteIntent } -> Html msg
+viewProposalsListInCartAll items =
+    if List.isEmpty items then
+        text ""
+
+    else
+        cardContainer [ HA.style "margin-top" "0.75rem" ]
+            [ cardHeader [] "Votes already in cart" "" []
+            , cardContent
+                [ HA.style "padding" "0.75rem 1rem" ]
+                [ Html.ul
+                    [ HA.style "list-style" "none"
+                    , HA.style "margin" "0"
+                    , HA.style "padding" "0"
+                    ]
+                    (List.indexedMap viewProposalWithVoterRowAt items)
+                ]
+            ]
 
 
-viewProposalRow : { proposalTitle : String, voteIntent : VoteIntent } -> Html msg
-viewProposalRow proposal =
-    div []
-        [ text proposal.proposalTitle
-        , text " todo: display one-liner for the vote"
+viewProposalWithVoterRowAt : Int -> { voterIdStr : String, proposalTitle : String, voteIntent : VoteIntent } -> Html msg
+viewProposalWithVoterRowAt index { voterIdStr, proposalTitle, voteIntent } =
+    Html.li
+        [ HA.style "display" "flex"
+        , HA.style "justify-content" "space-between"
+        , HA.style "align-items" "center"
+        , HA.style "gap" "0.75rem"
+        , HA.style "padding" "0.5rem 0"
+        , HA.style "border-top"
+            (if index > 0 then
+                "1px solid #EDF2F7"
+
+             else
+                "none"
+            )
+        ]
+        [ Html.div
+            [ HA.style "flex" "1"
+            , HA.style "min-width" "0"
+            ]
+            [ Html.div
+                [ HA.style "color" "#1A202C"
+                , HA.style "font-size" "0.9375rem"
+                , HA.style "line-height" "1.4"
+                , HA.style "word-wrap" "break-word"
+                , HA.style "overflow-wrap" "break-word"
+                , HA.style "word-break" "break-word"
+                ]
+                [ text proposalTitle ]
+            , Html.div
+                [ HA.style "color" "#6B7280"
+                , HA.style "font-size" "0.8rem"
+                , HA.style "margin-top" "0.2rem"
+                , HA.style "word-break" "break-all"
+                , HA.style "overflow-wrap" "anywhere"
+                ]
+                [ text ("Voter: " ++ voterIdStr) ]
+            ]
+        , viewDecisionBadge voteIntent.vote
         ]
 
 
@@ -1645,13 +1721,13 @@ storageHeaderForm _ name value deleteMsg nameChangeMsg valueChangeMsg =
                     , onInputMsg = valueChangeMsg
                     }
                 ]
-            , iconButton "trash" deleteMsg
+            , trashButton deleteMsg
             ]
         ]
 
 
-iconButton : String -> msg -> Html msg
-iconButton _ msg =
+trashButton : msg -> Html msg
+trashButton msg =
     Html.button
         [ HA.style "background-color" "#272727"
         , HA.style "color" "white"
@@ -1889,7 +1965,7 @@ referenceForm index typeName label uri deleteMsg typeChangeMsg labelChangeMsg ur
                 , HA.style "color" "#374151"
                 ]
                 [ text ("Reference " ++ String.fromInt (index + 1)) ]
-            , iconButton "trash" deleteMsg
+            , trashButton deleteMsg
             ]
         , div
             [ HA.style "display" "grid"
@@ -2334,7 +2410,7 @@ authorForm index deleteMsg content =
                 , HA.style "color" "#1A202C"
                 ]
                 [ text ("Author " ++ String.fromInt (index + 1)) ]
-            , iconButton "trash" deleteMsg
+            , trashButton deleteMsg
             ]
         , div
             [ HA.style "display" "grid"

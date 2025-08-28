@@ -1,4 +1,4 @@
-module Page.Cart exposing (Model, Msg, UpdateContext, ViewContext, VoteRecord, addVote, cartCount, contains, deleteVote, deserialize, get, init, serialize, update, view)
+module Page.Cart exposing (Model, Msg, UpdateContext, ViewContext, VoteRecord, addVote, cartCount, contains, deleteVote, deserialize, get, init, listAll, serialize, update, view)
 
 import Bytes.Comparable as Bytes exposing (Bytes)
 import Cardano.Address as Address exposing (Address, CredentialHash)
@@ -57,6 +57,28 @@ type alias VoteRecord =
     { proposalTitle : String
     , voteIntent : VoteIntent
     }
+
+
+{-| Flat vote records across all voters.
+-}
+listAll : Model -> List { voterIdStr : String, voteRecord : VoteRecord }
+listAll model =
+    let
+        toList : Dict String CartVoter -> List { voterIdStr : String, voteRecord : VoteRecord }
+        toList votersIntents =
+            Dict.toList votersIntents
+                |> List.concatMap
+                    (\( voterIdStr, { voteRecords } ) ->
+                        Dict.values voteRecords
+                            |> List.map (\vr -> { voterIdStr = voterIdStr, voteRecord = vr })
+                    )
+    in
+    case model of
+        Preparing { votersIntents } ->
+            toList votersIntents
+
+        Ready { votersIntents } ->
+            toList votersIntents
 
 
 type alias CartReady =
@@ -288,19 +310,12 @@ serializeCartVoter { voter, voteRecords } =
 -}
 cartCount : Model -> Int
 cartCount model =
-    let
-        sumVoteRecords : Dict String CartVoter -> Int
-        sumVoteRecords votersIntents =
-            Dict.values votersIntents
-                |> List.map (.voteRecords >> Dict.size)
-                |> List.sum
-    in
     case model of
         Preparing { votersIntents } ->
-            sumVoteRecords votersIntents
+            countAllVotersVotes votersIntents
 
         Ready { votersIntents } ->
-            sumVoteRecords votersIntents
+            countAllVotersVotes votersIntents
 
 
 serializeVoter : Witness.Voter -> JE.Value
@@ -687,61 +702,21 @@ viewPreparingCart ctx { votersIntents, error } =
                 ]
                 [ viewButton "Build Transaction" (ctx.wrapMsg BuildTx) ]
     in
-    div pageAttrs
-        (viewCartHeader
-            :: summaryBar
-            :: ((if hasVotes then
-                    List.map (viewVoterIntents ctx) (Dict.toList votersIntents)
+    if hasVotes then
+        div pageAttrs <|
+            List.concat
+                [ [ viewCartHeader, summaryBar ]
+                , List.map (viewVoterIntents ctx) (Dict.toList votersIntents)
+                , [ actionsBar, viewError error ]
+                ]
 
-                 else
-                    [ cardContainer []
-                        [ cardContent []
-                            [ div
-                                [ HA.style "display" "flex"
-                                , HA.style "flex-direction" "column"
-                                , HA.style "align-items" "center"
-                                , HA.style "justify-content" "center"
-                                , HA.style "text-align" "center"
-                                , HA.style "padding" "2rem 1rem"
-                                ]
-                                [ div
-                                    [ HA.style "width" "64px"
-                                    , HA.style "height" "64px"
-                                    , HA.style "border-radius" "9999px"
-                                    , HA.style "background-color" "#F1F5F9"
-                                    , HA.style "display" "flex"
-                                    , HA.style "align-items" "center"
-                                    , HA.style "justify-content" "center"
-                                    , HA.style "margin-bottom" "0.75rem"
-                                    ]
-                                    [ Html.span [ HA.style "font-size" "28px" ] [ text "🛒" ] ]
-                                , Html.div
-                                    [ HA.style "font-weight" "700"
-                                    , HA.style "font-size" "1.125rem"
-                                    , HA.style "color" "#111827"
-                                    , HA.style "margin-bottom" "0.25rem"
-                                    ]
-                                    [ text "Your cart is empty" ]
-                                , Html.p
-                                    [ HA.style "color" "#6B7280"
-                                    , HA.style "font-size" "0.95rem"
-                                    ]
-                                    [ text "Add votes from Vote Preparation page to see them here." ]
-                                ]
-                            ]
-                        ]
-                    ]
-                )
-                    ++ ((if hasVotes then
-                            [ actionsBar ]
-
-                         else
-                            []
-                        )
-                            ++ [ viewError error ]
-                       )
-               )
-        )
+    else
+        div pageAttrs
+            [ viewCartHeader
+            , summaryBar
+            , viewEmptyCart
+            , viewError error
+            ]
 
 
 viewVoterIntents : ViewContext a msg -> ( String, { voter : Witness.Voter, voteRecords : Dict String VoteRecord } ) -> Html msg
@@ -836,7 +811,7 @@ viewVoteRecord ctx voterIdStr ( actionIdStr, { proposalTitle, voteIntent } ) =
                 ]
             ]
         , div [ HA.style "align-self" "center", HA.style "margin-left" "auto", HA.style "flex-shrink" "0" ]
-            [ Helper.iconButton "trash" (ctx.deleteVote { voterIdStr = voterIdStr, actionIdStr = actionIdStr }) ]
+            [ Helper.trashButton (ctx.deleteVote { voterIdStr = voterIdStr, actionIdStr = actionIdStr }) ]
         ]
 
 
@@ -913,6 +888,48 @@ viewCartHeader =
             , HA.style "margin-top" "0.25rem"
             ]
             []
+        ]
+
+
+{-| Empty cart placeholder card.
+-}
+viewEmptyCart : Html msg
+viewEmptyCart =
+    cardContainer []
+        [ cardContent []
+            [ div
+                [ HA.style "display" "flex"
+                , HA.style "flex-direction" "column"
+                , HA.style "align-items" "center"
+                , HA.style "justify-content" "center"
+                , HA.style "text-align" "center"
+                , HA.style "padding" "2rem 1rem"
+                ]
+                [ div
+                    [ HA.style "width" "64px"
+                    , HA.style "height" "64px"
+                    , HA.style "border-radius" "9999px"
+                    , HA.style "background-color" "#F1F5F9"
+                    , HA.style "display" "flex"
+                    , HA.style "align-items" "center"
+                    , HA.style "justify-content" "center"
+                    , HA.style "margin-bottom" "0.75rem"
+                    ]
+                    [ Html.span [ HA.style "font-size" "28px" ] [ text "🛒" ] ]
+                , Html.div
+                    [ HA.style "font-weight" "700"
+                    , HA.style "font-size" "1.125rem"
+                    , HA.style "color" "#111827"
+                    , HA.style "margin-bottom" "0.25rem"
+                    ]
+                    [ text "Your cart is empty" ]
+                , Html.p
+                    [ HA.style "color" "#6B7280"
+                    , HA.style "font-size" "0.95rem"
+                    ]
+                    [ text "Add votes from Vote Preparation page to see them here." ]
+                ]
+            ]
         ]
 
 
