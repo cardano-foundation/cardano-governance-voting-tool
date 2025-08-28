@@ -27,7 +27,7 @@ The steps are sequential but allow going back to modify previous steps.
 
 import Api exposing (ActiveProposal, CcInfo, DrepInfo, IpfsAnswer(..), OnchainVote, PoolInfo)
 import Blake2b exposing (blake2b256)
-import Browser.Dom
+import Browser.Dom as Dom
 import Bytes as ElmBytes
 import Bytes.Comparable as Bytes exposing (Bytes)
 import Cardano.Address exposing (Credential(..), CredentialHash, NetworkId(..))
@@ -99,7 +99,7 @@ type alias InnerModel =
     , signTxStep : Step { error : Maybe String } SigningTx SignedTx
     , visibleProposalCount : Int
     , showCartToast : Bool
-    , flyToCart : Maybe { x : Float, y : Float, moving : Bool, color : String }
+    , flyToCart : Maybe { x : Float, y : Float, opacity : String, color : String }
     }
 
 
@@ -730,7 +730,7 @@ type Msg
     | GoToCartButtonClicked
     | HideCartToast
     | VoteButtonPressed Vote Float Float
-    | StartFlyAnim
+    | StartFlyAnim (Result Dom.Error Dom.Element)
     | EndFlyAnim
 
 
@@ -1449,7 +1449,7 @@ innerUpdate ctx msg model =
                 | buildTxStep = Preparing { error = Nothing }
                 , pickProposalStep = Preparing {}
               }
-            , Task.perform (always <| ctx.wrapMsg NoMsg) (Browser.Dom.setViewport 0 1000000)
+            , Task.perform (always <| ctx.wrapMsg NoMsg) (Dom.setViewport 0 1000000)
             , Nothing
             )
 
@@ -1492,25 +1492,38 @@ innerUpdate ctx msg model =
 
                                 Gov.VoteAbstain ->
                                     "#6B7280"
+
+                        getCartPos =
+                            Dom.getElement "cart-button"
                     in
                     ( { model
                         | buildTxStep = Done { error = Nothing } {}
-                        , showCartToast = True
-                        , flyToCart = Just { x = clientX, y = clientY, moving = False, color = color }
+                        , flyToCart = Just { x = clientX, y = clientY, opacity = "1", color = color }
                       }
-                    , Cmd.batch
-                        [ Process.sleep 2500 |> Task.perform (always <| ctx.wrapMsg HideCartToast)
-                        , Process.sleep 0 |> Task.perform (always <| ctx.wrapMsg StartFlyAnim)
-                        , Process.sleep 3000 |> Task.perform (always <| ctx.wrapMsg EndFlyAnim)
-                        ]
+                      -- Force sleep 0 to change the css value later, and trigger the css animation
+                    , Cmd.map ctx.wrapMsg <|
+                        (Process.sleep 0
+                            |> Task.andThen (\_ -> getCartPos)
+                            |> Task.attempt StartFlyAnim
+                        )
                     , Just <| AddVoteToCart voter <| Cart.VoteRecord proposalTitle voteIntent
                     )
 
-        StartFlyAnim ->
-            ( { model | flyToCart = Maybe.map (\s -> { s | moving = True }) model.flyToCart }
-            , Cmd.none
+        StartFlyAnim (Ok { element, viewport }) ->
+            ( { model
+                | flyToCart = Maybe.map (\s -> { s | x = element.x + 0.5 * element.width - viewport.x, y = element.y + 0.5 * element.height - viewport.y, opacity = "0" }) model.flyToCart
+                , showCartToast = True
+              }
+            , Cmd.map ctx.wrapMsg <|
+                Cmd.batch
+                    [ Process.sleep 3000 |> Task.perform (always EndFlyAnim)
+                    , Process.sleep 2500 |> Task.perform (always HideCartToast)
+                    ]
             , Nothing
             )
+
+        StartFlyAnim _ ->
+            ( model, Cmd.none, Nothing )
 
         EndFlyAnim ->
             ( { model | flyToCart = Nothing }
@@ -3062,18 +3075,30 @@ view ctx (Model model) =
             , Helper.viewStepWithCircle 6 "storage-step" (viewPermanentStorageStep ctx model.rationaleSignatureStep model.storageConfigStep model.permanentStorageStep)
             , Html.map ctx.wrapMsg <| Helper.viewStepWithCircle 7 "build-tx-step" (viewBuildTxStep ctx model)
             ]
-        , viewCartAddedToast model.showCartToast
+        , viewCartAddedToast model.showCartToast model.flyToCart
         ]
 
 
-viewCartAddedToast : Bool -> Html msg
-viewCartAddedToast isVisible =
+viewCartAddedToast : Bool -> Maybe { a | x : Float, y : Float } -> Html msg
+viewCartAddedToast isVisible pos =
     let
+        ( left, top ) =
+            case pos of
+                Just { x, y } ->
+                    ( String.fromFloat (x - 64) ++ "px", String.fromFloat (y + 36) ++ "px" )
+
+                Nothing ->
+                    ( "0", "0" )
+
         baseStyles : List (Html.Attribute msg)
         baseStyles =
             [ HA.style "position" "fixed"
-            , HA.style "left" "calc(var(--cart-right, 0px) - 64px)"
-            , HA.style "top" "calc(var(--cart-top, 0px) + 36px)"
+
+            -- , HA.style "left" "calc(var(--cart-right, 0px) - 64px)"
+            , HA.style "left" left
+
+            -- , HA.style "top" "calc(var(--cart-top, 0px) + 36px)"
+            , HA.style "top" top
             , HA.style "z-index" "1000"
             , HA.style "display" "inline-flex"
             , HA.style "align-items" "center"
@@ -4793,46 +4818,17 @@ viewVoteButtonWithCoords label color vote =
         [ text label ]
 
 
-viewFlyToCart : Maybe { x : Float, y : Float, moving : Bool, color : String } -> Html msg
+viewFlyToCart : Maybe { x : Float, y : Float, opacity : String, color : String } -> Html msg
 viewFlyToCart maybeState =
     case maybeState of
         Nothing ->
             text ""
 
         Just s ->
-            let
-                leftPos =
-                    if s.moving then
-                        "var(--cart-right, calc(100vw - 56px))"
-
-                    else
-                        String.fromFloat s.x ++ "px"
-
-                topPos =
-                    if s.moving then
-                        "var(--cart-top, 0.75rem)"
-
-                    else
-                        String.fromFloat s.y ++ "px"
-
-                scaleVal =
-                    if s.moving then
-                        "scale(0.6)"
-
-                    else
-                        "scale(1)"
-
-                opacityVal =
-                    if s.moving then
-                        "0"
-
-                    else
-                        "1"
-            in
             div
                 [ HA.style "position" "fixed"
-                , HA.style "left" leftPos
-                , HA.style "top" topPos
+                , HA.style "left" <| String.fromFloat s.x ++ "px"
+                , HA.style "top" <| String.fromFloat s.y ++ "px"
                 , HA.style "width" "10px"
                 , HA.style "height" "10px"
                 , HA.style "border-radius" "9999px"
@@ -4840,8 +4836,7 @@ viewFlyToCart maybeState =
                 , HA.style "box-shadow" "0 0 0 2px rgba(255,255,255,0.9)"
                 , HA.style "z-index" "1100"
                 , HA.style "transition" "left 2s ease, top 2s ease, transform 2s ease, opacity 2s ease"
-                , HA.style "transform" scaleVal
-                , HA.style "opacity" opacityVal
+                , HA.style "opacity" s.opacity
                 ]
                 []
 
