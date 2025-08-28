@@ -355,6 +355,17 @@ type Route
     | Route404
 
 
+{-| Broadcast the cart to other tabs, scoped to the current network.
+-}
+broadcastCart : NetworkId -> Page.Cart.Model -> Cmd Msg
+broadcastCart net cart =
+    broadcast <|
+        JE.object
+            [ ( "networkId", JE.string (networkIdToString net) )
+            , ( "cart", Page.Cart.serialize cart )
+            ]
+
+
 link : Route -> List (Html.Attribute Msg) -> List (Html Msg) -> Html Msg
 link route attrs children =
     Html.a
@@ -707,7 +718,7 @@ update msg model =
             in
             ConcurrentTask.attempt { pool = model.taskPool, send = sendTask, onComplete = OnTaskComplete } writeCartToDb
                 |> Tuple.mapFirst (\newTaskPool -> { model | taskPool = newTaskPool, cart = updatedCart })
-                |> Cmd.Extra.add (broadcast <| Page.Cart.serialize updatedCart)
+                |> Cmd.Extra.add (broadcastCart networkId updatedCart)
 
         ( ClearCart, { networkId } ) ->
             let
@@ -720,12 +731,38 @@ update msg model =
             in
             ConcurrentTask.attempt { pool = model.taskPool, send = sendTask, onComplete = OnTaskComplete } writeCartToDb
                 |> Tuple.mapFirst (\newTaskPool -> { model | taskPool = newTaskPool, cart = emptyCart })
-                |> Cmd.Extra.add (broadcast <| Page.Cart.serialize emptyCart)
+                |> Cmd.Extra.add (broadcastCart networkId emptyCart)
 
         ( CartBroadcastReceived value, _ ) ->
-            case JD.decodeValue Page.Cart.deserialize value of
-                Ok cart ->
-                    ( { model | cart = cart }, Cmd.none )
+            let
+                networkIdDecoder : JD.Decoder NetworkId
+                networkIdDecoder =
+                    JD.field "networkId" JD.string
+                        |> JD.andThen
+                            (\str ->
+                                case networkIdFromString str of
+                                    Just n ->
+                                        JD.succeed n
+
+                                    Nothing ->
+                                        JD.fail ("Unknown network id: " ++ str)
+                            )
+
+                cartDecoder : JD.Decoder Page.Cart.Model
+                cartDecoder =
+                    JD.field "cart" Page.Cart.deserialize
+
+                decoder : JD.Decoder ( NetworkId, Page.Cart.Model )
+                decoder =
+                    JD.map2 Tuple.pair networkIdDecoder cartDecoder
+            in
+            case JD.decodeValue decoder value of
+                Ok ( net, cart ) ->
+                    if net == model.networkId then
+                        ( { model | cart = cart }, Cmd.none )
+
+                    else
+                        ( model, Cmd.none )
 
                 Err err ->
                     ( { model | errors = [ JD.errorToString err ] }, Cmd.none )
