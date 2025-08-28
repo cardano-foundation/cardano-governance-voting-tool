@@ -181,7 +181,7 @@ view { mobileMenuIsOpen, toggleMobileMenu, networkDropdownIsOpen, toggleNetworkD
                                 , style "gap" "0.5rem"
                                 ]
                                 [ viewMobileNetworkSelector networkId onNetworkChange
-                                , cartLink [] [ viewCartButton "44px" "" cartCount ]
+                                , cartLink [ class "ml-2 mt-2" ] [ viewCartButton "44px" "" cartCount ]
                                 ]
                             ]
                         ]
