@@ -3588,7 +3588,7 @@ viewProposalList ctx form maybeVoter proposalsDict visibleCount =
                                 |> Maybe.andThen (Dict.get <| Gov.idToBech32 <| GovActionId actionId)
                         )
 
-            -- Proposals already in the cart for the selected voter only
+            -- Proposals already in the cart for the selected voter
             proposalsInCartSelected : List { proposalTitle : String, voteIntent : VoteIntent }
             proposalsInCartSelected =
                 case maybeVoterId of
