@@ -3093,11 +3093,7 @@ viewCartAddedToast isVisible pos =
         baseStyles : List (Html.Attribute msg)
         baseStyles =
             [ HA.style "position" "fixed"
-
-            -- , HA.style "left" "calc(var(--cart-right, 0px) - 64px)"
             , HA.style "left" left
-
-            -- , HA.style "top" "calc(var(--cart-top, 0px) + 36px)"
             , HA.style "top" top
             , HA.style "z-index" "1000"
             , HA.style "display" "inline-flex"
