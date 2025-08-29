@@ -27,7 +27,7 @@ The steps are sequential but allow going back to modify previous steps.
 
 import Api exposing (ActiveProposal, CcInfo, DrepInfo, IpfsAnswer(..), OnchainVote, PoolInfo)
 import Blake2b exposing (blake2b256)
-import Browser.Dom
+import Browser.Dom as Dom
 import Bytes as ElmBytes
 import Bytes.Comparable as Bytes exposing (Bytes)
 import Cardano.Address exposing (Credential(..), CredentialHash, NetworkId(..))
@@ -36,6 +36,7 @@ import Cardano.Gov as Gov exposing (ActionId, Anchor, CostModels, Id(..), Vote)
 import Cardano.Pool as Pool
 import Cardano.Script as Script
 import Cardano.Transaction as Transaction exposing (Transaction, VKeyWitness)
+import Cardano.TxIntent exposing (VoteIntent)
 import Cardano.Utxo as Utxo exposing (Output, OutputReference, TransactionId)
 import Cardano.Witness as Witness
 import Cbor.Encode
@@ -60,8 +61,9 @@ import List.Extra
 import Markdown.Block
 import Markdown.Parser as Md
 import Natural
-import Page.Cart as Cart exposing (VoteRecord)
+import Page.Cart as Cart
 import Platform.Cmd as Cmd
+import Process
 import ProposalMetadata exposing (AuthorWitness, ProposalMetadata)
 import RemoteData exposing (RemoteData, WebData)
 import ScriptInfo exposing (ScriptInfo)
@@ -96,6 +98,8 @@ type alias InnerModel =
     , buildTxStep : Step BuildTxPrep {} {}
     , signTxStep : Step { error : Maybe String } SigningTx SignedTx
     , visibleProposalCount : Int
+    , showCartToast : Bool
+    , flyToCart : Maybe { x : Float, y : Float, opacity : String, color : String }
     }
 
 
@@ -128,6 +132,8 @@ init ipfsPreconfig =
         , buildTxStep = Preparing { error = Nothing }
         , signTxStep = Preparing { error = Nothing }
         , visibleProposalCount = 10
+        , showCartToast = False
+        , flyToCart = Nothing
         }
 
 
@@ -719,11 +725,13 @@ type Msg
     | CheckRationaleUrlButtonClicked
     | AddOtherStorageButtonCLicked
     | GotRawPublishedRationale (Maybe String) (Result Http.Error String)
-      -- Build Tx Step
-    | AddVoteToCartButtonClicked Vote
     | ChangeVoteButtonClicked
     | PickAnotherProposalButtonClicked
     | GoToCartButtonClicked
+    | HideCartToast
+    | VoteButtonPressed Vote Float Float
+    | StartFlyAnim (Result Dom.Error Dom.Element)
+    | EndFlyAnim
 
 
 {-| Configuration required by the update function.
@@ -1430,10 +1438,35 @@ innerUpdate ctx msg model =
                 _ ->
                     ( model, Cmd.none, Nothing )
 
-        --
-        -- Add Vote to Cart
-        --
-        AddVoteToCartButtonClicked vote ->
+        ChangeVoteButtonClicked ->
+            ( { model | buildTxStep = Preparing { error = Nothing } }
+            , Cmd.none
+            , Nothing
+            )
+
+        PickAnotherProposalButtonClicked ->
+            ( { model
+                | buildTxStep = Preparing { error = Nothing }
+                , pickProposalStep = Preparing {}
+              }
+            , Task.perform (always <| ctx.wrapMsg NoMsg) (Dom.setViewport 0 1000000)
+            , Nothing
+            )
+
+        GoToCartButtonClicked ->
+            ( { model | buildTxStep = Preparing { error = Nothing } }
+            , Cmd.none
+            , Just GoToCart
+            )
+
+        HideCartToast ->
+            ( { model | showCartToast = False }
+            , Cmd.none
+            , Nothing
+            )
+
+        VoteButtonPressed vote clientX clientY ->
+            -- Handle add-to-cart plus start fly animation from click position
             case allPrepSteps model of
                 Err error ->
                     ( { model | buildTxStep = Preparing { error = Just error } }
@@ -1448,31 +1481,54 @@ innerUpdate ctx msg model =
                             , vote = vote
                             , rationale = rationaleAnchor
                             }
+
+                        color =
+                            case vote of
+                                Gov.VoteYes ->
+                                    "#10B981"
+
+                                Gov.VoteNo ->
+                                    "#EF4444"
+
+                                Gov.VoteAbstain ->
+                                    "#6B7280"
+
+                        getCartPos =
+                            Dom.getElement "cart-button"
                     in
-                    ( { model | buildTxStep = Done { error = Nothing } {} }
-                    , Cmd.none
+                    ( { model
+                        | buildTxStep = Done { error = Nothing } {}
+                        , flyToCart = Just { x = clientX, y = clientY, opacity = "1", color = color }
+                      }
+                      -- Force sleep 0 to change the css value later, and trigger the css animation
+                    , Cmd.map ctx.wrapMsg <|
+                        (Process.sleep 0
+                            |> Task.andThen (\_ -> getCartPos)
+                            |> Task.attempt StartFlyAnim
+                        )
                     , Just <| AddVoteToCart voter <| Cart.VoteRecord proposalTitle voteIntent
                     )
 
-        ChangeVoteButtonClicked ->
-            ( { model | buildTxStep = Preparing { error = Nothing } }
-            , Cmd.none
-            , Nothing
-            )
-
-        PickAnotherProposalButtonClicked ->
+        StartFlyAnim (Ok { element, viewport }) ->
             ( { model
-                | buildTxStep = Preparing { error = Nothing }
-                , pickProposalStep = Preparing {}
+                | flyToCart = Maybe.map (\s -> { s | x = element.x + 0.5 * element.width - viewport.x, y = element.y + 0.5 * element.height - viewport.y, opacity = "0" }) model.flyToCart
+                , showCartToast = True
               }
-            , Task.perform (always <| ctx.wrapMsg NoMsg) (Browser.Dom.setViewport 0 1000000)
+            , Cmd.map ctx.wrapMsg <|
+                Cmd.batch
+                    [ Process.sleep 3000 |> Task.perform (always EndFlyAnim)
+                    , Process.sleep 2500 |> Task.perform (always HideCartToast)
+                    ]
             , Nothing
             )
 
-        GoToCartButtonClicked ->
-            ( { model | buildTxStep = Preparing { error = Nothing } }
+        StartFlyAnim _ ->
+            ( model, Cmd.none, Nothing )
+
+        EndFlyAnim ->
+            ( { model | flyToCart = Nothing }
             , Cmd.none
-            , Just GoToCart
+            , Nothing
             )
 
 
@@ -3019,6 +3075,63 @@ view ctx (Model model) =
             , Helper.viewStepWithCircle 6 "storage-step" (viewPermanentStorageStep ctx model.rationaleSignatureStep model.storageConfigStep model.permanentStorageStep)
             , Html.map ctx.wrapMsg <| Helper.viewStepWithCircle 7 "build-tx-step" (viewBuildTxStep ctx model)
             ]
+        , viewCartAddedToast model.showCartToast model.flyToCart
+        ]
+
+
+viewCartAddedToast : Bool -> Maybe { a | x : Float, y : Float } -> Html msg
+viewCartAddedToast isVisible pos =
+    let
+        ( left, top ) =
+            case pos of
+                Just { x, y } ->
+                    ( String.fromFloat (x - 64) ++ "px", String.fromFloat (y + 36) ++ "px" )
+
+                Nothing ->
+                    ( "0", "0" )
+
+        baseStyles : List (Html.Attribute msg)
+        baseStyles =
+            [ HA.style "position" "fixed"
+            , HA.style "left" left
+            , HA.style "top" top
+            , HA.style "z-index" "1000"
+            , HA.style "display" "inline-flex"
+            , HA.style "align-items" "center"
+            , HA.style "gap" "0.5rem"
+            , HA.style "padding" "0.5rem 0.75rem"
+            , HA.style "border" "1px solid #A7F3D0"
+            , HA.style "border-radius" "9999px"
+            , HA.style "background-color" "#D1FAE5"
+            , HA.style "color" "#065F46"
+            , HA.style "font-weight" "600"
+            , HA.style "box-shadow" "0 6px 16px rgba(0,0,0,0.12)"
+            , HA.style "transition" "opacity 220ms ease, transform 220ms ease"
+            , HA.style "opacity"
+                (if isVisible then
+                    "1"
+
+                 else
+                    "0"
+                )
+            , HA.style "transform"
+                (if isVisible then
+                    "translateY(0)"
+
+                 else
+                    "translateY(-8px)"
+                )
+            , HA.style "pointer-events"
+                (if isVisible then
+                    "auto"
+
+                 else
+                    "none"
+                )
+            ]
+    in
+    div baseStyles
+        [ Html.span [ HA.style "font-size" "0.875rem" ] [ text "Added to Cart" ]
         ]
 
 
@@ -3496,16 +3609,16 @@ viewProposalList ctx form maybeVoter proposalsDict visibleCount =
                                 |> Maybe.andThen (Dict.get <| Gov.idToBech32 <| GovActionId actionId)
                         )
 
-            -- Filter proposals already in the cart for this voter
-            proposalsInCart : List VoteRecord
-            proposalsInCart =
+            -- Proposals already in the cart for the selected voter
+            proposalsInCartSelected : List { proposalTitle : String, voteIntent : VoteIntent }
+            proposalsInCartSelected =
                 case maybeVoterId of
                     Nothing ->
                         []
 
-                    Just voterId ->
-                        proposalsDictValues
-                            |> List.filterMap (\p -> Cart.get voterId p.id ctx.cart)
+                    Just voterIdStr ->
+                        Cart.getVoter voterIdStr ctx.cart
+                            |> Dict.values
         in
         div []
             [ Helper.proposalListContainer
@@ -3517,7 +3630,7 @@ viewProposalList ctx form maybeVoter proposalsDict visibleCount =
                 visibleCount
                 totalProposalCount
                 (ctx.wrapMsg (ShowMoreProposals visibleCount))
-            , Helper.viewProposalsListInCart proposalsInCart
+            , Helper.viewProposalsListInCart proposalsInCartSelected
             ]
 
 
@@ -4646,9 +4759,9 @@ viewBuildTxStep ctx model =
                         , HA.style "flex-wrap" "wrap"
                         , HA.style "gap" "1rem"
                         ]
-                        [ Helper.voteButton "Vote YES" "#10B981" (AddVoteToCartButtonClicked Gov.VoteYes)
-                        , Helper.voteButton "Vote NO" "#EF4444" (AddVoteToCartButtonClicked Gov.VoteNo)
-                        , Helper.voteButton "ABSTAIN" "#6B7280" (AddVoteToCartButtonClicked Gov.VoteAbstain)
+                        [ viewVoteButtonWithCoords "YES" "#10B981" Gov.VoteYes
+                        , viewVoteButtonWithCoords "NO" "#EF4444" Gov.VoteNo
+                        , viewVoteButtonWithCoords "ABSTAIN" "#6B7280" Gov.VoteAbstain
                         ]
                     , viewError error
                     ]
@@ -4663,17 +4776,93 @@ viewBuildTxStep ctx model =
                             [ HA.style "display" "flex"
                             , HA.style "flex-wrap" "wrap"
                             , HA.style "gap" "1rem"
-                            , HA.style "font-size" "1.5rem"
+                            , HA.style "font-size" "1rem"
                             ]
                             (viewVoteInCart voter actionId ctx.cart)
                         ]
-                    , Helper.viewButton "Change vote" ChangeVoteButtonClicked
+                    , Helper.viewButton "Change Vote" ChangeVoteButtonClicked
                     , text " "
-                    , Helper.viewButton "Pick another proposal" PickAnotherProposalButtonClicked
+                    , Helper.viewButton "Pick Another Proposal" PickAnotherProposalButtonClicked
                     , text " "
                     , Helper.viewButton "Go to Cart" GoToCartButtonClicked
+                    , viewFlyToCart model.flyToCart
                     ]
         ]
+
+
+viewVoteButtonWithCoords : String -> String -> Gov.Vote -> Html Msg
+viewVoteButtonWithCoords label color vote =
+    Html.button
+        [ HA.style "background-color" color
+        , HA.style "color" "white"
+        , HA.style "font-weight" "500"
+        , HA.style "font-size" "0.9375rem"
+        , HA.style "padding" "0.75rem 2rem"
+        , HA.style "border" "none"
+        , HA.style "border-radius" "0.5rem"
+        , HA.style "cursor" "pointer"
+        , HA.style "display" "inline-flex"
+        , HA.style "align-items" "center"
+        , HA.style "justify-content" "center"
+        , HA.style "min-width" "120px"
+        , Html.Events.on "click"
+            (JD.map2 (\x y -> VoteButtonPressed vote x y)
+                (JD.field "clientX" JD.float)
+                (JD.field "clientY" JD.float)
+            )
+        ]
+        [ text label ]
+
+
+viewFlyToCart : Maybe { x : Float, y : Float, opacity : String, color : String } -> Html msg
+viewFlyToCart maybeState =
+    case maybeState of
+        Nothing ->
+            text ""
+
+        Just s ->
+            div
+                [ HA.style "position" "fixed"
+                , HA.style "left" <| String.fromFloat s.x ++ "px"
+                , HA.style "top" <| String.fromFloat s.y ++ "px"
+                , HA.style "width" "10px"
+                , HA.style "height" "10px"
+                , HA.style "border-radius" "9999px"
+                , HA.style "background-color" s.color
+                , HA.style "box-shadow" "0 0 0 2px rgba(255,255,255,0.9)"
+                , HA.style "z-index" "1100"
+                , HA.style "transition" "left 2s ease, top 2s ease, transform 2s ease, opacity 2s ease"
+                , HA.style "opacity" s.opacity
+                ]
+                []
+
+
+viewDecisionBadge : Gov.Vote -> Html msg
+viewDecisionBadge v =
+    let
+        ( label, bg, fg ) =
+            case v of
+                Gov.VoteYes ->
+                    ( "YES", "#10B981", "#FFFFFF" )
+
+                Gov.VoteNo ->
+                    ( "NO", "#EF4444", "#FFFFFF" )
+
+                Gov.VoteAbstain ->
+                    ( "ABSTAIN", "#6B7280", "#FFFFFF" )
+    in
+    Html.span
+        [ HA.style "display" "inline-flex"
+        , HA.style "align-items" "center"
+        , HA.style "height" "1.5rem"
+        , HA.style "padding" "0 0.5rem"
+        , HA.style "border-radius" "9999px"
+        , HA.style "background-color" bg
+        , HA.style "color" fg
+        , HA.style "font-weight" "600"
+        , HA.style "font-size" "0.75rem"
+        ]
+        [ text label ]
 
 
 viewVoteInCart : Witness.Voter -> ActionId -> Cart.Model -> List (Html msg)
@@ -4684,18 +4873,48 @@ viewVoteInCart voter actionId cart =
     in
     case Cart.get voterIdStr actionId cart of
         Nothing ->
-            [ text "No vote found in cart. Try again picking a vote decision." ]
+            [ Html.div
+                [ HA.style "color" "#64748B" ]
+                [ text "No vote found in cart. Try choosing a decision above." ]
+            ]
 
         Just { voteIntent } ->
             case voteIntent.vote of
                 Gov.VoteNo ->
-                    [ text "NO vote added to the cart." ]
+                    [ Html.div
+                        [ HA.style "display" "flex"
+                        , HA.style "align-items" "center"
+                        , HA.style "gap" "0.5rem"
+                        ]
+                        [ Html.span [ HA.style "color" "#64748B" ] [ text "Vote:" ]
+                        , viewDecisionBadge Gov.VoteNo
+                        , Html.span [ HA.style "color" "#4A5568" ] [ text "added to cart" ]
+                        ]
+                    ]
 
                 Gov.VoteYes ->
-                    [ text "YES vote added to the cart." ]
+                    [ Html.div
+                        [ HA.style "display" "flex"
+                        , HA.style "align-items" "center"
+                        , HA.style "gap" "0.5rem"
+                        ]
+                        [ Html.span [ HA.style "color" "#64748B" ] [ text "Vote:" ]
+                        , viewDecisionBadge Gov.VoteYes
+                        , Html.span [ HA.style "color" "#4A5568" ] [ text "added to cart" ]
+                        ]
+                    ]
 
                 Gov.VoteAbstain ->
-                    [ text "ABSTAIN vote added to the cart." ]
+                    [ Html.div
+                        [ HA.style "display" "flex"
+                        , HA.style "align-items" "center"
+                        , HA.style "gap" "0.5rem"
+                        ]
+                        [ Html.span [ HA.style "color" "#64748B" ] [ text "Vote:" ]
+                        , viewDecisionBadge Gov.VoteAbstain
+                        , Html.span [ HA.style "color" "#4A5568" ] [ text "added to cart" ]
+                        ]
+                    ]
 
 
 viewMissingStepsMessage : InnerModel -> Html Msg

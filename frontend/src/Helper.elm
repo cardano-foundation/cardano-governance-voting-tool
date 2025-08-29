@@ -2,7 +2,7 @@ module Helper exposing
     ( shortenedHex, prettyAdaLovelace
     , textFieldInline, textInputField
     , formContainer, boxContainer, viewGrid, cardContainer, cardHeader, cardContent
-    , viewButton, viewWalletButton, externalLink, externalLinkButton
+    , viewButton, viewWalletButton, externalLink, externalLinkButton, trashButton
     , applyDropdownContainerStyle, applyDropdownItemStyle, applyMobileDropdownContainerStyle, applyWalletIconContainerStyle, applyWalletIconStyle
     , viewActionTypeIcon
     , sectionTitle, viewError
@@ -17,7 +17,7 @@ module Helper exposing
     , rationaleCompletedCard, optionalSection, formattedInternalVote, formattedReferences
     , stepNotAvailableCard, downloadJSONButton, authorsCard, addAuthorButton, codeSnippetBox, noAuthorsPlaceholder
     , signerCard, authorForm, labeledField, readOnlyField, signatureField, formButtonsRow, secondaryButton, primaryButton, loadSignatureButton
-    , stepCard, voteButton, missingStepsList, missingStepItem, loadingSpinner
+    , stepCard, missingStepsList, missingStepItem, loadingSpinner
     , signingButton
     )
 
@@ -42,7 +42,7 @@ and are potentially useful in multiple places.
 
 # Buttons
 
-@docs viewButton, viewWalletButton, externalLink, externalLinkButton
+@docs viewButton, viewWalletButton, externalLink, externalLinkButton, trashButton
 
 
 # Wallet Styling
@@ -101,7 +101,7 @@ and are potentially useful in multiple places.
 
 # Transaction Components
 
-@docs stepCard, voteButton, missingStepsList, missingStepItem, loadingSpinner
+@docs stepCard, missingStepsList, missingStepItem, loadingSpinner
 
 
 # Signing Components
@@ -121,6 +121,8 @@ import Markdown.Renderer exposing (defaultHtmlRenderer)
 import Natural exposing (Natural)
 import Numeral
 import RemoteData
+import Svg
+import Svg.Attributes as SA
 import Url
 
 
@@ -1255,7 +1257,7 @@ proposalCard { title, hashIsValid, pastVote, isRatifying, abstract, actionType, 
         , HA.style "transition" "all 0.3s ease"
         , HA.style "transform-origin" "center"
         , HA.style "position" "relative"
-        , HA.style "overflow" "hidden"
+        , HA.style "overflow" "visible"
         ]
         [ div
             [ HA.style "background-color" "#F7FAFC"
@@ -1265,19 +1267,9 @@ proposalCard { title, hashIsValid, pastVote, isRatifying, abstract, actionType, 
             , HA.style "justify-content" "space-between"
             , HA.style "align-items" "center"
             ]
-            [ Html.h3
-                [ HA.style "font-weight" "600"
-                , HA.style "font-size" "1rem"
-                , HA.style "color" "#1A202C"
-                , HA.style "line-height" "1.4"
-                , HA.style "word-wrap" "break-word"
-                , HA.style "flex" "1"
-                ]
-                [ text title
-                , if hashIsValid then
-                    text ""
-
-                  else
+            (let
+                invalidHashBadge : Html msg
+                invalidHashBadge =
                     Html.span
                         [ HA.style "display" "inline-flex"
                         , HA.style "align-items" "center"
@@ -1292,36 +1284,9 @@ proposalCard { title, hashIsValid, pastVote, isRatifying, abstract, actionType, 
                         [ Html.span [] [ text "⚠️" ]
                         , text "INVALID HASH"
                         ]
-                , case pastVote of
-                    Nothing ->
-                        text ""
 
-                    Just vote ->
-                        let
-                            ( voteText, voteColor ) =
-                                case vote of
-                                    Gov.VoteYes ->
-                                        ( "voted YES", "#10B981" )
-
-                                    Gov.VoteNo ->
-                                        ( "voted NO", "#EF4444" )
-
-                                    Gov.VoteAbstain ->
-                                        ( "voted ABSTAIN", "#6B7280" )
-                        in
-                        Html.span
-                            [ HA.style "display" "inline-flex"
-                            , HA.style "align-items" "center"
-                            , HA.style "background-color" voteColor
-                            , HA.style "color" "white"
-                            , HA.style "font-weight" "bold"
-                            , HA.style "padding" "0.25rem 0.5rem"
-                            , HA.style "border-radius" "0.375rem"
-                            , HA.style "font-size" "0.875rem"
-                            , HA.style "gap" "0.25rem"
-                            ]
-                            [ text voteText ]
-                , if isRatifying then
+                ratifyingBadge : Html msg
+                ratifyingBadge =
                     Html.span
                         [ HA.style "display" "inline-flex"
                         , HA.style "align-items" "center"
@@ -1335,10 +1300,41 @@ proposalCard { title, hashIsValid, pastVote, isRatifying, abstract, actionType, 
                         ]
                         [ text "✓ in ratification" ]
 
-                  else
-                    text ""
+                badges : List (Html msg)
+                badges =
+                    (if hashIsValid then
+                        []
+
+                     else
+                        [ invalidHashBadge ]
+                    )
+                        ++ (if isRatifying then
+                                [ ratifyingBadge ]
+
+                            else
+                                []
+                           )
+             in
+             [ Html.h3
+                [ HA.style "font-weight" "600"
+                , HA.style "font-size" "1rem"
+                , HA.style "color" "#1A202C"
+                , HA.style "line-height" "1.4"
+                , HA.style "word-wrap" "break-word"
+                , HA.style "flex" "1"
                 ]
-            ]
+                [ text title
+                , Html.span
+                    [ HA.style "display" "inline-flex"
+                    , HA.style "align-items" "center"
+                    , HA.style "gap" "0.5rem"
+                    , HA.style "margin-left" "0.5rem"
+                    , HA.style "vertical-align" "middle"
+                    ]
+                    badges
+                ]
+             ]
+            )
         , div
             [ HA.style "padding" "1.25rem"
             , HA.style "flex-grow" "1"
@@ -1356,6 +1352,20 @@ proposalCard { title, hashIsValid, pastVote, isRatifying, abstract, actionType, 
                 , HA.style "margin-bottom" "1.5rem"
                 ]
                 [ renderMarkdownContent abstract ]
+            , case pastVote of
+                Just v ->
+                    Html.div
+                        [ HA.style "position" "absolute"
+                        , HA.style "top" "0"
+                        , HA.style "right" "0"
+                        , HA.style "transform" "translate(10%,-50%)"
+                        , HA.style "z-index" "10"
+                        , HA.style "pointer-events" "none"
+                        ]
+                        [ viewPastVoteBadge v ]
+
+                Nothing ->
+                    text ""
             , div
                 [ HA.style "font-size" "0.75rem"
                 , HA.style "color" "#718096"
@@ -1459,85 +1469,115 @@ proposalDetailsItem label content =
         ]
 
 
-{-| Helper function to quickly view proposals that are already in the cart.
+viewDecisionBadge : Gov.Vote -> Html msg
+viewDecisionBadge v =
+    let
+        ( label, bg, fg ) =
+            case v of
+                Gov.VoteYes ->
+                    ( "YES", "#10B981", "#FFFFFF" )
+
+                Gov.VoteNo ->
+                    ( "NO", "#EF4444", "#FFFFFF" )
+
+                Gov.VoteAbstain ->
+                    ( "ABSTAIN", "#6B7280", "#FFFFFF" )
+    in
+    Html.span
+        [ HA.style "display" "inline-flex"
+        , HA.style "align-items" "center"
+        , HA.style "height" "1.5rem"
+        , HA.style "padding" "0 0.5rem"
+        , HA.style "border-radius" "9999px"
+        , HA.style "background-color" bg
+        , HA.style "color" fg
+        , HA.style "font-weight" "600"
+        , HA.style "font-size" "0.75rem"
+        ]
+        [ text label ]
+
+
+viewPastVoteBadge : Gov.Vote -> Html msg
+viewPastVoteBadge vote =
+    let
+        ( label, bg, fg ) =
+            case vote of
+                Gov.VoteYes ->
+                    ( "VOTED YES", "#10B981", "#FFFFFF" )
+
+                Gov.VoteNo ->
+                    ( "VOTED NO", "#EF4444", "#FFFFFF" )
+
+                Gov.VoteAbstain ->
+                    ( "VOTED ABSTAIN", "#6B7280", "#FFFFFF" )
+    in
+    Html.span
+        [ HA.style "display" "inline-flex"
+        , HA.style "align-items" "center"
+        , HA.style "height" "1.2rem"
+        , HA.style "padding" "0 0.35rem"
+        , HA.style "border-radius" "9999px"
+        , HA.style "background-color" bg
+        , HA.style "color" fg
+        , HA.style "font-weight" "600"
+        , HA.style "font-size" "0.6rem"
+        ]
+        [ text label ]
+
+
+{-| List of proposals already in the cart for the currently selected voter.
 -}
 viewProposalsListInCart : List { proposalTitle : String, voteIntent : VoteIntent } -> Html msg
-viewProposalsListInCart proposalsInCart =
-    div []
-        (List.map viewProposalRow proposalsInCart)
+viewProposalsListInCart items =
+    if List.isEmpty items then
+        text ""
 
-
-viewProposalRow : { proposalTitle : String, voteIntent : VoteIntent } -> Html msg
-viewProposalRow proposal =
-    div []
-        [ text proposal.proposalTitle
-        , text " todo: display one-liner for the vote"
-        ]
-
-
-
--- STORAGE CONFIGURATION STEP STYLING #########################################################
-
-
-{-| Main container for storage configuration section
--}
-storageConfigCard : String -> List (Html msg) -> Html msg
-storageConfigCard title bodyContent =
-    cardContainer []
-        [ cardHeader [] title "" []
-        , cardContent [] bodyContent
-        ]
-
-
-{-| Option card for a storage method
--}
-storageMethodOption : String -> Bool -> msg -> Html msg
-storageMethodOption label isSelected selectMsg =
-    div
-        [ HA.style "border"
-            (if isSelected then
-                "2px solid #272727"
-
-             else
-                "1px solid #E2E8F0"
-            )
-        , HA.style "border-radius" "0.5rem"
-        , HA.style "padding" "0.75rem"
-        , HA.style "cursor" "pointer"
-        , HA.style "background-color"
-            (if isSelected then
-                "#F1F5F9"
-
-             else
-                "#FFFFFF"
-            )
-        , HA.style "position" "relative"
-        , onClick selectMsg
-        ]
-        [ div
-            [ HA.style "font-weight" "500"
-            , HA.style "font-size" "0.9375rem"
-            ]
-            [ text label ]
-        , if isSelected then
-            div
-                [ HA.style "position" "absolute"
-                , HA.style "top" "0.5rem"
-                , HA.style "right" "0.5rem"
-                , HA.style "width" "1rem"
-                , HA.style "height" "1rem"
-                , HA.style "border-radius" "9999px"
-                , HA.style "background-color" "#272727"
-                , HA.style "color" "white"
-                , HA.style "display" "flex"
-                , HA.style "align-items" "center"
-                , HA.style "justify-content" "center"
-                , HA.style "font-size" "0.75rem"
+    else
+        cardContainer [ HA.style "margin-top" "0.75rem" ]
+            [ cardHeader [] "Votes already in cart for selected voter" "" []
+            , cardContent
+                [ HA.style "padding" "0.75rem 1rem" ]
+                [ Html.ul
+                    [ HA.style "list-style" "none"
+                    , HA.style "margin" "0"
+                    , HA.style "padding" "0"
+                    ]
+                    (List.indexedMap viewProposalRowAt items)
                 ]
-                [ text "✓" ]
+            ]
 
-          else
-            text ""
+
+viewProposalRowAt : Int -> { proposalTitle : String, voteIntent : VoteIntent } -> Html msg
+viewProposalRowAt index { proposalTitle, voteIntent } =
+    Html.li
+        [ HA.style "display" "flex"
+        , HA.style "justify-content" "space-between"
+        , HA.style "align-items" "center"
+        , HA.style "gap" "0.75rem"
+        , HA.style "padding" "0.5rem 0"
+        , HA.style "border-top"
+            (if index > 0 then
+                "1px solid #EDF2F7"
+
+             else
+                "none"
+            )
+        ]
+        [ Html.div
+            [ HA.style "flex" "1"
+            , HA.style "min-width" "0"
+            ]
+            [ Html.div
+                [ HA.style "color" "#1A202C"
+                , HA.style "font-size" "0.9375rem"
+                , HA.style "line-height" "1.4"
+                , HA.style "word-wrap" "break-word"
+                , HA.style "overflow-wrap" "break-word"
+                , HA.style "word-break" "break-word"
+                ]
+                [ text proposalTitle ]
+            ]
+        , viewDecisionBadge voteIntent.vote
         ]
 
 
@@ -1643,24 +1683,45 @@ storageHeaderForm _ name value deleteMsg nameChangeMsg valueChangeMsg =
                     , onInputMsg = valueChangeMsg
                     }
                 ]
-            , iconButton "🗑" deleteMsg
+            , trashButton deleteMsg
             ]
         ]
 
 
-iconButton : String -> msg -> Html msg
-iconButton icon msg =
+trashButton : msg -> Html msg
+trashButton msg =
     Html.button
-        [ HA.style "background-color" "black"
+        [ HA.style "background-color" "#272727"
         , HA.style "color" "white"
-        , HA.style "font-size" "1.25rem"
         , HA.style "width" "2.2rem"
         , HA.style "height" "2.2rem"
+        , HA.style "display" "inline-flex"
+        , HA.style "align-items" "center"
+        , HA.style "justify-content" "center"
         , HA.style "border" "none"
         , HA.style "border-radius" "0.375rem"
+        , HA.style "cursor" "pointer"
+        , HA.attribute "aria-label" "Delete"
+        , HA.title "Delete"
         , onClick msg
         ]
-        [ text icon ]
+        [ Svg.svg
+            [ SA.width "18"
+            , SA.height "18"
+            , SA.viewBox "0 0 24 24"
+            , SA.fill "none"
+            , SA.stroke "#FFFFFF"
+            , SA.strokeWidth "2"
+            , SA.strokeLinecap "round"
+            , SA.strokeLinejoin "round"
+            ]
+            [ Svg.path [ SA.d "M3 6h18" ] []
+            , Svg.path [ SA.d "M8 6V4h8v2" ] []
+            , Svg.path [ SA.d "M6 6l1 14h10l1-14" ] []
+            , Svg.path [ SA.d "M10 11v7" ] []
+            , Svg.path [ SA.d "M14 11v7" ] []
+            ]
+        ]
 
 
 
@@ -1674,6 +1735,72 @@ rationaleCard title description content =
     cardContainer []
         [ cardHeader [] title description []
         , cardContent [] [ content ]
+        ]
+
+
+
+-- STORAGE CONFIGURATION STEP STYLING #########################################################
+
+
+{-| Main container for storage configuration section
+-}
+storageConfigCard : String -> List (Html msg) -> Html msg
+storageConfigCard title bodyContent =
+    cardContainer []
+        [ cardHeader [] title "" []
+        , cardContent [] bodyContent
+        ]
+
+
+{-| Option card for a storage method
+-}
+storageMethodOption : String -> Bool -> msg -> Html msg
+storageMethodOption label isSelected selectMsg =
+    div
+        [ HA.style "border"
+            (if isSelected then
+                "2px solid #272727"
+
+             else
+                "1px solid #E2E8F0"
+            )
+        , HA.style "border-radius" "0.5rem"
+        , HA.style "padding" "0.75rem"
+        , HA.style "cursor" "pointer"
+        , HA.style "background-color"
+            (if isSelected then
+                "#F1F5F9"
+
+             else
+                "#FFFFFF"
+            )
+        , HA.style "position" "relative"
+        , onClick selectMsg
+        ]
+        [ div
+            [ HA.style "font-weight" "500"
+            , HA.style "font-size" "0.9375rem"
+            ]
+            [ text label ]
+        , if isSelected then
+            div
+                [ HA.style "position" "absolute"
+                , HA.style "top" "0.5rem"
+                , HA.style "right" "0.5rem"
+                , HA.style "width" "1rem"
+                , HA.style "height" "1rem"
+                , HA.style "border-radius" "9999px"
+                , HA.style "background-color" "#272727"
+                , HA.style "color" "white"
+                , HA.style "display" "flex"
+                , HA.style "align-items" "center"
+                , HA.style "justify-content" "center"
+                , HA.style "font-size" "0.75rem"
+                ]
+                [ text "✓" ]
+
+          else
+            text ""
         ]
 
 
@@ -1866,7 +1993,7 @@ referenceForm index typeName label uri deleteMsg typeChangeMsg labelChangeMsg ur
                 , HA.style "color" "#374151"
                 ]
                 [ text ("Reference " ++ String.fromInt (index + 1)) ]
-            , iconButton "🗑" deleteMsg
+            , trashButton deleteMsg
             ]
         , div
             [ HA.style "display" "grid"
@@ -2311,7 +2438,7 @@ authorForm index deleteMsg content =
                 , HA.style "color" "#1A202C"
                 ]
                 [ text ("Author " ++ String.fromInt (index + 1)) ]
-            , iconButton "🗑" deleteMsg
+            , trashButton deleteMsg
             ]
         , div
             [ HA.style "display" "grid"
@@ -2640,28 +2767,6 @@ successBadge label =
         , HA.style "gap" "0.375rem"
         ]
         [ text <| "✓ " ++ label ]
-
-
-{-| Vote button with consistent styling
--}
-voteButton : String -> String -> msg -> Html msg
-voteButton label color clickMsg =
-    Html.button
-        [ HA.style "background-color" color
-        , HA.style "color" "white"
-        , HA.style "font-weight" "500"
-        , HA.style "font-size" "0.9375rem"
-        , HA.style "padding" "0.75rem 2rem"
-        , HA.style "border" "none"
-        , HA.style "border-radius" "0.5rem"
-        , HA.style "cursor" "pointer"
-        , HA.style "display" "inline-flex"
-        , HA.style "align-items" "center"
-        , HA.style "justify-content" "center"
-        , HA.style "min-width" "120px"
-        , onClick clickMsg
-        ]
-        [ text label ]
 
 
 {-| Missing steps list container

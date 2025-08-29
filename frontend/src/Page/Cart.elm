@@ -1,4 +1,4 @@
-module Page.Cart exposing (Model, Msg, UpdateContext, ViewContext, VoteRecord, addVote, contains, deleteVote, deserialize, get, init, serialize, update, view)
+module Page.Cart exposing (Model, Msg, UpdateContext, ViewContext, VoteRecord, addVote, cartCount, contains, deleteVote, deserialize, get, getVoter, init, serialize, update, view)
 
 import Bytes.Comparable as Bytes exposing (Bytes)
 import Cardano.Address as Address exposing (Address, CredentialHash)
@@ -14,10 +14,9 @@ import Cardano.Utxo as Utxo exposing (Output)
 import Cardano.Witness as Witness exposing (Voter(..))
 import Dict exposing (Dict)
 import Dict.Any
-import Helper exposing (viewError)
+import Helper exposing (cardContainer, cardContent, cardHeader, sectionTitle, viewButton, viewError)
 import Html exposing (Html, div, text)
 import Html.Attributes as HA
-import Html.Events as HE
 import Json.Decode as JD
 import Json.Encode as JE
 import Natural as N
@@ -60,6 +59,10 @@ type alias VoteRecord =
     }
 
 
+
+-- (intentionally no listAll; we render per-selected-voter only)
+
+
 type alias CartReady =
     { votersIntents : Dict String CartVoter -- keys are bech32 gov IDs
     , maxResources : Resources
@@ -100,6 +103,22 @@ get voterId actionId model =
         Ready { votersIntents } ->
             Dict.get voterId votersIntents
                 |> Maybe.andThen (\{ voteRecords } -> Dict.get actionIdStr voteRecords)
+
+
+{-| Retrieve all votes of a given voter from the cart.
+-}
+getVoter : String -> Model -> Dict String VoteRecord
+getVoter voterId model =
+    case model of
+        Preparing { votersIntents } ->
+            Dict.get voterId votersIntents
+                |> Maybe.map .voteRecords
+                |> Maybe.withDefault Dict.empty
+
+        Ready { votersIntents } ->
+            Dict.get voterId votersIntents
+                |> Maybe.map .voteRecords
+                |> Maybe.withDefault Dict.empty
 
 
 
@@ -283,6 +302,18 @@ serializeCartVoter { voter, voteRecords } =
         [ ( "voter", serializeVoter voter )
         , ( "voteRecords", JE.dict identity serializeVoteRecord voteRecords )
         ]
+
+
+{-| Total number of proposals currently in the cart.
+-}
+cartCount : Model -> Int
+cartCount model =
+    case model of
+        Preparing { votersIntents } ->
+            countAllVotersVotes votersIntents
+
+        Ready { votersIntents } ->
+            countAllVotersVotes votersIntents
 
 
 serializeVoter : Witness.Voter -> JE.Value
@@ -618,21 +649,97 @@ view ctx model =
 
 viewPreparingCart : ViewContext a msg -> CartPreparation -> Html msg
 viewPreparingCart ctx { votersIntents, error } =
-    div []
-        [ Html.button [ HE.onClick ctx.clearCart ] [ text "Clear Cart" ]
-        , div [] <|
-            List.map (viewVoterIntents ctx) (Dict.toList votersIntents)
-        , Html.button [ HE.onClick <| ctx.wrapMsg BuildTx ] [ text "build Tx" ]
-        , viewError error
-        ]
+    let
+        hasVotes : Bool
+        hasVotes =
+            not (Dict.isEmpty votersIntents)
+
+        pageAttrs : List (Html.Attribute msg)
+        pageAttrs =
+            [ HA.style "max-width" "1100px"
+            , HA.style "margin" "0 auto"
+            , HA.style "padding" "0 1rem"
+            ]
+
+        counts =
+            decisionCounts votersIntents
+
+        summaryBar : Html msg
+        summaryBar =
+            if hasVotes then
+                div
+                    [ HA.style "display" "flex"
+                    , HA.style "align-items" "center"
+                    , HA.style "justify-content" "space-between"
+                    , HA.style "margin-bottom" "0.75rem"
+                    ]
+                    [ div
+                        [ HA.style "display" "flex"
+                        , HA.style "align-items" "center"
+                        , HA.style "gap" "0.5rem"
+                        , HA.style "flex-wrap" "wrap"
+                        ]
+                        [ viewTotalVotesChip (countAllVotersVotes votersIntents)
+                        , viewDecisionStat Gov.VoteYes counts.yes
+                        , viewDecisionStat Gov.VoteNo counts.no
+                        , viewDecisionStat Gov.VoteAbstain counts.abstain
+                        ]
+                    , viewButton "Clear Cart" ctx.clearCart
+                    ]
+
+            else
+                text ""
+
+        actionsBar : Html msg
+        actionsBar =
+            div
+                [ HA.style "display" "flex"
+                , HA.style "gap" "0.75rem"
+                , HA.style "margin-top" "0.5rem"
+                , HA.style "margin-bottom" "1rem"
+                ]
+                [ viewButton "Build Transaction" (ctx.wrapMsg BuildTx) ]
+    in
+    if hasVotes then
+        div pageAttrs <|
+            List.concat
+                [ [ viewCartHeader, summaryBar ]
+                , List.map (viewVoterIntents ctx) (Dict.toList votersIntents)
+                , [ actionsBar, viewError error ]
+                ]
+
+    else
+        div pageAttrs
+            [ viewCartHeader
+            , summaryBar
+            , viewEmptyCart
+            , viewError error
+            ]
 
 
 viewVoterIntents : ViewContext a msg -> ( String, { voter : Witness.Voter, voteRecords : Dict String VoteRecord } ) -> Html msg
 viewVoterIntents ctx ( voterIdStr, { voteRecords } ) =
-    div []
-        -- TODO: improve voter details
-        [ Html.h4 [] [ text <| "Voter: " ++ voterIdStr ]
-        , div [] <| List.map (viewVoteRecord ctx voterIdStr) <| Dict.toList voteRecords
+    cardContainer []
+        [ cardHeader
+            [ HA.style "display" "flex"
+            , HA.style "flex-direction" "column"
+            , HA.style "align-items" "flex-start"
+            , HA.style "gap" "0.25rem"
+            ]
+            "Voter"
+            ""
+            [ Html.div
+                [ HA.style "font-size" "0.875rem"
+                , HA.style "color" "#4A5568"
+                , HA.style "word-break" "break-all"
+                , HA.style "overflow-wrap" "anywhere"
+                ]
+                [ text voterIdStr ]
+            ]
+        , cardContent []
+            (Dict.toList voteRecords
+                |> List.map (viewVoteRecord ctx voterIdStr)
+            )
         ]
 
 
@@ -642,50 +749,185 @@ viewVoteRecord ctx voterIdStr ( actionIdStr, { proposalTitle, voteIntent } ) =
         { vote, rationale } =
             voteIntent
 
-        viewRationale =
+        -- Convert ipfs URL to a gateway link
+        toWebUrl : String -> String
+        toWebUrl url =
+            if String.startsWith "ipfs://" url then
+                "https://ipfs.io/ipfs/" ++ String.dropLeft 7 url
+
+            else
+                url
+
+        rationaleView : Html msg
+        rationaleView =
             case rationale of
                 Nothing ->
-                    "none"
+                    Html.span [ HA.style "color" "#64748B" ] [ text "(no rationale)" ]
 
                 Just { url } ->
-                    url
+                    Html.a
+                        [ HA.href (toWebUrl url)
+                        , HA.target "_blank"
+                        , HA.style "color" "#2563EB"
+                        , HA.style "text-decoration" "underline"
+                        ]
+                        [ text "Your rationale" ]
+
+        row : List (Html.Attribute msg)
+        row =
+            [ HA.style "display" "flex"
+            , HA.style "flex-wrap" "wrap"
+            , HA.style "align-items" "flex-start"
+            , HA.style "justify-content" "flex-start"
+            , HA.style "gap" "0.75rem"
+            , HA.style "padding" "0.5rem 0"
+            , HA.style "border-bottom" "1px solid #EDF2F7"
+            ]
     in
-    Html.p []
-        [ text <| Debug.toString vote
-        , text " | "
-        , text proposalTitle
-        , text " | action ID: "
-        , text actionIdStr
-        , text " | rationale: "
-        , text viewRationale
-        , text " "
-        , Html.button
-            [ HE.onClick <| ctx.deleteVote { voterIdStr = voterIdStr, actionIdStr = actionIdStr } ]
-            [ text "🗑" ]
+    div row
+        [ div [ HA.style "flex" "1 1 0%", HA.style "min-width" "0" ]
+            [ Html.div
+                [ HA.style "font-weight" "600"
+                , HA.style "color" "#1A202C"
+                , HA.style "word-break" "break-word"
+                , HA.style "overflow-wrap" "anywhere"
+                ]
+                [ text proposalTitle ]
+            , Html.div [ HA.style "font-size" "0.875rem", HA.style "color" "#4A5568", HA.style "margin-top" "0.35rem", HA.style "display" "flex", HA.style "align-items" "center", HA.style "gap" "0.5rem", HA.style "flex-wrap" "wrap" ]
+                [ Html.span [] [ text "Action ID:" ]
+                , Html.code
+                    [ HA.style "font-family" "monospace"
+                    , HA.style "word-break" "break-all"
+                    , HA.style "overflow-wrap" "anywhere"
+                    ]
+                    [ text actionIdStr ]
+                , Html.span [] [ text "·" ]
+                , rationaleView
+                , Html.span [] [ text "·" ]
+                , Html.span [ HA.style "color" "#64748B" ] [ text "Vote:" ]
+                , viewDecisionBadge vote
+                ]
+            ]
+        , div [ HA.style "align-self" "center", HA.style "margin-left" "auto", HA.style "flex-shrink" "0" ]
+            [ Helper.trashButton (ctx.deleteVote { voterIdStr = voterIdStr, actionIdStr = actionIdStr }) ]
         ]
 
 
 viewReadyCart : ViewContext a msg -> CartReady -> Html msg
 viewReadyCart ctx { votersIntents, maxResources, currentResources, txFinalized } =
     let
+        countedVotesCount : Int
         countedVotesCount =
             countAllVotersVotes votersIntents
 
-        viewVotersIntents =
-            if countedVotesCount == 0 then
-                text "The generated Tx doesn’t contain any vote."
+        pageAttrs : List (Html.Attribute msg)
+        pageAttrs =
+            [ HA.style "max-width" "1100px"
+            , HA.style "margin" "0 auto"
+            , HA.style "padding" "0 1rem"
+            ]
+
+        counts =
+            decisionCounts votersIntents
+
+        summaryBar : Html msg
+        summaryBar =
+            if countedVotesCount > 0 then
+                div
+                    [ HA.style "display" "flex"
+                    , HA.style "align-items" "center"
+                    , HA.style "justify-content" "space-between"
+                    , HA.style "margin-bottom" "0.75rem"
+                    ]
+                    [ div
+                        [ HA.style "display" "flex"
+                        , HA.style "align-items" "center"
+                        , HA.style "gap" "0.5rem"
+                        , HA.style "flex-wrap" "wrap"
+                        ]
+                        [ viewTotalVotesChip countedVotesCount
+                        , viewDecisionStat Gov.VoteYes counts.yes
+                        , viewDecisionStat Gov.VoteNo counts.no
+                        , viewDecisionStat Gov.VoteAbstain counts.abstain
+                        ]
+                    , viewButton "Clear Cart" ctx.clearCart
+                    ]
 
             else
-                div [] <|
-                    (Html.h3 [] [ text "Votes ready for submission" ]
-                        :: List.map (viewVoterIntents ctx) (Dict.toList votersIntents)
-                    )
+                text ""
+
+        votesSection : Html msg
+        votesSection =
+            if countedVotesCount == 0 then
+                cardContainer []
+                    [ cardHeader [] "No votes found" "The generated transaction doesn’t contain any vote." []
+                    , cardContent [] []
+                    ]
+
+            else
+                div [] (List.map (viewVoterIntents ctx) (Dict.toList votersIntents))
     in
-    div []
-        [ viewResources maxResources currentResources
-        , Html.button [ HE.onClick ctx.clearCart ] [ text "Clear Cart" ]
-        , viewVotersIntents
+    div pageAttrs
+        [ viewCartHeader
+        , summaryBar
+        , votesSection
+        , viewResourcesCard maxResources currentResources
         , viewSigningButton ctx txFinalized
+        ]
+
+
+viewCartHeader : Html msg
+viewCartHeader =
+    div [ HA.style "margin-bottom" "0.75rem" ]
+        [ sectionTitle "Cart"
+        , Html.p
+            [ HA.style "color" "#64748B"
+            , HA.style "font-size" "0.9375rem"
+            , HA.style "margin-top" "0.25rem"
+            ]
+            []
+        ]
+
+
+{-| Empty cart placeholder card.
+-}
+viewEmptyCart : Html msg
+viewEmptyCart =
+    cardContainer []
+        [ cardContent []
+            [ div
+                [ HA.style "display" "flex"
+                , HA.style "flex-direction" "column"
+                , HA.style "align-items" "center"
+                , HA.style "justify-content" "center"
+                , HA.style "text-align" "center"
+                , HA.style "padding" "2rem 1rem"
+                ]
+                [ div
+                    [ HA.style "width" "64px"
+                    , HA.style "height" "64px"
+                    , HA.style "border-radius" "9999px"
+                    , HA.style "background-color" "#F1F5F9"
+                    , HA.style "display" "flex"
+                    , HA.style "align-items" "center"
+                    , HA.style "justify-content" "center"
+                    , HA.style "margin-bottom" "0.75rem"
+                    ]
+                    [ Html.span [ HA.style "font-size" "28px" ] [ text "🛒" ] ]
+                , Html.div
+                    [ HA.style "font-weight" "700"
+                    , HA.style "font-size" "1.125rem"
+                    , HA.style "color" "#111827"
+                    , HA.style "margin-bottom" "0.25rem"
+                    ]
+                    [ text "Your cart is empty" ]
+                , Html.p
+                    [ HA.style "color" "#6B7280"
+                    , HA.style "font-size" "0.95rem"
+                    ]
+                    [ text "Add votes from Vote Preparation page to see them here." ]
+                ]
+            ]
         ]
 
 
@@ -694,11 +936,12 @@ countAllVotersVotes votes =
     Dict.foldl (\_ cartVoter acc -> acc + Dict.size cartVoter.voteRecords) 0 votes
 
 
-viewResources : Resources -> Resources -> Html msg
+viewResources : Resources -> Resources -> { overall : Int, size : Int, steps : Int, mem : Int }
 viewResources maxResources currentResources =
     let
-        usagePercent used max =
-            ceiling (100 * toFloat used / toFloat max)
+        usagePercent : Int -> Int -> Int
+        usagePercent used maxVal =
+            ceiling (100 * toFloat used / toFloat maxVal)
 
         sizeUsage =
             usagePercent currentResources.txSize maxResources.txSize
@@ -712,11 +955,191 @@ viewResources maxResources currentResources =
         overallUsage =
             max sizeUsage (max stepsUsage memUsage)
     in
-    div []
-        [ Html.h3 [] [ text "Resource usage:" ]
-        , Html.progress [ HA.max "100", HA.value (String.fromInt overallUsage) ] []
-        , text <| " " ++ String.fromInt overallUsage ++ " %"
+    { overall = overallUsage, size = sizeUsage, steps = stepsUsage, mem = memUsage }
+
+
+viewResourcesCard : Resources -> Resources -> Html msg
+viewResourcesCard maxResources currentResources =
+    let
+        usage =
+            viewResources maxResources currentResources
+
+        barColor : Int -> String
+        barColor pct =
+            if pct >= 90 then
+                "#EF4444"
+
+            else if pct >= 70 then
+                "#F59E0B"
+
+            else
+                "#10B981"
+
+        widthPct : Int -> Int
+        widthPct pct =
+            if pct > 100 then
+                100
+
+            else if pct < 0 then
+                0
+
+            else
+                pct
+
+        bar : Int -> Html msg
+        bar pct =
+            div
+                [ HA.style "position" "relative"
+                , HA.style "height" "0.75rem"
+                , HA.style "background-color" "#EDF2F7"
+                , HA.style "border-radius" "9999px"
+                , HA.style "overflow" "hidden"
+                ]
+                [ div
+                    [ HA.style "position" "absolute"
+                    , HA.style "left" "0"
+                    , HA.style "top" "0"
+                    , HA.style "bottom" "0"
+                    , HA.style "width" (String.fromInt (widthPct pct) ++ "%")
+                    , HA.style "background-color" (barColor pct)
+                    ]
+                    []
+                ]
+
+        detailsText : String
+        detailsText =
+            "Tx size "
+                ++ String.fromInt usage.size
+                ++ "% · Steps "
+                ++ String.fromInt usage.steps
+                ++ "% · Mem "
+                ++ String.fromInt usage.mem
+                ++ "%"
+
+        tooltipText : String
+        tooltipText =
+            String.fromInt usage.overall ++ "% of limits · " ++ detailsText
+    in
+    cardContainer []
+        [ cardHeader
+            [ HA.style "display" "flex"
+            , HA.style "align-items" "flex-start"
+            , HA.style "justify-content" "flex-start"
+            , HA.style "gap" "0.5rem"
+            , HA.style "flex-wrap" "wrap"
+            ]
+            "Max Cart Size"
+            (String.fromInt usage.overall ++ "% of limits")
+            [ Html.span
+                [ HA.title tooltipText
+                , HA.attribute "aria-label" tooltipText
+                , HA.style "display" "inline-flex"
+                , HA.style "align-items" "center"
+                , HA.style "justify-content" "center"
+                , HA.style "width" "1.1rem"
+                , HA.style "height" "1.7rem"
+                , HA.style "border-radius" "9999px"
+                , HA.style "color" "#374151"
+                , HA.style "font-size" "0.75rem"
+                , HA.style "cursor" "pointer"
+                ]
+                [ text "ⓘ" ]
+            ]
+        , cardContent []
+            [ bar usage.overall ]
         ]
+
+
+decisionCounts : Dict String CartVoter -> { yes : Int, no : Int, abstain : Int }
+decisionCounts votersIntents =
+    let
+        addRecord : VoteRecord -> { yes : Int, no : Int, abstain : Int } -> { yes : Int, no : Int, abstain : Int }
+        addRecord { voteIntent } acc =
+            case voteIntent.vote of
+                Gov.VoteYes ->
+                    { acc | yes = acc.yes + 1 }
+
+                Gov.VoteNo ->
+                    { acc | no = acc.no + 1 }
+
+                Gov.VoteAbstain ->
+                    { acc | abstain = acc.abstain + 1 }
+    in
+    Dict.values votersIntents
+        |> List.concatMap (\{ voteRecords } -> Dict.values voteRecords)
+        |> List.foldl addRecord { yes = 0, no = 0, abstain = 0 }
+
+
+viewDecisionBadge : Gov.Vote -> Html msg
+viewDecisionBadge v =
+    let
+        ( label, bg, fg ) =
+            case v of
+                Gov.VoteYes ->
+                    ( "YES", "#10B981", "#FFFFFF" )
+
+                Gov.VoteNo ->
+                    ( "NO", "#EF4444", "#FFFFFF" )
+
+                Gov.VoteAbstain ->
+                    ( "ABSTAIN", "#6B7280", "#FFFFFF" )
+    in
+    Html.span
+        [ HA.style "display" "inline-flex"
+        , HA.style "align-items" "center"
+        , HA.style "height" "1.5rem"
+        , HA.style "padding" "0 0.5rem"
+        , HA.style "border-radius" "9999px"
+        , HA.style "background-color" bg
+        , HA.style "color" fg
+        , HA.style "font-weight" "600"
+        , HA.style "font-size" "0.75rem"
+        ]
+        [ text label ]
+
+
+viewTotalVotesChip : Int -> Html msg
+viewTotalVotesChip total =
+    Html.span
+        [ HA.style "display" "inline-flex"
+        , HA.style "align-items" "center"
+        , HA.style "height" "1.5rem"
+        , HA.style "padding" "0 0.6rem"
+        , HA.style "border-radius" "9999px"
+        , HA.style "background-color" "#EDF2F7"
+        , HA.style "color" "#374151"
+        , HA.style "font-weight" "600"
+        , HA.style "font-size" "0.75rem"
+        ]
+        [ text <| String.fromInt total ++ " vote(s)" ]
+
+
+viewDecisionStat : Gov.Vote -> Int -> Html msg
+viewDecisionStat v count =
+    let
+        ( label, bg, fg ) =
+            case v of
+                Gov.VoteYes ->
+                    ( "YES", "#10B981", "#FFFFFF" )
+
+                Gov.VoteNo ->
+                    ( "NO", "#EF4444", "#FFFFFF" )
+
+                Gov.VoteAbstain ->
+                    ( "ABSTAIN", "#6B7280", "#FFFFFF" )
+    in
+    Html.span
+        [ HA.style "display" "inline-flex"
+        , HA.style "align-items" "center"
+        , HA.style "height" "1.5rem"
+        , HA.style "padding" "0 0.6rem"
+        , HA.style "border-radius" "9999px"
+        , HA.style "background-color" bg
+        , HA.style "color" fg
+        , HA.style "font-weight" "700"
+        , HA.style "font-size" "0.75rem"
+        ]
+        [ text <| label ++ " " ++ String.fromInt count ]
 
 
 viewSigningButton : ViewContext a msg -> TxFinalized -> Html msg
@@ -724,18 +1147,28 @@ viewSigningButton ctx { tx, expectedSignatures } =
     let
         keyNames : Dict String String
         keyNames =
-            -- Debug.todo ""
             Dict.empty
-    in
-    ctx.signingLink tx
-        (expectedSignatures
-            |> List.map
-                (\keyHash ->
-                    { keyHash = keyHash
-                    , keyName =
-                        Dict.get (Bytes.toHex keyHash) keyNames
-                            |> Maybe.withDefault "Key hash"
-                    }
+
+        signingLinkView : Html msg
+        signingLinkView =
+            ctx.signingLink tx
+                (expectedSignatures
+                    |> List.map
+                        (\keyHash ->
+                            { keyHash = keyHash
+                            , keyName =
+                                Dict.get (Bytes.toHex keyHash) keyNames
+                                    |> Maybe.withDefault "Key hash"
+                            }
+                        )
                 )
-        )
-        [ Helper.signingButton "Go to Signing Page" ]
+                [ Helper.signingButton "Go to Signing Page" ]
+    in
+    div
+        [ HA.style "display" "flex"
+        , HA.style "gap" "0.75rem"
+        , HA.style "align-items" "center"
+        , HA.style "margin-top" "1rem"
+        , HA.style "margin-bottom" "2rem"
+        ]
+        [ signingLinkView ]

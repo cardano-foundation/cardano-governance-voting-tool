@@ -3,8 +3,10 @@ module Header exposing (ViewContext, view)
 import Cardano.Address exposing (NetworkId(..))
 import Helper
 import Html exposing (Html, button, div, img, li, nav, span, text, ul)
-import Html.Attributes exposing (alt, class, src, style)
+import Html.Attributes exposing (alt, class, id, src, style)
 import Html.Events exposing (onClick)
+import Svg
+import Svg.Attributes as SA
 import WalletConnector
 
 
@@ -24,13 +26,29 @@ type alias ViewContext msg =
             }
     , networkId : NetworkId
     , onNetworkChange : NetworkId -> msg
+    , cartCount : Int
+    , cartLink : List (Html.Attribute msg) -> List (Html msg) -> Html msg
     }
 
 
 view : ViewContext msg -> Html msg
-view { mobileMenuIsOpen, toggleMobileMenu, networkDropdownIsOpen, toggleNetworkDropdown, walletConnector, walletConnectorMsgs, logoLink, navigationItems, networkId, onNetworkChange } =
-    nav [ class "relative z-10 w-full bg-transparent" ]
-        [ div [ class "container mx-auto py-6 overflow-visible" ]
+view { mobileMenuIsOpen, toggleMobileMenu, networkDropdownIsOpen, toggleNetworkDropdown, walletConnector, walletConnectorMsgs, logoLink, navigationItems, networkId, onNetworkChange, cartCount, cartLink } =
+    nav
+        [ class "w-full"
+        , style "position" "sticky"
+        , style "top" "0"
+        , style "z-index" "100"
+        , style "border-bottom" "1px solid rgba(226,232,240,0.1)"
+        , style "background-color" "rgba(255,255,255,0.05)"
+        , style "backdrop-filter" "saturate(180%) blur(16px)"
+        , style "-webkit-backdrop-filter" "saturate(180%) blur(16px)"
+        ]
+        [ div
+            [ class "mx-auto py-4 md:py-6 overflow-visible"
+            , style "max-width" "1100px"
+            , style "padding-left" "1rem"
+            , style "padding-right" "1rem"
+            ]
             [ div [ class "flex items-center justify-between" ]
                 -- Logo section
                 [ div [ style "flex-shrink" "0" ]
@@ -44,7 +62,7 @@ view { mobileMenuIsOpen, toggleMobileMenu, networkDropdownIsOpen, toggleNetworkD
                             , style "width" "auto"
                             , style "margin-right" "8px"
                             , style "margin-left" "8px"
-                            , style "max-height" "44px"
+                            , style "max-height" "40px"
                             ]
                             []
                         , span
@@ -56,64 +74,65 @@ view { mobileMenuIsOpen, toggleMobileMenu, networkDropdownIsOpen, toggleNetworkD
                     ]
 
                 -- Desktop menu
-                , div [ class "hidden md:flex space-x-12" ]
+                , div [ class "hidden md:flex", style "gap" "1rem" ]
                     (List.map viewDesktopMenuItem navigationItems)
 
-                -- Wallet and network selector
-                , div [ class "hidden md:flex items-center" ]
+                -- Wallet, network selector and cart button
+                , div [ class "hidden md:flex items-center", style "gap" "0.5rem" ]
                     [ WalletConnector.view walletConnectorMsgs walletConnector
                     , viewNetworkSelector
                         networkId
                         networkDropdownIsOpen
                         toggleNetworkDropdown
                         onNetworkChange
+                    , cartLink [] [ viewCartButton "36px" "ml-2" cartCount ]
                     ]
 
                 -- Mobile menu button
                 , div [ class "md:hidden" ]
                     [ button
                         [ class "text-gray-600 hover:text-gray-900 focus:outline-none"
+                        , Html.Attributes.attribute "aria-label"
+                            (if mobileMenuIsOpen then
+                                "Close menu"
+
+                             else
+                                "Open menu"
+                            )
                         , onClick toggleMobileMenu
                         ]
-                        [ -- Hamburger icon
-                          div [ class "mr-4 w-6 h-6 flex flex-col justify-around" ]
-                            [ span
-                                [ class
-                                    ("block w-6 h-0.5 bg-gray-800 transition-all duration-300 "
-                                        ++ (if mobileMenuIsOpen then
-                                                "rotate-45 translate-y-1.5"
-
-                                            else
-                                                ""
-                                           )
-                                    )
+                        [ if mobileMenuIsOpen then
+                            Svg.svg
+                                [ SA.width "24"
+                                , SA.height "24"
+                                , SA.viewBox "0 0 24 24"
+                                , SA.fill "none"
+                                , SA.stroke "#1F2937"
+                                , SA.strokeWidth "2.5"
+                                , SA.strokeLinecap "round"
+                                , SA.strokeLinejoin "round"
+                                , SA.class "mr-4"
                                 ]
-                                []
-                            , span
-                                [ class
-                                    ("block w-6 h-0.5 bg-gray-800 transition-all duration-300 "
-                                        ++ (if mobileMenuIsOpen then
-                                                "opacity-0"
-
-                                            else
-                                                ""
-                                           )
-                                    )
+                                [ Svg.path [ SA.d "M6 6l12 12" ] []
+                                , Svg.path [ SA.d "M18 6L6 18" ] []
                                 ]
-                                []
-                            , span
-                                [ class
-                                    ("block w-6 h-0.5 bg-gray-800 transition-all duration-300 "
-                                        ++ (if mobileMenuIsOpen then
-                                                "-rotate-45 -translate-y-1.5"
 
-                                            else
-                                                ""
-                                           )
-                                    )
+                          else
+                            Svg.svg
+                                [ SA.width "24"
+                                , SA.height "24"
+                                , SA.viewBox "0 0 24 24"
+                                , SA.fill "none"
+                                , SA.stroke "#1F2937"
+                                , SA.strokeWidth "2.5"
+                                , SA.strokeLinecap "round"
+                                , SA.strokeLinejoin "round"
+                                , SA.class "mr-4"
                                 ]
-                                []
-                            ]
+                                [ Svg.path [ SA.d "M4 7h16" ] []
+                                , Svg.path [ SA.d "M4 12h16" ] []
+                                , Svg.path [ SA.d "M4 17h16" ] []
+                                ]
                         ]
                     ]
                 ]
@@ -131,18 +150,112 @@ view { mobileMenuIsOpen, toggleMobileMenu, networkDropdownIsOpen, toggleNetworkD
                     )
                 ]
                 [ div [ class "py-2" ]
-                    [ ul [ class "flex flex-col space-y-4 mt-4" ]
+                    [ div
+                        [ style "height" "1px"
+                        , style "background-color" "#94A3B8"
+                        , style "width" "100vw"
+                        , style "margin-left" "calc(50% - 50vw)"
+                        , style "margin-right" "calc(50% - 50vw)"
+                        , style "margin-top" "0.5rem"
+                        , style "margin-bottom" "0.75rem"
+                        ]
+                        []
+                    , ul [ class "flex flex-col space-y-4 mt-4" ]
                         (List.map viewMobileMenuItem navigationItems)
+                    , div [ class "px-4" ]
+                        [ div
+                            [ style "height" "1px"
+                            , style "background-color" "#7B8598"
+                            , style "margin-top" "0.5rem"
+                            , style "margin-bottom" "0.75rem"
+                            ]
+                            []
+                        ]
                     , div [ class "mt-4 px-4 z-20 relative" ]
-                        [ div [ class "w-full space-y-2" ]
+                        [ div []
                             [ WalletConnector.viewMobile walletConnectorMsgs walletConnector
-                            , viewMobileNetworkSelector networkId onNetworkChange
+                            , div
+                                [ style "display" "flex"
+                                , style "align-items" "center"
+                                , style "justify-content" "flex-start"
+                                , style "gap" "0.5rem"
+                                ]
+                                [ viewMobileNetworkSelector networkId onNetworkChange
+                                , cartLink [ class "ml-2 mt-2" ] [ viewCartButton "44px" "" cartCount ]
+                                ]
                             ]
                         ]
                     ]
                 ]
             ]
         ]
+
+
+viewCartButton : String -> String -> Int -> Html msg
+viewCartButton buttonSize additionalClasses cartCount =
+    button
+        [ class additionalClasses
+        , style "position" "relative"
+        , style "display" "inline-flex"
+        , style "align-items" "center"
+        , style "justify-content" "center"
+        , style "width" buttonSize
+        , style "height" buttonSize
+        , style "border-radius" "9999px"
+        , style "background-color" "#272727"
+        , style "color" "#f7fafc"
+        , style "border" "none"
+        , style "box-shadow" "0 2px 6px rgba(0,0,0,0.06)"
+        , id "cart-button"
+        , Html.Attributes.attribute "aria-label" "Open cart"
+        , Html.Attributes.title "Cart"
+        ]
+        (Svg.svg
+            [ SA.width "22"
+            , SA.height "22"
+            , SA.viewBox "0 0 24 24"
+            , SA.fill "none"
+            , SA.stroke "#FFFFFF"
+            , SA.strokeWidth "2.5"
+            , SA.strokeLinecap "round"
+            , SA.strokeLinejoin "round"
+            ]
+            [ Svg.circle [ SA.cx "9", SA.cy "19", SA.r "1.5", SA.fill "none", SA.stroke "#FFFFFF" ] []
+            , Svg.circle [ SA.cx "17", SA.cy "19", SA.r "1.5", SA.fill "none", SA.stroke "#FFFFFF" ] []
+            , Svg.path [ SA.d "M3 4h2l2 9c.2.9 1 1.5 1.9 1.5H17c.9 0 1.7-.6 1.9-1.5L21 7H6", SA.fill "none", SA.stroke "#FFFFFF" ] []
+            ]
+            :: viewCartBadge cartCount
+        )
+
+
+{-| Small helper to render the cart badge consistently in desktop and mobile.
+-}
+viewCartBadge : Int -> List (Html msg)
+viewCartBadge cartCount =
+    if cartCount > 0 then
+        [ span
+            [ style "position" "absolute"
+            , style "top" "-6px"
+            , style "right" "-6px"
+            , style "min-width" "18px"
+            , style "height" "18px"
+            , style "padding" "0 4px"
+            , style "border-radius" "9999px"
+            , style "background-color" "#10B981"
+            , style "color" "white"
+            , style "font-size" "11px"
+            , style "font-weight" "700"
+            , style "line-height" "18px"
+            , style "display" "inline-flex"
+            , style "align-items" "center"
+            , style "justify-content" "center"
+            , style "box-shadow" "0 1px 2px rgba(0,0,0,0.12)"
+            ]
+            [ text (String.fromInt cartCount) ]
+        ]
+
+    else
+        []
 
 
 viewDesktopMenuItem :
@@ -225,7 +338,7 @@ viewNetworkSelector currentNetwork dropdownOpen toggleDropdown onNetworkChange =
 
         -- Green for Mainnet, Blue for Preview
     in
-    div [ style "position" "relative", style "margin-left" "0.75rem" ]
+    div [ style "position" "relative", style "margin-left" "0.5rem" ]
         [ Helper.viewWalletButton networkLabel
             toggleDropdown
             [ -- Network indicator dot
