@@ -2198,15 +2198,15 @@ validateIpfsForm form =
         CustomHosting ->
             Ok <|
                 UseCustomHosting
-                    { label = "Custom Hosting"
-                    , description = "Prepare the rationale with this app, but host it with a custom solution (e.g. on GitHub). This is NOT RECOMMENDED, and your responsibility to make sure your storage solution is immutable and sustainable."
+                    { label = "Custom Storage"
+                    , description = "Prepare the rationale with this app, but store it on a custom solution (e.g. on GitHub via permanent links). It is your responsibility to make sure your storage solution is immutable and sustainable."
                     }
 
         CustomPrepublished ->
             Ok <|
                 UseCustomPrepublished
-                    { label = "Custom Hosting - Prepublished"
-                    , description = "Your rationale is already published, we’ll just link to it. This is NOT RECOMMENDED, and your responsibility to make sure your storage solution is immutable and sustainable."
+                    { label = "Custom Storage - Prepublished"
+                    , description = "Your rationale is already published, we'll just link to it. It is your responsibility to ensure your storage solution is immutable and sustainable."
                     }
 
         NoStorage ->
@@ -3918,18 +3918,18 @@ viewStorageConfigStep ctx step =
                 div []
                     [ Helper.sectionTitle "Storage Configuration"
                     , Html.p [ HA.class "mb-4" ]
-                        [ text "Only the hash of your rationale is stored on Cardano,"
-                        , text " so it's recommended to also store the actual JSON file containing the rationale in a permanent storage solution."
-                        , text " Here we provide an easy way to store it on IPFS."
+                        [ text "Only a link to your rationale is stored on Cardano,"
+                        , text " so it's recommended to store the actual file containing the text in a permanent storage solution."
+                        , text " Here we provide multiple options."
                         ]
-                    , Helper.storageConfigCard "IPFS Method"
+                    , Helper.storageConfigCard "Select Rationale Storage"
                         [ Helper.viewGrid 240
                             [ Helper.storageMethodOption ctx.ipfsPreconfig.label (form.storageMethod == PreconfigIPFS ctx.ipfsPreconfig) (StorageMethodSelected <| PreconfigIPFS ctx.ipfsPreconfig)
                             , Helper.storageMethodOption "Own Blockfrost IPFS" (form.storageMethod == BlockfrostIPFS) (StorageMethodSelected BlockfrostIPFS)
                             , Helper.storageMethodOption "Own NMKR IPFS" (form.storageMethod == NmkrIPFS) (StorageMethodSelected NmkrIPFS)
                             , Helper.storageMethodOption "Custom IPFS server" (form.storageMethod == CustomIPFS) (StorageMethodSelected CustomIPFS)
-                            , Helper.storageMethodOption "Custom Hosting" (form.storageMethod == CustomHosting) (StorageMethodSelected CustomHosting)
-                            , Helper.storageMethodOption "Custom Hosting - Prepublished" (form.storageMethod == CustomPrepublished) (StorageMethodSelected CustomPrepublished)
+                            , Helper.storageMethodOption "Custom Storage" (form.storageMethod == CustomHosting) (StorageMethodSelected CustomHosting)
+                            , Helper.storageMethodOption "Custom Storage - Prepublished" (form.storageMethod == CustomPrepublished) (StorageMethodSelected CustomPrepublished)
                             , Helper.storageMethodOption "No Rationale" (form.storageMethod == NoStorage) (StorageMethodSelected NoStorage)
                             ]
                         , case form.storageMethod of
