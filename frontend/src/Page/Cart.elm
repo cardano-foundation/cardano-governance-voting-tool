@@ -68,6 +68,7 @@ type alias CartReady =
     , maxResources : Resources
     , currentResources : Resources
     , txFinalized : TxFinalized
+    , keyNames : Dict String String
     }
 
 
@@ -146,8 +147,11 @@ update ctx msg model =
                     Cip30.walletChangeAddress wallet
             in
             case buildTx costModels utxos walletAddress votersIntents of
-                Ok ({ tx } as txFinalized) ->
+                Ok { keyNames, txFinalized } ->
                     let
+                        tx =
+                            txFinalized.tx
+
                         txSize =
                             Bytes.width <| Transaction.serialize tx
 
@@ -171,6 +175,7 @@ update ctx msg model =
                         , maxResources = maxResources
                         , currentResources = txResources
                         , txFinalized = txFinalized
+                        , keyNames = keyNames
                         }
                     , Cmd.none
                     )
@@ -560,7 +565,7 @@ deserializeAnchor =
 -- Tx Building
 
 
-buildTx : CostModels -> Utxo.RefDict Output -> Address -> Dict String CartVoter -> Result String TxFinalized
+buildTx : CostModels -> Utxo.RefDict Output -> Address -> Dict String CartVoter -> Result String { keyNames : Dict String String, txFinalized : TxFinalized }
 buildTx costModels localStateUtxos walletAddress votersIntents =
     let
         -- Use any address (enterprise / full) with the same payment cred
@@ -610,6 +615,45 @@ buildTx costModels localStateUtxos walletAddress votersIntents =
                     (\{ voter, voteRecords } ->
                         TxIntent.Vote voter <| List.map .voteIntent <| Dict.values voteRecords
                     )
+
+        -- Give names to all potential expected keys
+        feePayer =
+            case Address.extractPubKeyHash feeSource of
+                Nothing ->
+                    []
+
+                Just keyHash ->
+                    [ ( Bytes.toHex keyHash, "Tx fee payer" ) ]
+
+        voterKeys =
+            Dict.values votersIntents
+                |> List.concatMap
+                    (\{ voter } ->
+                        case voter of
+                            WithCommitteeHotCred (Witness.WithKey keyHash) ->
+                                [ ( Bytes.toHex keyHash, "CC hot key" ) ]
+
+                            WithCommitteeHotCred (Witness.WithScript _ (Witness.Native { expectedSigners })) ->
+                                List.map (\keyHash -> ( Bytes.toHex keyHash, "CC multisig signer" )) expectedSigners
+
+                            WithCommitteeHotCred (Witness.WithScript _ (Witness.Plutus { requiredSigners })) ->
+                                List.map (\keyHash -> ( Bytes.toHex keyHash, "CC plutus signer" )) requiredSigners
+
+                            WithDrepCred (Witness.WithKey keyHash) ->
+                                [ ( Bytes.toHex keyHash, "DRep key" ) ]
+
+                            WithDrepCred (Witness.WithScript _ (Witness.Native { expectedSigners })) ->
+                                List.map (\keyHash -> ( Bytes.toHex keyHash, "DRep multisig signer" )) expectedSigners
+
+                            WithDrepCred (Witness.WithScript _ (Witness.Plutus { requiredSigners })) ->
+                                List.map (\keyHash -> ( Bytes.toHex keyHash, "DRep plutus signer" )) requiredSigners
+
+                            WithPoolCred keyHash ->
+                                [ ( Bytes.toHex keyHash, "SPO key" ) ]
+                    )
+
+        keyNames =
+            Dict.fromList (feePayer ++ voterKeys)
     in
     allVoteIntents
         |> TxIntent.finalizeAdvanced
@@ -621,6 +665,7 @@ buildTx costModels localStateUtxos walletAddress votersIntents =
             }
             (AutoFee { paymentSource = feeSource })
             []
+        |> Result.map (\txFinalized -> { keyNames = keyNames, txFinalized = txFinalized })
         |> Result.mapError TxIntent.errorToString
 
 
@@ -814,7 +859,7 @@ viewVoteRecord ctx voterIdStr ( actionIdStr, { proposalTitle, voteIntent } ) =
 
 
 viewReadyCart : ViewContext a msg -> CartReady -> Html msg
-viewReadyCart ctx { votersIntents, maxResources, currentResources, txFinalized } =
+viewReadyCart ctx { votersIntents, maxResources, currentResources, txFinalized, keyNames } =
     let
         countedVotesCount : Int
         countedVotesCount =
@@ -872,7 +917,7 @@ viewReadyCart ctx { votersIntents, maxResources, currentResources, txFinalized }
         , summaryBar
         , votesSection
         , viewResourcesCard maxResources currentResources
-        , viewSigningButton ctx txFinalized
+        , viewSigningButton ctx keyNames txFinalized
         ]
 
 
@@ -1142,13 +1187,9 @@ viewDecisionStat v count =
         [ text <| label ++ " " ++ String.fromInt count ]
 
 
-viewSigningButton : ViewContext a msg -> TxFinalized -> Html msg
-viewSigningButton ctx { tx, expectedSignatures } =
+viewSigningButton : ViewContext a msg -> Dict String String -> TxFinalized -> Html msg
+viewSigningButton ctx keyNames { tx, expectedSignatures } =
     let
-        keyNames : Dict String String
-        keyNames =
-            Dict.empty
-
         signingLinkView : Html msg
         signingLinkView =
             ctx.signingLink tx
