@@ -3593,21 +3593,33 @@ viewProposalList ctx form maybeVoter proposalsDict visibleCount =
             totalProposalCount =
                 List.length allProposals
 
-            visibleProposals =
-                List.sortBy (\proposal -> proposal.epoch_validity.end) allProposals
-                    |> List.take visibleCount
-
-            hasMore =
-                totalProposalCount > visibleCount
-
-            getPastVote actionId =
+            pastVotes : Dict String OnchainVote
+            pastVotes =
                 maybeVoterId
                     |> Maybe.andThen
                         (\voterId ->
                             RemoteData.toMaybe form.votesInfo
                                 |> Maybe.andThen (Dict.get voterId)
-                                |> Maybe.andThen (Dict.get <| Gov.idToBech32 <| GovActionId actionId)
                         )
+                    |> Maybe.withDefault Dict.empty
+
+            getPastVote : ActionId -> Maybe OnchainVote
+            getPastVote actionId =
+                Dict.get (Gov.idToBech32 <| GovActionId actionId) pastVotes
+
+            hasPastVote actionId =
+                if getPastVote actionId == Nothing then
+                    0
+
+                else
+                    1
+
+            visibleProposals =
+                List.sortBy (\proposal -> ( hasPastVote proposal.id, proposal.epoch_validity.end )) allProposals
+                    |> List.take visibleCount
+
+            hasMore =
+                totalProposalCount > visibleCount
 
             -- Proposals already in the cart for the selected voter
             proposalsInCartSelected : List { proposalTitle : String, voteIntent : VoteIntent }
