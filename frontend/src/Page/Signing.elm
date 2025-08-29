@@ -440,7 +440,7 @@ view ctx model =
                                         ]
                                         [ text "Verify this transaction before signing using "
                                         , Html.a
-                                            [ HA.href "https://council-toolkit.gov.tools/"
+                                            [ HA.href <| "https://council-toolkit.gov.tools/tx#" ++ (Bytes.toHex <| Transaction.serialize tx)
                                             , HA.target "_blank"
                                             , HA.rel "noopener noreferrer"
                                             , HA.style "color" "#3182CE"
@@ -448,7 +448,6 @@ view ctx model =
                                             , HA.style "font-family" "monospace"
                                             ]
                                             [ text "council-toolkit.gov.tools" ]
-                                        , text ". You'll need to connect any wallet for analysis."
                                         ]
                                     ]
                                 , Html.div
