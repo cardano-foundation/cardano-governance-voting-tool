@@ -3575,43 +3575,56 @@ viewProposalList ctx form maybeVoter proposalsDict visibleCount =
                                 True
 
             -- Remove proposals already in the cart from that list for this voter
-            allProposals =
+            proposalsInValidEpoch =
+                proposalsDictValues
+                    |> List.filter (\p -> p.epoch_validity.end > currentEpoch)
+
+            proposalsForVoter =
+                proposalsInValidEpoch
+                    |> List.filter (\p -> roleCanVoteOn p.actionType)
+
+            proposalsNotInCart =
                 case maybeVoterId of
                     Just voterId ->
-                        proposalsDictValues
-                            |> List.filter
-                                (\p ->
-                                    (p.epoch_validity.end > currentEpoch)
-                                        && roleCanVoteOn p.actionType
-                                        && not (Cart.contains voterId p.id ctx.cart)
-                                )
+                        List.filter (\p -> not <| Cart.contains voterId p.id ctx.cart) proposalsForVoter
 
                     Nothing ->
-                        proposalsDictValues
-                            |> List.filter (\p -> p.epoch_validity.end > currentEpoch)
+                        proposalsForVoter
 
             totalProposalCount =
-                List.length allProposals
+                List.length proposalsNotInCart
 
-            visibleProposals =
-                List.sortBy (\proposal -> proposal.epoch_validity.end) allProposals
-                    |> List.take visibleCount
-
-            hasMore =
-                totalProposalCount > visibleCount
-
-            getPastVote actionId =
+            pastVotes : Dict String OnchainVote
+            pastVotes =
                 maybeVoterId
                     |> Maybe.andThen
                         (\voterId ->
                             RemoteData.toMaybe form.votesInfo
                                 |> Maybe.andThen (Dict.get voterId)
-                                |> Maybe.andThen (Dict.get <| Gov.idToBech32 <| GovActionId actionId)
                         )
+                    |> Maybe.withDefault Dict.empty
 
-            -- Proposals already in the cart for the selected voter
-            proposalsInCartSelected : List { proposalTitle : String, voteIntent : VoteIntent }
-            proposalsInCartSelected =
+            getPastVote : ActionId -> Maybe OnchainVote
+            getPastVote actionId =
+                Dict.get (Gov.idToBech32 <| GovActionId actionId) pastVotes
+
+            hasPastVote actionId =
+                if getPastVote actionId == Nothing then
+                    0
+
+                else
+                    1
+
+            visibleProposals =
+                List.sortBy (\proposal -> ( hasPastVote proposal.id, proposal.epoch_validity.end )) proposalsNotInCart
+                    |> List.take visibleCount
+
+            hasMore =
+                totalProposalCount > visibleCount
+
+            -- Proposals already in the cart for the selected voter.
+            votesInCart : List { proposalTitle : String, voteIntent : VoteIntent }
+            votesInCart =
                 case maybeVoterId of
                     Nothing ->
                         []
@@ -3630,7 +3643,7 @@ viewProposalList ctx form maybeVoter proposalsDict visibleCount =
                 visibleCount
                 totalProposalCount
                 (ctx.wrapMsg (ShowMoreProposals visibleCount))
-            , Helper.viewProposalsListInCart proposalsInCartSelected
+            , Helper.viewProposalsListInCart votesInCart
             ]
 
 
