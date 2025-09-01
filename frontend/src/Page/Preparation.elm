@@ -1035,13 +1035,19 @@ innerUpdate ctx msg model =
                         Ok storageConfig ->
                             -- TODO: test some endpoint to check custom config validity,
                             -- and return a "Validating" step instead of a "Done" step.
-                            ( { model | storageConfigStep = Done { form | error = Nothing } storageConfig }
+                            ( { model
+                                | storageConfigStep = Done { form | error = Nothing } storageConfig
+                                , permanentStorageStep = Preparing initStorageForm
+                              }
                             , Cmd.none
                             , Just <| CacheStorageConfig storageConfig
                             )
 
                         Err error ->
-                            ( { model | storageConfigStep = Preparing { form | error = Just error } }
+                            ( { model
+                                | storageConfigStep = Preparing { form | error = Just error }
+                                , permanentStorageStep = Preparing initStorageForm
+                              }
                             , Cmd.none
                             , Nothing
                             )
@@ -1049,7 +1055,10 @@ innerUpdate ctx msg model =
                 -- When the user clicks on "Change storage configuration"
                 -- TODO: Should be another msg
                 Done prep _ ->
-                    ( { model | storageConfigStep = Preparing prep }
+                    ( { model
+                        | storageConfigStep = Preparing prep
+                        , permanentStorageStep = Preparing initStorageForm
+                      }
                     , Cmd.none
                     , Nothing
                     )
@@ -1361,13 +1370,13 @@ innerUpdate ctx msg model =
                     ( model, Cmd.none, Nothing )
 
         CheckRationaleUrlButtonClicked ->
-            case ( model.storageConfigStep, model.rationaleSignatureStep, model.permanentStorageStep ) of
-                ( Done _ storageConfig, Done _ { signedJson }, Preparing form ) ->
+            case ( model.storageConfigStep, model.permanentStorageStep ) of
+                ( Done _ storageConfig, Preparing form ) ->
                     if String.startsWith "ipfs://" form.publishedRationaleUri || String.startsWith "https://" form.publishedRationaleUri then
                         let
                             raw =
-                                case storageConfig of
-                                    UseCustomHosting _ ->
+                                case ( storageConfig, model.rationaleSignatureStep ) of
+                                    ( UseCustomHosting _, Done _ { signedJson } ) ->
                                         Just signedJson
 
                                     _ ->
@@ -2975,9 +2984,9 @@ allPrepSteps m =
                         _ ->
                             "??? Unknown Proposal Title"
             in
-            case ( m.storageConfigStep, m.rationaleSignatureStep, m.permanentStorageStep ) of
+            case ( m.storageConfigStep, m.permanentStorageStep ) of
                 -- When there is no rationale:
-                ( Done _ (UseNoStorage _), _, _ ) ->
+                ( Done _ (UseNoStorage _), _ ) ->
                     Ok
                         { voter = voter
                         , actionId = p.id
@@ -2986,7 +2995,7 @@ allPrepSteps m =
                         }
 
                 -- When there is a rationale:
-                ( _, Done _ r, Done _ s ) ->
+                ( _, Done _ s ) ->
                     Ok
                         { voter = voter
                         , actionId = p.id
@@ -2995,7 +3004,7 @@ allPrepSteps m =
                             Just
                                 { url = uploadedIdentifierToString s.jsonFile.identifier
                                 , dataHash =
-                                    Bytes.fromText r.signedJson
+                                    Bytes.fromText s.jsonFile.raw
                                         |> Bytes.toU8
                                         |> blake2b256 Nothing
                                         |> Bytes.fromU8
@@ -4684,6 +4693,9 @@ viewPermanentStorageStep ctx rationaleSignatureStep storageConfigStep step =
 
                 ( Done _ _, Done _ _, Validating _ _ ) ->
                     Helper.uploadingSpinner "Checking rationale storage..."
+
+                ( Done _ (UseCustomPrepublished _), _, Done _ storage ) ->
+                    viewCompletedStorage storage
 
                 ( Done _ _, Done _ _, Done _ storage ) ->
                     viewCompletedStorage storage
