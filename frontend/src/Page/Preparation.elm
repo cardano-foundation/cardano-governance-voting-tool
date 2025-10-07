@@ -100,6 +100,7 @@ type alias InnerModel =
     , visibleProposalCount : Int
     , showCartToast : Bool
     , flyToCart : Maybe { x : Float, y : Float, opacity : String, color : String }
+    , cip100Verification : Dict String Cip100VerificationState
     }
 
 
@@ -118,6 +119,32 @@ type Step prep validating done
     | Done prep done
 
 
+{-| CIP-100 verification state for a proposal's metadata.
+Tracks the verification status of each author's signature.
+-}
+type Cip100VerificationState
+    = VerificationNotStarted
+    | VerificationLoading
+    | VerificationSuccess (List AuthorVerification)
+    | VerificationError String
+
+
+{-| Verification result for a single author.
+-}
+type alias AuthorVerification =
+    { authorName : String
+    , isValid : Bool
+    , errorMessage : Maybe String
+    }
+
+
+{-| Response from the CIP-100 verification API.
+-}
+type alias Cip100VerificationResponse =
+    { authors : List AuthorVerification
+    }
+
+
 init : { label : String, description : String } -> Model
 init ipfsPreconfig =
     Model
@@ -134,6 +161,7 @@ init ipfsPreconfig =
         , visibleProposalCount = 10
         , showCartToast = False
         , flyToCart = Nothing
+        , cip100Verification = Dict.empty
         }
 
 
@@ -599,6 +627,99 @@ uploadedIdentifierToLink identifier =
 
 
 
+-- ###################################################################
+-- CIP-100 Verification API
+-- ###################################################################
+
+
+{-| Convert IPFS URL to HTTPS gateway URL for the verification API.
+The CIP-100 verification API only accepts HTTPS URLs.
+-}
+ipfsToHttpsUrl : String -> String
+ipfsToHttpsUrl url =
+    if String.startsWith "ipfs://" url then
+        let
+            cid =
+                String.dropLeft 7 url
+        in
+        "https://ipfs.io/ipfs/" ++ cid
+
+    else
+        url
+
+
+{-| Call the CIP-100 verification API for a given metadata URL.
+Uses the backend proxy to avoid CORS issues.
+-}
+verifyCip100Metadata : String -> String -> Cmd Msg
+verifyCip100Metadata actionId metadataUrl =
+    let
+        -- Convert IPFS URLs to HTTPS gateway URLs
+        httpsUrl =
+            ipfsToHttpsUrl metadataUrl
+
+        verificationApiUrl =
+            "https://verifycardanomessage.cardanofoundation.org/api/verify-cip100?url=" ++ Url.percentEncode httpsUrl
+
+        proxyRequestBody =
+            JE.object
+                [ ( "url", JE.string verificationApiUrl )
+                , ( "method", JE.string "GET" )
+                , ( "headers", JE.object [] )
+                ]
+    in
+    Http.post
+        { url = "/proxy/json"
+        , body = Http.jsonBody proxyRequestBody
+        , expect = Http.expectJson (GotCip100Verification actionId) cip100VerificationDecoder
+        }
+
+
+{-| Decoder for CIP-100 verification response.
+The API returns a nested structure with data.authors.
+-}
+cip100VerificationDecoder : JD.Decoder Cip100VerificationResponse
+cip100VerificationDecoder =
+    JD.map Cip100VerificationResponse
+        (JD.at [ "data", "authors" ] (JD.list authorVerificationDecoder))
+
+
+
+-- Decoder for individual author verification result.
+
+
+authorVerificationDecoder : JD.Decoder AuthorVerification
+authorVerificationDecoder =
+    JD.map3 AuthorVerification
+        (JD.field "name" JD.string)
+        (JD.field "valid" JD.bool)
+        (JD.maybe (JD.field "error" JD.string))
+
+
+
+-- Convert Error to readable error :D
+
+
+httpErrorToString : Http.Error -> String
+httpErrorToString error =
+    case error of
+        Http.BadUrl url ->
+            "Bad URL: " ++ url
+
+        Http.Timeout ->
+            "Request timed out"
+
+        Http.NetworkError ->
+            "Network error"
+
+        Http.BadStatus status ->
+            "Bad status: " ++ String.fromInt status
+
+        Http.BadBody body ->
+            "Bad response body: " ++ body
+
+
+
 -- Build Tx Step
 
 
@@ -676,6 +797,7 @@ type Msg
     | PickProposalButtonClicked String
     | ChangeProposalButtonClicked
     | ShowMoreProposals Int
+    | GotCip100Verification String (Result Http.Error Cip100VerificationResponse)
       -- Storage Config Step
     | StorageMethodSelected StorageMethod
     | BlockfrostProjectIdChange String
@@ -955,8 +1077,24 @@ innerUpdate ctx msg model =
                 ( Preparing form, RemoteData.Success proposalsDict ) ->
                     case Dict.get actionId proposalsDict of
                         Just prop ->
-                            ( { model | pickProposalStep = Done form prop }
-                            , Cmd.none
+                            let
+                                verificationCmd =
+                                    case prop.metadata of
+                                        RemoteData.Success _ ->
+                                            verifyCip100Metadata actionId prop.metadataUrl
+                                                |> Cmd.map ctx.wrapMsg
+
+                                        _ ->
+                                            Cmd.none
+
+                                updatedModel =
+                                    { model
+                                        | pickProposalStep = Done form prop
+                                        , cip100Verification = Dict.insert actionId VerificationLoading model.cip100Verification
+                                    }
+                            in
+                            ( updatedModel
+                            , verificationCmd
                             , Nothing
                             )
 
@@ -971,6 +1109,28 @@ innerUpdate ctx msg model =
             , Cmd.none
             , Nothing
             )
+
+        GotCip100Verification actionId result ->
+            case result of
+                Ok response ->
+                    ( { model
+                        | cip100Verification =
+                            Dict.insert actionId (VerificationSuccess response.authors) model.cip100Verification
+                      }
+                    , Cmd.none
+                    , Nothing
+                    )
+
+                Err httpError ->
+                    ( { model
+                        | cip100Verification =
+                            Dict.insert actionId
+                                (VerificationError <| "Verification failed: " ++ httpErrorToString httpError)
+                                model.cip100Verification
+                      }
+                    , Cmd.none
+                    , Nothing
+                    )
 
         --
         -- Storage Configuration Step
@@ -3520,7 +3680,7 @@ viewProposalSelectionStep ctx model =
                 ]
 
         Done _ proposal ->
-            viewSelectedProposal ctx proposal
+            viewSelectedProposal ctx model proposal
 
 
 viewProposalSelectionForm : ViewContext msg -> InnerModel -> Html msg
@@ -3735,9 +3895,12 @@ viewProposalCardHelper wrapMsg networkId currentEpoch getPastVote proposal =
         (Helper.viewActionTypeIcon proposal.actionType)
 
 
-viewSelectedProposal : ViewContext msg -> ActiveProposal -> Html msg
-viewSelectedProposal ctx { id, actionType, metadata, metadataUrl, metadataHash } =
+viewSelectedProposal : ViewContext msg -> InnerModel -> ActiveProposal -> Html msg
+viewSelectedProposal ctx model { id, actionType, metadata, metadataUrl, metadataHash } =
     let
+        actionIdStr =
+            Gov.actionIdToString id
+
         { title, maybeMetadata } =
             getProposalContent metadata metadataUrl
 
@@ -3754,6 +3917,10 @@ viewSelectedProposal ctx { id, actionType, metadata, metadataUrl, metadataHash }
                 , Helper.viewActionTypeIcon actionType
                 ]
 
+        verificationState =
+            Dict.get actionIdStr model.cip100Verification
+                |> Maybe.withDefault VerificationNotStarted
+
         ( hashIsValid, abstractContent, authorsDetails ) =
             case maybeMetadata of
                 Just { raw, computedHash, abstract, authors } ->
@@ -3765,14 +3932,14 @@ viewSelectedProposal ctx { id, actionType, metadata, metadataUrl, metadataHash }
                             ]
                             [ Helper.renderMarkdownContent abstract ]
                         )
-                    , viewAuthorsDetails raw authors
+                    , viewAuthorsDetails raw authors verificationState
                     )
 
                 Nothing ->
-                    ( True, text "", viewAuthorsDetails "" [] )
+                    ( True, text "", viewAuthorsDetails "" [] verificationState )
 
-        viewAuthorsDetails : String -> List AuthorWitness -> Html msg
-        viewAuthorsDetails rawMetadata authors =
+        viewAuthorsDetails : String -> List AuthorWitness -> Cip100VerificationState -> Html msg
+        viewAuthorsDetails rawMetadata authors verificationResult =
             Helper.proposalDetailsItem "Authors" <|
                 if List.isEmpty authors then
                     text "No author with accompanying signature was found."
@@ -3790,13 +3957,15 @@ viewSelectedProposal ctx { id, actionType, metadata, metadataUrl, metadataHash }
                             [ HA.style "list-style-type" "disc"
                             , HA.style "margin-left" "1.5rem"
                             ]
-                            (List.map viewOneAuthor authors)
+                            (List.map (viewOneAuthor verificationResult) authors)
+                        , viewVerificationStatus verificationResult
                         , Html.p [ HA.style "margin-top" "1.5rem" ]
-                            [ text "Verify authors signatures on: "
+                            [ text "Signatures were automatically verified via the "
                             , Helper.externalLink
                                 { url = "https://verifycardanomessage.cardanofoundation.org/method=cip100#" ++ Url.percentEncode rawMetadata
-                                , label = "verifycardanomessage.cardanofoundation.org"
+                                , label = "Cardano Foundation verification API"
                                 }
+                            , text ". You can verify them yourself using the link above."
                             ]
                         , Html.p [ HA.style "margin-top" "1.5rem" ]
                             [ text "To verify the authors signatures locally, download the metadata and use cardano-signer as follows:" ]
@@ -3818,18 +3987,127 @@ viewSelectedProposal ctx { id, actionType, metadata, metadataUrl, metadataHash }
                             ]
                         ]
 
-        viewOneAuthor : AuthorWitness -> Html msg
-        viewOneAuthor { name, publicKey } =
+        viewVerificationStatus : Cip100VerificationState -> Html msg
+        viewVerificationStatus state =
+            case state of
+                VerificationNotStarted ->
+                    text ""
+
+                VerificationLoading ->
+                    Html.p
+                        [ HA.style "margin-top" "1rem"
+                        , HA.style "color" "#6B7280"
+                        , HA.style "font-style" "italic"
+                        ]
+                        [ text "🔄 Verifying signatures..." ]
+
+                VerificationSuccess _ ->
+                    text ""
+
+                VerificationError errorMsg ->
+                    Html.p
+                        [ HA.style "margin-top" "1rem"
+                        , HA.style "color" "#DC2626"
+                        , HA.style "font-weight" "500"
+                        ]
+                        [ text ("⚠ " ++ errorMsg) ]
+
+        getAuthorVerification : String -> Cip100VerificationState -> Maybe AuthorVerification
+        getAuthorVerification authorName state =
+            case state of
+                VerificationSuccess verifications ->
+                    List.Extra.find (\v -> v.authorName == authorName) verifications
+
+                _ ->
+                    Nothing
+
+        viewOneAuthor : Cip100VerificationState -> AuthorWitness -> Html msg
+        viewOneAuthor verifyState { name, publicKey, witnessAlgorithm } =
+            let
+                -- Only show verification badge if author has a signature
+                verification =
+                    if witnessAlgorithm /= "" && publicKey /= "" then
+                        getAuthorVerification name verifyState
+
+                    else
+                        Nothing
+
+                verificationBadge =
+                    case verification of
+                        Just { isValid, errorMessage } ->
+                            if isValid then
+                                Html.span
+                                    [ HA.style "display" "inline-flex"
+                                    , HA.style "align-items" "center"
+                                    , HA.style "margin-left" "0.5rem"
+                                    , HA.style "padding" "0.125rem 0.5rem"
+                                    , HA.style "background-color" "#D1FAE5"
+                                    , HA.style "color" "#065F46"
+                                    , HA.style "border-radius" "0.25rem"
+                                    , HA.style "font-size" "0.75rem"
+                                    , HA.style "font-weight" "600"
+                                    , HA.style "vertical-align" "middle"
+                                    , HA.attribute "title" "Signature verified by CIP-100 verification API"
+                                    ]
+                                    [ text "✓ VERIFIED" ]
+
+                            else
+                                Html.span
+                                    [ HA.style "display" "inline-flex"
+                                    , HA.style "align-items" "center"
+                                    , HA.style "margin-left" "0.5rem"
+                                    , HA.style "padding" "0.125rem 0.5rem"
+                                    , HA.style "background-color" "#FEE2E2"
+                                    , HA.style "color" "#991B1B"
+                                    , HA.style "border-radius" "0.25rem"
+                                    , HA.style "font-size" "0.75rem"
+                                    , HA.style "font-weight" "600"
+                                    , HA.style "vertical-align" "middle"
+                                    , HA.attribute "title" (Maybe.withDefault "Signature verification failed" errorMessage)
+                                    ]
+                                    [ text "✗ INVALID" ]
+
+                        Nothing ->
+                            if witnessAlgorithm == "" || publicKey == "" then
+                                Html.span
+                                    [ HA.style "display" "inline-flex"
+                                    , HA.style "align-items" "center"
+                                    , HA.style "margin-left" "0.5rem"
+                                    , HA.style "padding" "0.125rem 0.5rem"
+                                    , HA.style "background-color" "#F3F4F6"
+                                    , HA.style "color" "#6B7280"
+                                    , HA.style "border-radius" "0.25rem"
+                                    , HA.style "font-size" "0.75rem"
+                                    , HA.style "font-weight" "600"
+                                    , HA.style "vertical-align" "middle"
+                                    , HA.attribute "title" "No signature to verify"
+                                    ]
+                                    [ text "NAME ONLY" ]
+
+                            else
+                                text ""
+            in
             Html.li
                 [ HA.style "margin-bottom" "0.75rem"
                 , HA.style "line-height" "1.6"
                 , HA.style "color" "#4A5568"
                 ]
-                [ Html.strong [] [ text "Name: " ]
-                , text name
-                , Html.br [] []
-                , Html.strong [] [ text "Public key: " ]
-                , text publicKey
+                [ Html.div [ HA.style "display" "flex", HA.style "align-items" "center" ]
+                    [ Html.span []
+                        [ Html.strong [] [ text "Name: " ]
+                        , text name
+                        ]
+                    , verificationBadge
+                    ]
+                , if publicKey /= "" then
+                    Html.div []
+                        [ Html.br [] []
+                        , Html.strong [] [ text "Public key: " ]
+                        , text publicKey
+                        ]
+
+                  else
+                    text ""
                 ]
 
         cardanoSignerExample =
