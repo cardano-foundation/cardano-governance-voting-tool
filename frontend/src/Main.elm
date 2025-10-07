@@ -78,7 +78,7 @@ import Page.Pdf
 import Page.Preparation exposing (JsonLdContexts, StorageConfig)
 import Page.Signing
 import Platform.Cmd as Cmd
-import ProposalMetadata exposing (ProposalMetadata)
+import ProposalMetadata exposing (AuthorWitness, ProposalMetadata)
 import RemoteData exposing (WebData)
 import ScriptInfo exposing (ScriptInfo)
 import Storage
@@ -92,6 +92,7 @@ type alias Flags =
     , networkId : Int
     , ipfsPreconfig : { label : String, description : String }
     , voterPreconfig : List PreconfVoter
+    , authorPreconfig : Value
     }
 
 
@@ -192,6 +193,7 @@ type alias Model =
     , networkId : NetworkId
     , ipfsPreconfig : { label : String, description : String }
     , voterPreconfig : List PreconfVoter
+    , authorPreconfig : List AuthorWitness
     , cart : Page.Cart.Model
     , errors : List String
     }
@@ -218,13 +220,18 @@ type TaskCompleted
 
 
 init : Flags -> ( Model, Cmd Msg )
-init { url, jsonLdContexts, db, networkId, ipfsPreconfig, voterPreconfig } =
+init { url, jsonLdContexts, db, networkId, ipfsPreconfig, voterPreconfig, authorPreconfig } =
     let
         networkIdTyped =
             Address.networkIdFromInt networkId |> Maybe.withDefault Testnet
 
+        -- Decode authorPreconfig manually to handle name-only authors
+        decodedAuthorPreconfig =
+            JD.decodeValue (JD.list ProposalMetadata.authorWitnessDecoder) authorPreconfig
+                |> Result.withDefault []
+
         config =
-            ModelConfig jsonLdContexts db networkIdTyped ipfsPreconfig voterPreconfig
+            ModelConfig jsonLdContexts db networkIdTyped ipfsPreconfig voterPreconfig decodedAuthorPreconfig
     in
     initHelper (locationHrefToRoute url) config
 
@@ -271,11 +278,12 @@ type alias ModelConfig =
     , networkId : NetworkId
     , ipfsPreconfig : { label : String, description : String }
     , voterPreconfig : List PreconfVoter
+    , authorPreconfig : List AuthorWitness
     }
 
 
 initialModel : ModelConfig -> Model
-initialModel { jsonLdContexts, db, networkId, ipfsPreconfig, voterPreconfig } =
+initialModel { jsonLdContexts, db, networkId, ipfsPreconfig, voterPreconfig, authorPreconfig } =
     { page = LandingPage
     , appUrl = routeToAppUrl RouteLanding
     , mobileMenuIsOpen = False
@@ -299,6 +307,7 @@ initialModel { jsonLdContexts, db, networkId, ipfsPreconfig, voterPreconfig } =
     , networkId = networkId
     , ipfsPreconfig = ipfsPreconfig
     , voterPreconfig = voterPreconfig
+    , authorPreconfig = authorPreconfig
     , cart = Page.Cart.init
     , errors = []
     }
@@ -626,6 +635,7 @@ update msg model =
                             , pdfBytesToFile = pdfBytesToFile
                             , costModels = Maybe.map .costModels model.protocolParams
                             , networkId = model.networkId
+                            , authorPreconfig = model.authorPreconfig
                             }
 
                         ( newPageModel, cmds, msgToParent ) =
@@ -955,6 +965,7 @@ handleUrlChange route model =
                     , networkId = networkId
                     , ipfsPreconfig = model.ipfsPreconfig
                     , voterPreconfig = model.voterPreconfig
+                    , authorPreconfig = model.authorPreconfig
                     }
 
             else if RemoteData.isSuccess model.proposals then
@@ -982,6 +993,7 @@ handleUrlChange route model =
                     , networkId = networkId
                     , ipfsPreconfig = model.ipfsPreconfig
                     , voterPreconfig = model.voterPreconfig
+                    , authorPreconfig = model.authorPreconfig
                     }
 
             else
@@ -1001,6 +1013,7 @@ handleUrlChange route model =
                     , networkId = networkId
                     , ipfsPreconfig = model.ipfsPreconfig
                     , voterPreconfig = model.voterPreconfig
+                    , authorPreconfig = model.authorPreconfig
                     }
 
             else
@@ -1549,6 +1562,7 @@ viewContent model =
                         link (RouteSigning { networkId = model.networkId, tx = Just tx, expectedSigners = expectedSigners }) []
                 , ipfsPreconfig = model.ipfsPreconfig
                 , voterPreconfig = model.voterPreconfig
+                , authorPreconfig = model.authorPreconfig
                 }
                 prepModel
 

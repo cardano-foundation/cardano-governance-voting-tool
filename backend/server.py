@@ -101,6 +101,13 @@ try:
 except Exception as e:
     raise Exception(f"Invalid JSON for PRECONFIGURED_VOTERS_JSON: {e}")
 
+# Preconfigured authors for rationale signatures
+PRECONFIGURED_AUTHORS_JSON = os.getenv("PRECONFIGURED_AUTHORS_JSON", "[]")
+try:
+    json.loads(PRECONFIGURED_AUTHORS_JSON)
+except Exception as e:
+    raise Exception(f"Invalid JSON for PRECONFIGURED_AUTHORS_JSON: {e}")
+
 
 # Define an async HTTP client (using httpx) and attach it to the FastAPI app
 @asynccontextmanager
@@ -134,6 +141,7 @@ async def read_root(request: Request):
             "ipfs_label": IPFS_LABEL,
             "ipfs_description": IPFS_DESCRIPTION,
             "preconfigured_voters": PRECONFIGURED_VOTERS_JSON,
+            "preconfigured_authors": PRECONFIGURED_AUTHORS_JSON,
             "matomo_script": MATOMO_SCRIPT,
         },
     )
@@ -149,6 +157,7 @@ async def get_page(full_path: str, request: Request):
             "ipfs_label": IPFS_LABEL,
             "ipfs_description": IPFS_DESCRIPTION,
             "preconfigured_voters": PRECONFIGURED_VOTERS_JSON,
+            "preconfigured_authors": PRECONFIGURED_AUTHORS_JSON,
             "matomo_script": MATOMO_SCRIPT,
         },
     )

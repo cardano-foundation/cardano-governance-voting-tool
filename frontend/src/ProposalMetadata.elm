@@ -89,18 +89,53 @@ bodyDecoder =
 
 
 {-| JSON decoder for author witness.
+Supports three formats:
+
+1.  Name-only: { "name": "..." } - for preconfigured authors
+2.  Nested witness: { "name": "...", "witness": { "witnessAlgorithm": "...", "publicKey": "...", "signature": "..." } }
+3.  Flat witness: { "name": "...", "witnessAlgorithm": "...", "publicKey": "...", "signature": "..." }
+
 -}
 authorWitnessDecoder : JD.Decoder AuthorWitness
 authorWitnessDecoder =
-    JD.map4
-        (\name witnessAlgorithm publicKey signature ->
-            { name = name
-            , witnessAlgorithm = witnessAlgorithm
-            , publicKey = publicKey
-            , signature = signature
-            }
-        )
-        (JD.field "name" JD.string)
-        (JD.at [ "witness", "witnessAlgorithm" ] JD.string)
-        (JD.at [ "witness", "publicKey" ] JD.string)
-        (JD.map Just <| JD.at [ "witness", "signature" ] JD.string)
+    JD.field "name" JD.string
+        |> JD.andThen
+            (\name ->
+                -- Try nested witness format first
+                JD.oneOf
+                    [ JD.field "witness"
+                        (JD.map3
+                            (\witnessAlgorithm publicKey signature ->
+                                { name = name
+                                , witnessAlgorithm = witnessAlgorithm
+                                , publicKey = publicKey
+                                , signature = Just signature
+                                }
+                            )
+                            (JD.field "witnessAlgorithm" JD.string)
+                            (JD.field "publicKey" JD.string)
+                            (JD.field "signature" JD.string)
+                        )
+
+                    -- Try flat format
+                    , JD.map3
+                        (\witnessAlgorithm publicKey signature ->
+                            { name = name
+                            , witnessAlgorithm = witnessAlgorithm
+                            , publicKey = publicKey
+                            , signature = signature
+                            }
+                        )
+                        (JD.maybe (JD.field "witnessAlgorithm" JD.string) |> JD.map (Maybe.withDefault ""))
+                        (JD.maybe (JD.field "publicKey" JD.string) |> JD.map (Maybe.withDefault ""))
+                        (JD.maybe (JD.field "signature" JD.string))
+
+                    -- Default to name-only
+                    , JD.succeed
+                        { name = name
+                        , witnessAlgorithm = ""
+                        , publicKey = ""
+                        , signature = Nothing
+                        }
+                    ]
+            )

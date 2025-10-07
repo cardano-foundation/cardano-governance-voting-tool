@@ -2477,9 +2477,9 @@ readOnlyField value =
         , HA.style "background-color" "#F9FAFB"
         , HA.style "font-family" "monospace"
         , HA.style "font-size" "0.875rem"
-        , HA.style "overflow" "hidden"
-        , HA.style "text-overflow" "ellipsis"
-        , HA.style "white-space" "nowrap"
+        , HA.style "word-break" "break-all"
+        , HA.style "white-space" "pre-wrap"
+        , HA.style "overflow-wrap" "break-word"
         ]
         [ text value ]
 

@@ -64,6 +64,16 @@ PRECONFIGURED_VOTERS_JSON="[
   , \"govId\": \"pool1nqheyct9a0mxn80cwp9pd5guncfu3rzwqtmru0l94accz7gjcgl\"
   }
 ]"
+
+# Preconfigured authors for rationale signatures (private instance helper)
+# Authors can be configured in two ways:
+# 1. Name-only:
+#    { "name": "Cardano Foundation" }
+# 2. With full cryptographic witness:
+#    { "name": "...", "witnessAlgorithm": "ed25519", "publicKey": "...", "signature": "..." }
+PRECONFIGURED_AUTHORS_JSON="[
+  { \"name\": \"Cardano Foundation\" }
+]"
 ```
 
 ### Analytics Configuration

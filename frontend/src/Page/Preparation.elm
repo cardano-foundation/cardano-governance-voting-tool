@@ -759,6 +759,7 @@ type alias UpdateContext msg =
     , pdfBytesToFile : { fileContentHex : String, fileName : String } -> Cmd msg
     , costModels : Maybe CostModels
     , networkId : NetworkId
+    , authorPreconfig : List AuthorWitness
     }
 
 
@@ -1183,7 +1184,7 @@ innerUpdate ctx msg model =
                 ( Validating form rationale, Done _ { id } ) ->
                     let
                         tempUnsignedRationaleForm =
-                            rationaleSignatureFromForm ctx.jsonLdContexts id { authors = [], error = Nothing, rationale = rationale }
+                            rationaleSignatureFromForm ctx.jsonLdContexts id { authors = ctx.authorPreconfig, error = Nothing, rationale = rationale }
 
                         rawFileContent =
                             tempUnsignedRationaleForm.signedJson
@@ -1198,9 +1199,9 @@ innerUpdate ctx msg model =
                 -- If validation fully succeeds, it will proceed to the Done step
                 ( Done prep newRationale, Done _ { id } ) ->
                     let
-                        -- Initialize with no rationale signature
+                        -- Initialize with preconfigured authors
                         form =
-                            { authors = []
+                            { authors = ctx.authorPreconfig
                             , rationale = newRationale
                             , error = Nothing
                             }
@@ -1286,7 +1287,7 @@ innerUpdate ctx msg model =
                 Err decodingError ->
                     { model
                         | rationaleSignatureStep =
-                            signatureDecodingError decodingError model.rationaleSignatureStep
+                            signatureDecodingError decodingError authorName model.rationaleSignatureStep
                     }
 
                 Ok authorWitness ->
@@ -2611,11 +2612,24 @@ authorWitnessExtractDecoder authorName =
             )
 
 
-signatureDecodingError : JD.Error -> Step RationaleSignatureForm {} RationaleSignature -> Step RationaleSignatureForm {} RationaleSignature
-signatureDecodingError decodingError rationaleSignatureStep =
+signatureDecodingError : JD.Error -> String -> Step RationaleSignatureForm {} RationaleSignature -> Step RationaleSignatureForm {} RationaleSignature
+signatureDecodingError decodingError authorName rationaleSignatureStep =
+    let
+        errorMessage =
+            case decodingError of
+                JD.Failure message _ ->
+                    if String.contains "No witness found for author" message then
+                        "No witness found for author \"" ++ authorName ++ "\" in the uploaded signature file. Please ensure the signature file matches the author name."
+
+                    else
+                        "Invalid signature file format. Please upload a valid JSON signature file."
+
+                _ ->
+                    "Failed to read signature file. Please check the file format."
+    in
     case rationaleSignatureStep of
         Preparing form ->
-            Preparing { form | error = Just <| JD.errorToString decodingError }
+            Preparing { form | error = Just errorMessage }
 
         _ ->
             rationaleSignatureStep
@@ -2707,6 +2721,7 @@ validateAuthorsForm authors =
                     Ok ()
 
         -- Check that witnessAlgorithm are authorized by the CIP
+        -- Skip validation for name-only authors (e.g., Cardano Foundation) who have empty witnessAlgorithm
         authorizedAlgorithms =
             Set.singleton "ed25519"
 
@@ -2721,6 +2736,8 @@ validateAuthorsForm authors =
         |> Result.andThen
             (\_ ->
                 List.map .witnessAlgorithm authors
+                    -- Filter out empty witnessAlgorithm (name-only authors)
+                    |> List.filter (\algo -> algo /= "")
                     |> List.map checkWitnessAlgo
                     |> reduceResults
                     |> Result.map (always ())
@@ -2879,9 +2896,9 @@ handlePdfIpfsAnswer ctx model form rationale ipfsAnswer =
                         , references = updatedReferences
                     }
 
-                -- Initialize rationale signature with no author
+                -- Initialize rationale signature form with authors (empty unless preconfigured)
                 rationaleSignatureForm =
-                    { authors = []
+                    { authors = ctx.authorPreconfig
                     , rationale = updatedRationale
                     , error = Nothing
                     }
@@ -3052,6 +3069,7 @@ type alias ViewContext msg =
     , signingLink : Transaction -> List { keyName : String, keyHash : Bytes CredentialHash } -> List (Html msg) -> Html msg
     , ipfsPreconfig : { label : String, description : String }
     , voterPreconfig : List PreconfVoter
+    , authorPreconfig : List AuthorWitness
     }
 
 
@@ -4450,7 +4468,7 @@ viewRationaleSignatureStep ctx pickProposalStep storageConfigStep rationaleCreat
                         Helper.stepNotAvailableCard [ text "Please wait for the rationale creation to complete." ]
 
                     ( Done _ _, Done _ _, Preparing form ) ->
-                        Html.map ctx.wrapMsg <| viewRationaleSignatureForm form
+                        Html.map ctx.wrapMsg <| viewRationaleSignatureForm ctx.authorPreconfig form
 
                     ( _, Done _ _, Preparing _ ) ->
                         Helper.stepNotAvailableCard [ text "Please select a proposal first." ]
@@ -4503,8 +4521,8 @@ viewSignerCard { name, witnessAlgorithm, publicKey, signature } =
     Helper.signerCard name signature witnessAlgorithm publicKey (Maybe.withDefault "" signature)
 
 
-viewRationaleSignatureForm : RationaleSignatureForm -> Html Msg
-viewRationaleSignatureForm { authors } =
+viewRationaleSignatureForm : List AuthorWitness -> RationaleSignatureForm -> Html Msg
+viewRationaleSignatureForm preconfiguredAuthors { authors, error } =
     let
         cardanoSignerExample =
             "cardano-signer.js sign --cip100 \\\n"
@@ -4547,47 +4565,95 @@ viewRationaleSignatureForm { authors } =
                         , HA.style "flex-direction" "column"
                         , HA.style "gap" "1rem"
                         ]
-                        (List.indexedMap viewOneAuthorForm authors)
+                        (List.indexedMap (viewOneAuthorForm preconfiguredAuthors) authors)
                 , Helper.formButtonsRow
                     [ Helper.secondaryButton "Skip Signatures" SkipRationaleSignaturesButtonClicked
                     , Helper.primaryButton "Confirm Signatures" ValidateRationaleSignaturesButtonClicked
                     ]
+                , viewError error
                 ]
             )
         ]
 
 
-viewOneAuthorForm : Int -> AuthorWitness -> Html Msg
-viewOneAuthorForm n author =
-    Helper.authorForm n
-        (DeleteAuthorButtonClicked n)
-        [ Helper.labeledField "Author name"
-            (Html.input
-                [ HA.type_ "text"
-                , HA.value author.name
-                , Html.Events.onInput (AuthorNameChange n)
-                , HA.style "width" "100%"
-                , HA.style "padding" "0.75rem"
-                , HA.style "border" "1px solid #E2E8F0"
-                , HA.style "border-radius" "0.375rem"
-                , HA.style "background-color" "white"
+viewOneAuthorForm : List AuthorWitness -> Int -> AuthorWitness -> Html Msg
+viewOneAuthorForm preconfiguredAuthors n author =
+    let
+        -- Check if this author is preconfigured name-only with no signature data
+        isPreconfigured =
+            List.any (\preconf -> preconf.name == author.name && preconf.signature == Nothing && preconf.witnessAlgorithm == "" && preconf.publicKey == "") preconfiguredAuthors
+    in
+    if isPreconfigured then
+        div
+            [ HA.style "border" "1px solid #E2E8F0"
+            , HA.style "border-radius" "0.5rem"
+            , HA.style "background-color" "#F0F9FF"
+            , HA.style "padding" "1rem"
+            ]
+            [ div
+                [ HA.style "display" "flex"
+                , HA.style "justify-content" "space-between"
+                , HA.style "align-items" "center"
+                , HA.style "margin-bottom" "0.75rem"
                 ]
-                []
-            )
-        , case author.signature of
-            Nothing ->
-                Helper.labeledField "Signature"
-                    (Helper.loadSignatureButton (LoadJsonSignatureButtonClicked n author.name))
-
-            Just sig ->
-                div [ HA.style "display" "grid", HA.style "gap" "1rem" ]
-                    [ Helper.labeledField "Signature algorithm"
-                        (Helper.readOnlyField author.witnessAlgorithm)
-                    , Helper.labeledField "Public key"
-                        (Helper.readOnlyField author.publicKey)
-                    , Helper.signatureField sig (LoadJsonSignatureButtonClicked n author.name)
+                [ Html.h4
+                    [ HA.style "font-weight" "500"
+                    , HA.style "font-size" "1rem"
+                    , HA.style "color" "#1A202C"
                     ]
-        ]
+                    [ text ("Author " ++ String.fromInt (n + 1)) ]
+                , Html.span
+                    [ HA.style "font-size" "0.75rem"
+                    , HA.style "color" "#0284C7"
+                    , HA.style "font-weight" "500"
+                    , HA.style "background-color" "#E0F2FE"
+                    , HA.style "padding" "0.25rem 0.5rem"
+                    , HA.style "border-radius" "0.25rem"
+                    ]
+                    [ text "Preconfigured" ]
+                ]
+            , Helper.labeledField "Author name"
+                (Helper.readOnlyField author.name)
+            , Html.p
+                [ HA.style "margin-top" "0.75rem"
+                , HA.style "font-size" "0.875rem"
+                , HA.style "color" "#4A5568"
+                , HA.style "font-style" "italic"
+                ]
+                [ text "This author does not require a cryptographic signature." ]
+            ]
+
+    else
+        -- Regular author
+        Helper.authorForm n
+            (DeleteAuthorButtonClicked n)
+            [ Helper.labeledField "Author name"
+                (Html.input
+                    [ HA.type_ "text"
+                    , HA.value author.name
+                    , Html.Events.onInput (AuthorNameChange n)
+                    , HA.style "width" "100%"
+                    , HA.style "padding" "0.75rem"
+                    , HA.style "border" "1px solid #E2E8F0"
+                    , HA.style "border-radius" "0.375rem"
+                    , HA.style "background-color" "white"
+                    ]
+                    []
+                )
+            , case author.signature of
+                Nothing ->
+                    Helper.labeledField "Signature"
+                        (Helper.loadSignatureButton (LoadJsonSignatureButtonClicked n author.name))
+
+                Just sig ->
+                    div [ HA.style "display" "grid", HA.style "gap" "1rem" ]
+                        [ Helper.labeledField "Signature algorithm"
+                            (Helper.readOnlyField author.witnessAlgorithm)
+                        , Helper.labeledField "Public key"
+                            (Helper.readOnlyField author.publicKey)
+                        , Helper.signatureField sig (LoadJsonSignatureButtonClicked n author.name)
+                        ]
+            ]
 
 
 {-| Creates a JSON-LD document for the rationale that follows CIP-0136.
@@ -4622,9 +4688,13 @@ encodeAuthorWitness { name, witnessAlgorithm, publicKey, signature } =
         Just sig ->
             JE.object
                 [ ( "name", JE.string name )
-                , ( "witnessAlgorithm", JE.string witnessAlgorithm )
-                , ( "publicKey", JE.string publicKey )
-                , ( "signature", JE.string sig )
+                , ( "witness"
+                  , JE.object
+                        [ ( "witnessAlgorithm", JE.string witnessAlgorithm )
+                        , ( "publicKey", JE.string publicKey )
+                        , ( "signature", JE.string sig )
+                        ]
+                  )
                 ]
 
 
