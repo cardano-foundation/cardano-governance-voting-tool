@@ -64,6 +64,13 @@ PRECONFIGURED_VOTERS_JSON="[
   , \"govId\": \"pool1nqheyct9a0mxn80cwp9pd5guncfu3rzwqtmru0l94accz7gjcgl\"
   }
 ]"
+
+# Preconfigured authors for rationale signatures (private instance helper)
+# Authors names are supported for pre-configuration.
+# Format: { "name": "Author Name" }
+PRECONFIGURED_AUTHORS_JSON="[
+  { \"name\": \"Cardano Foundation\" }
+]"
 ```
 
 ### Analytics Configuration

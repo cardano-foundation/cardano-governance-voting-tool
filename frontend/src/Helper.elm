@@ -1,5 +1,5 @@
 module Helper exposing
-    ( shortenedHex, prettyAdaLovelace
+    ( ipfsToHttpsUrl, shortenedHex, prettyAdaLovelace
     , textFieldInline, textInputField
     , formContainer, boxContainer, viewGrid, cardContainer, cardHeader, cardContent
     , viewButton, viewWalletButton, externalLink, externalLinkButton, trashButton
@@ -8,7 +8,7 @@ module Helper exposing
     , sectionTitle, viewError
     , renderMarkdownContent
     , viewStepWithCircle, viewPageHeader
-    , PreconfVoter, viewVoterGrid, viewVoterCard, voterCustomCard, votingPowerDisplay, scriptInfoContainer, viewVoterCredDetails, viewVoterDetailsItem, viewCredInfo
+    , PreconfAuthor, PreconfVoter, viewVoterGrid, viewVoterCard, voterCustomCard, votingPowerDisplay, scriptInfoContainer, viewVoterCredDetails, viewVoterDetailsItem, viewCredInfo
     , viewUtxoRefForm, scriptSignerSection, scriptSignerCheckbox, viewIdentifiedVoterCard, viewVoterInfoItem
     , proposalListContainer, showMoreButton, proposalCard, selectedProposalCard, proposalDetailsItem, viewProposalsListInCart
     , storageConfigCard, storageMethodOption, storageProviderForm, storageProviderCard, storageConfigItem, addHeaderButton
@@ -27,7 +27,7 @@ and are potentially useful in multiple places.
 
 # String formatting
 
-@docs shortenedHex, prettyAdaLovelace
+@docs ipfsToHttpsUrl, shortenedHex, prettyAdaLovelace
 
 
 # Form elements
@@ -72,7 +72,7 @@ and are potentially useful in multiple places.
 
 # Voter Identification Components
 
-@docs PreconfVoter, viewVoterGrid, viewVoterCard, voterCustomCard, votingPowerDisplay, scriptInfoContainer, viewVoterCredDetails, viewVoterDetailsItem, viewCredInfo
+@docs PreconfAuthor, PreconfVoter, viewVoterGrid, viewVoterCard, voterCustomCard, votingPowerDisplay, scriptInfoContainer, viewVoterCredDetails, viewVoterDetailsItem, viewCredInfo
 @docs viewUtxoRefForm, scriptSignerSection, scriptSignerCheckbox, viewIdentifiedVoterCard, viewVoterInfoItem
 
 
@@ -128,6 +128,23 @@ import Url
 
 
 -- STRING FORMATTING ###########################################################
+
+
+{-| Convert IPFS URL to HTTPS gateway URL.
+Converts `ipfs://<cid>` to `https://ipfs.io/ipfs/<cid>`.
+Non-IPFS URLs are returned unchanged.
+-}
+ipfsToHttpsUrl : String -> String
+ipfsToHttpsUrl url =
+    if String.startsWith "ipfs://" url then
+        let
+            cid =
+                String.dropLeft 7 url
+        in
+        "https://ipfs.io/ipfs/" ++ cid
+
+    else
+        url
 
 
 {-| Shorten some string, by only keeping the first and last few characters.
@@ -877,6 +894,10 @@ viewGrid minmaxWidth elems =
 
 type alias PreconfVoter =
     { voterType : String, description : String, govId : String }
+
+
+type alias PreconfAuthor =
+    { name : String }
 
 
 {-| Card for displaying a voter role option
@@ -2209,11 +2230,8 @@ formattedReference typeToString ref =
             ]
         , if String.startsWith "ipfs://" ref.uri then
             let
-                cid =
-                    String.dropLeft 7 ref.uri
-
                 gatewayUrl =
-                    "https://ipfs.io/ipfs/" ++ cid
+                    ipfsToHttpsUrl ref.uri
             in
             Html.a
                 [ HA.href gatewayUrl
@@ -2477,9 +2495,9 @@ readOnlyField value =
         , HA.style "background-color" "#F9FAFB"
         , HA.style "font-family" "monospace"
         , HA.style "font-size" "0.875rem"
-        , HA.style "overflow" "hidden"
-        , HA.style "text-overflow" "ellipsis"
-        , HA.style "white-space" "nowrap"
+        , HA.style "word-break" "break-all"
+        , HA.style "white-space" "pre-wrap"
+        , HA.style "overflow-wrap" "break-word"
         ]
         [ text value ]
 

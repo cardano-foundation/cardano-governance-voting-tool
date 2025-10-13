@@ -60,6 +60,7 @@
             version: 3,
             storeNames: ["proposalMetadata", "tx", "scriptInfo", "app"],
         });
+        
         var mainApp = Elm.Main.init({
             node: document.getElementById("main-app"),
             flags: {
@@ -72,6 +73,7 @@
                     description: {{ipfs_description|tojson}},
                 },
                 voterPreconfig: JSON.parse({{preconfigured_voters|tojson}}),
+                authorPreconfig: JSON.parse({{preconfigured_authors|tojson}}),
             },
         });
         ElmCardano.init({

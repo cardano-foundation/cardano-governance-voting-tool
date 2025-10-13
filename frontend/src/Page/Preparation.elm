@@ -25,7 +25,7 @@ The steps are sequential but allow going back to modify previous steps.
 
 -}
 
-import Api exposing (ActiveProposal, CcInfo, DrepInfo, IpfsAnswer(..), OnchainVote, PoolInfo)
+import Api exposing (ActiveProposal, AuthorVerification, CcInfo, DrepInfo, IpfsAnswer(..), OnchainVote, PoolInfo)
 import Blake2b exposing (blake2b256)
 import Browser.Dom as Dom
 import Bytes as ElmBytes
@@ -49,7 +49,7 @@ import Dict.Any
 import Dict.Extra
 import File exposing (File)
 import File.Select
-import Helper exposing (PreconfVoter)
+import Helper exposing (PreconfAuthor, PreconfVoter)
 import Html exposing (Html, div, text)
 import Html.Attributes as HA
 import Html.Events
@@ -100,6 +100,7 @@ type alias InnerModel =
     , visibleProposalCount : Int
     , showCartToast : Bool
     , flyToCart : Maybe { x : Float, y : Float, opacity : String, color : String }
+    , cip100Verification : Dict String Cip100VerificationState
     }
 
 
@@ -118,6 +119,16 @@ type Step prep validating done
     | Done prep done
 
 
+{-| CIP-100 verification state for a proposal's metadata.
+Tracks the verification status of each author's signature.
+-}
+type Cip100VerificationState
+    = VerificationNotStarted
+    | VerificationLoading
+    | VerificationSuccess (List AuthorVerification)
+    | VerificationError String
+
+
 init : { label : String, description : String } -> Model
 init ipfsPreconfig =
     Model
@@ -134,6 +145,7 @@ init ipfsPreconfig =
         , visibleProposalCount = 10
         , showCartToast = False
         , flyToCart = Nothing
+        , cip100Verification = Dict.empty
         }
 
 
@@ -598,6 +610,27 @@ uploadedIdentifierToLink identifier =
             url
 
 
+{-| Convert Error to readable error :D
+-}
+httpErrorToString : Http.Error -> String
+httpErrorToString error =
+    case error of
+        Http.BadUrl url ->
+            "Bad URL: " ++ url
+
+        Http.Timeout ->
+            "Request timed out"
+
+        Http.NetworkError ->
+            "Network error"
+
+        Http.BadStatus status ->
+            "Bad status: " ++ String.fromInt status
+
+        Http.BadBody body ->
+            "Bad response body: " ++ body
+
+
 
 -- Build Tx Step
 
@@ -676,6 +709,7 @@ type Msg
     | PickProposalButtonClicked String
     | ChangeProposalButtonClicked
     | ShowMoreProposals Int
+    | GotCip100Verification String (Result Http.Error Api.Cip100VerificationResponse)
       -- Storage Config Step
     | StorageMethodSelected StorageMethod
     | BlockfrostProjectIdChange String
@@ -759,6 +793,7 @@ type alias UpdateContext msg =
     , pdfBytesToFile : { fileContentHex : String, fileName : String } -> Cmd msg
     , costModels : Maybe CostModels
     , networkId : NetworkId
+    , authorPreconfig : List PreconfAuthor
     }
 
 
@@ -954,8 +989,27 @@ innerUpdate ctx msg model =
                 ( Preparing form, RemoteData.Success proposalsDict ) ->
                     case Dict.get actionId proposalsDict of
                         Just prop ->
-                            ( { model | pickProposalStep = Done form prop }
-                            , Cmd.none
+                            let
+                                -- Only make this request if not already verified
+                                ( verificationCmd, verificationDict ) =
+                                    case ( prop.metadata, Dict.get actionId model.cip100Verification ) of
+                                        ( RemoteData.Success _, Nothing ) ->
+                                            ( Api.defaultApiProvider.verifyCip100Metadata prop.metadataUrl (GotCip100Verification actionId)
+                                                |> Cmd.map ctx.wrapMsg
+                                            , Dict.insert actionId VerificationLoading model.cip100Verification
+                                            )
+
+                                        _ ->
+                                            ( Cmd.none, model.cip100Verification )
+
+                                updatedModel =
+                                    { model
+                                        | pickProposalStep = Done form prop
+                                        , cip100Verification = verificationDict
+                                    }
+                            in
+                            ( updatedModel
+                            , verificationCmd
                             , Nothing
                             )
 
@@ -970,6 +1024,28 @@ innerUpdate ctx msg model =
             , Cmd.none
             , Nothing
             )
+
+        GotCip100Verification actionId result ->
+            case result of
+                Ok response ->
+                    ( { model
+                        | cip100Verification =
+                            Dict.insert actionId (VerificationSuccess response.authors) model.cip100Verification
+                      }
+                    , Cmd.none
+                    , Nothing
+                    )
+
+                Err httpError ->
+                    ( { model
+                        | cip100Verification =
+                            Dict.insert actionId
+                                (VerificationError <| "Verification failed: " ++ httpErrorToString httpError)
+                                model.cip100Verification
+                      }
+                    , Cmd.none
+                    , Nothing
+                    )
 
         --
         -- Storage Configuration Step
@@ -1198,9 +1274,9 @@ innerUpdate ctx msg model =
                 -- If validation fully succeeds, it will proceed to the Done step
                 ( Done prep newRationale, Done _ { id } ) ->
                     let
-                        -- Initialize with no rationale signature
+                        -- Initialize with preconfigured authors
                         form =
-                            { authors = []
+                            { authors = List.map (.name >> ProposalMetadata.justAuthorName) ctx.authorPreconfig
                             , rationale = newRationale
                             , error = Nothing
                             }
@@ -1282,11 +1358,11 @@ innerUpdate ctx msg model =
             )
 
         LoadedAuthorSignatureJsonRationale n authorName jsonStr ->
-            ( case JD.decodeString (authorWitnessExtractDecoder authorName) jsonStr of
-                Err decodingError ->
+            ( case authorWitnessExtractResult authorName jsonStr of
+                Err loadError ->
                     { model
                         | rationaleSignatureStep =
-                            signatureDecodingError decodingError model.rationaleSignatureStep
+                            handleSignatureLoadError loadError model.rationaleSignatureStep
                     }
 
                 Ok authorWitness ->
@@ -2597,25 +2673,41 @@ handleJsonSignatureFileRead n authorName result =
             LoadedAuthorSignatureJsonRationale n authorName json
 
 
-authorWitnessExtractDecoder : String -> JD.Decoder AuthorWitness
-authorWitnessExtractDecoder authorName =
-    JD.field "authors" (JD.list ProposalMetadata.authorWitnessDecoder)
-        |> JD.andThen
-            (\authors ->
-                case List.head <| List.filter (\a -> a.name == authorName) authors of
-                    Just author ->
-                        JD.succeed author
-
-                    Nothing ->
-                        JD.fail <| "No witness found for author: " ++ authorName
-            )
+type SignatureLoadError
+    = AuthorNotFoundInFile String
+    | InvalidSignatureFileFormat
 
 
-signatureDecodingError : JD.Error -> Step RationaleSignatureForm {} RationaleSignature -> Step RationaleSignatureForm {} RationaleSignature
-signatureDecodingError decodingError rationaleSignatureStep =
+authorWitnessExtractResult : String -> String -> Result SignatureLoadError AuthorWitness
+authorWitnessExtractResult authorName jsonStr =
+    case JD.decodeString (JD.field "authors" (JD.list ProposalMetadata.authorWitnessDecoder)) jsonStr of
+        Err _ ->
+            Err InvalidSignatureFileFormat
+
+        Ok authors ->
+            case List.head <| List.filter (\a -> a.name == authorName) authors of
+                Just author ->
+                    Ok author
+
+                Nothing ->
+                    Err (AuthorNotFoundInFile authorName)
+
+
+signatureLoadErrorToString : SignatureLoadError -> String
+signatureLoadErrorToString error =
+    case error of
+        AuthorNotFoundInFile authorName ->
+            "No witness found for author \"" ++ authorName ++ "\" in the uploaded signature file. Please ensure the signature file matches the author name."
+
+        InvalidSignatureFileFormat ->
+            "Invalid signature file format. Please upload a valid JSON signature file."
+
+
+handleSignatureLoadError : SignatureLoadError -> Step RationaleSignatureForm {} RationaleSignature -> Step RationaleSignatureForm {} RationaleSignature
+handleSignatureLoadError error rationaleSignatureStep =
     case rationaleSignatureStep of
         Preparing form ->
-            Preparing { form | error = Just <| JD.errorToString decodingError }
+            Preparing { form | error = Just (signatureLoadErrorToString error) }
 
         _ ->
             rationaleSignatureStep
@@ -2707,6 +2799,7 @@ validateAuthorsForm authors =
                     Ok ()
 
         -- Check that witnessAlgorithm are authorized by the CIP
+        -- Skip validation for name-only authors (e.g., Cardano Foundation) who have empty witnessAlgorithm
         authorizedAlgorithms =
             Set.singleton "ed25519"
 
@@ -2721,6 +2814,8 @@ validateAuthorsForm authors =
         |> Result.andThen
             (\_ ->
                 List.map .witnessAlgorithm authors
+                    -- Filter out empty witnessAlgorithm (name-only authors)
+                    |> List.filter (\algo -> algo /= "")
                     |> List.map checkWitnessAlgo
                     |> reduceResults
                     |> Result.map (always ())
@@ -2855,8 +2950,11 @@ handlePdfIpfsAnswer ctx model form rationale ipfsAnswer =
         -- and in the list of references.
         ( Done _ { id }, IpfsAddSuccessful file ) ->
             let
+                ipfsUri =
+                    "ipfs://" ++ file.cid
+
                 pdfLink =
-                    "https://ipfs.io/ipfs/" ++ file.cid
+                    Helper.ipfsToHttpsUrl ipfsUri
 
                 updatedRationaleStatement =
                     "A [PDF version][pdf-link] of this rationale is also made available."
@@ -2869,7 +2967,7 @@ handlePdfIpfsAnswer ctx model form rationale ipfsAnswer =
                     rationale.references
                         ++ [ { type_ = OtherRefType
                              , label = "Rationale PDF"
-                             , uri = "ipfs://" ++ file.cid
+                             , uri = ipfsUri
                              }
                            ]
 
@@ -2879,9 +2977,9 @@ handlePdfIpfsAnswer ctx model form rationale ipfsAnswer =
                         , references = updatedReferences
                     }
 
-                -- Initialize rationale signature with no author
+                -- Initialize rationale signature form with authors (empty unless preconfigured)
                 rationaleSignatureForm =
-                    { authors = []
+                    { authors = List.map (.name >> ProposalMetadata.justAuthorName) ctx.authorPreconfig
                     , rationale = updatedRationale
                     , error = Nothing
                     }
@@ -2940,7 +3038,11 @@ checkPublishedRationaleUrl { raw, uri } =
     -- Make a request to retrieve the rationale at the given URI.
     -- If that is an IPFS url (ipfs://<cid>), try to fetch it with a gateway over HTTP.
     if String.startsWith "ipfs://" uri then
-        Api.defaultApiProvider.getFromIpfsGateway (GotRawPublishedRationale raw) "https://ipfs.io/ipfs" (String.dropLeft 7 uri)
+        let
+            cid =
+                String.dropLeft 7 uri
+        in
+        Api.defaultApiProvider.getFromIpfsGateway (GotRawPublishedRationale raw) "https://ipfs.io/ipfs" cid
 
     else
         Http.get
@@ -3502,7 +3604,7 @@ viewProposalSelectionStep ctx model =
                 ]
 
         Done _ proposal ->
-            viewSelectedProposal ctx proposal
+            viewSelectedProposal ctx model.cip100Verification proposal
 
 
 viewProposalSelectionForm : ViewContext msg -> InnerModel -> Html msg
@@ -3717,9 +3819,12 @@ viewProposalCardHelper wrapMsg networkId currentEpoch getPastVote proposal =
         (Helper.viewActionTypeIcon proposal.actionType)
 
 
-viewSelectedProposal : ViewContext msg -> ActiveProposal -> Html msg
-viewSelectedProposal ctx { id, actionType, metadata, metadataUrl, metadataHash } =
+viewSelectedProposal : ViewContext msg -> Dict String Cip100VerificationState -> ActiveProposal -> Html msg
+viewSelectedProposal ctx cip100Verification { id, actionType, metadata, metadataUrl, metadataHash } =
     let
+        actionIdStr =
+            Gov.actionIdToString id
+
         { title, maybeMetadata } =
             getProposalContent metadata metadataUrl
 
@@ -3736,6 +3841,10 @@ viewSelectedProposal ctx { id, actionType, metadata, metadataUrl, metadataHash }
                 , Helper.viewActionTypeIcon actionType
                 ]
 
+        verificationState =
+            Dict.get actionIdStr cip100Verification
+                |> Maybe.withDefault VerificationNotStarted
+
         ( hashIsValid, abstractContent, authorsDetails ) =
             case maybeMetadata of
                 Just { raw, computedHash, abstract, authors } ->
@@ -3747,14 +3856,14 @@ viewSelectedProposal ctx { id, actionType, metadata, metadataUrl, metadataHash }
                             ]
                             [ Helper.renderMarkdownContent abstract ]
                         )
-                    , viewAuthorsDetails raw authors
+                    , viewAuthorsDetails raw authors verificationState
                     )
 
                 Nothing ->
-                    ( True, text "", viewAuthorsDetails "" [] )
+                    ( True, text "", viewAuthorsDetails "" [] verificationState )
 
-        viewAuthorsDetails : String -> List AuthorWitness -> Html msg
-        viewAuthorsDetails rawMetadata authors =
+        viewAuthorsDetails : String -> List AuthorWitness -> Cip100VerificationState -> Html msg
+        viewAuthorsDetails rawMetadata authors verificationResult =
             Helper.proposalDetailsItem "Authors" <|
                 if List.isEmpty authors then
                     text "No author with accompanying signature was found."
@@ -3770,15 +3879,16 @@ viewSelectedProposal ctx { id, actionType, metadata, metadataUrl, metadataHash }
                         ]
                         [ Html.ul
                             [ HA.style "list-style-type" "disc"
-                            , HA.style "margin-left" "1.5rem"
                             ]
-                            (List.map viewOneAuthor authors)
+                            (List.map (viewOneAuthor verificationResult) authors)
+                        , viewVerificationStatus verificationResult
                         , Html.p [ HA.style "margin-top" "1.5rem" ]
-                            [ text "Verify authors signatures on: "
+                            [ text "Signatures were automatically verified via the "
                             , Helper.externalLink
                                 { url = "https://verifycardanomessage.cardanofoundation.org/method=cip100#" ++ Url.percentEncode rawMetadata
-                                , label = "verifycardanomessage.cardanofoundation.org"
+                                , label = "Cardano Foundation verification API"
                                 }
+                            , text ". You can verify them yourself using the link above."
                             ]
                         , Html.p [ HA.style "margin-top" "1.5rem" ]
                             [ text "To verify the authors signatures locally, download the metadata and use cardano-signer as follows:" ]
@@ -3800,18 +3910,156 @@ viewSelectedProposal ctx { id, actionType, metadata, metadataUrl, metadataHash }
                             ]
                         ]
 
-        viewOneAuthor : AuthorWitness -> Html msg
-        viewOneAuthor { name, publicKey } =
-            Html.li
-                [ HA.style "margin-bottom" "0.75rem"
-                , HA.style "line-height" "1.6"
-                , HA.style "color" "#4A5568"
+        viewVerificationStatus : Cip100VerificationState -> Html msg
+        viewVerificationStatus state =
+            case state of
+                VerificationNotStarted ->
+                    text ""
+
+                VerificationLoading ->
+                    Html.p
+                        [ HA.style "margin-top" "1rem"
+                        , HA.style "color" "#6B7280"
+                        , HA.style "font-style" "italic"
+                        ]
+                        [ text "🔄 Verifying signatures..." ]
+
+                VerificationSuccess _ ->
+                    text ""
+
+                VerificationError errorMsg ->
+                    Html.p
+                        [ HA.style "margin-top" "1rem"
+                        , HA.style "color" "#DC2626"
+                        , HA.style "font-weight" "500"
+                        ]
+                        [ text ("⚠ " ++ errorMsg) ]
+
+        getAuthorVerification : String -> Cip100VerificationState -> Maybe AuthorVerification
+        getAuthorVerification authorName state =
+            case state of
+                VerificationSuccess verifications ->
+                    List.Extra.find (\v -> v.authorName == authorName) verifications
+
+                _ ->
+                    Nothing
+
+        viewOneAuthor : Cip100VerificationState -> AuthorWitness -> Html msg
+        viewOneAuthor verifyState { name, publicKey, witnessAlgorithm } =
+            let
+                -- Only show verification badge if author has a signature
+                verification =
+                    if witnessAlgorithm /= "" && publicKey /= "" then
+                        getAuthorVerification name verifyState
+
+                    else
+                        Nothing
+
+                signatureStatus =
+                    case verification of
+                        Just { isValid, errorMessage } ->
+                            if isValid then
+                                Just
+                                    ( Html.span
+                                        [ HA.style "display" "inline-flex"
+                                        , HA.style "align-items" "center"
+                                        , HA.style "padding" "0.125rem 0.5rem"
+                                        , HA.style "background-color" "#D1FAE5"
+                                        , HA.style "color" "#065F46"
+                                        , HA.style "border-radius" "0.25rem"
+                                        , HA.style "font-size" "0.75rem"
+                                        , HA.style "font-weight" "600"
+                                        ]
+                                        [ text "✓ VERIFIED" ]
+                                    , Nothing
+                                    )
+
+                            else
+                                Just
+                                    ( Html.span
+                                        [ HA.style "display" "inline-flex"
+                                        , HA.style "align-items" "center"
+                                        , HA.style "padding" "0.125rem 0.5rem"
+                                        , HA.style "background-color" "#FEE2E2"
+                                        , HA.style "color" "#991B1B"
+                                        , HA.style "border-radius" "0.25rem"
+                                        , HA.style "font-size" "0.75rem"
+                                        , HA.style "font-weight" "600"
+                                        ]
+                                        [ text "✗ INVALID" ]
+                                    , Maybe.map
+                                        (\err ->
+                                            Html.div
+                                                [ HA.style "margin-top" "0.25rem"
+                                                , HA.style "font-size" "0.875rem"
+                                                , HA.style "color" "#DC2626"
+                                                ]
+                                                [ text err ]
+                                        )
+                                        errorMessage
+                                    )
+
+                        Nothing ->
+                            if witnessAlgorithm == "" || publicKey == "" then
+                                Just
+                                    ( Html.span
+                                        [ HA.style "display" "inline-flex"
+                                        , HA.style "align-items" "center"
+                                        , HA.style "padding" "0.125rem 0.5rem"
+                                        , HA.style "background-color" "#F3F4F6"
+                                        , HA.style "color" "#6B7280"
+                                        , HA.style "border-radius" "0.25rem"
+                                        , HA.style "font-size" "0.75rem"
+                                        , HA.style "font-weight" "600"
+                                        ]
+                                        [ text "None" ]
+                                    , Nothing
+                                    )
+
+                            else
+                                Nothing
+            in
+            Html.div
+                [ HA.style "padding" "1rem"
+                , HA.style "margin-bottom" "1rem"
+                , HA.style "background-color" "#F9FAFB"
+                , HA.style "border" "1px solid #E5E7EB"
+                , HA.style "border-radius" "0.5rem"
                 ]
-                [ Html.strong [] [ text "Name: " ]
-                , text name
-                , Html.br [] []
-                , Html.strong [] [ text "Public key: " ]
-                , text publicKey
+                [ Html.div
+                    [ HA.style "margin-bottom" "0.5rem"
+                    , HA.style "line-height" "1.6"
+                    , HA.style "color" "#4A5568"
+                    ]
+                    [ Html.strong [] [ text "Name: " ]
+                    , text name
+                    ]
+                , if publicKey /= "" then
+                    Html.div
+                        [ HA.style "margin-bottom" "0.5rem"
+                        , HA.style "line-height" "1.6"
+                        , HA.style "color" "#4A5568"
+                        ]
+                        [ Html.strong [] [ text "Public key: " ]
+                        , text publicKey
+                        ]
+
+                  else
+                    text ""
+                , case signatureStatus of
+                    Just ( badge, maybeError ) ->
+                        Html.div
+                            [ HA.style "margin-bottom" "0.5rem"
+                            , HA.style "line-height" "1.6"
+                            , HA.style "color" "#4A5568"
+                            ]
+                            [ Html.strong [] [ text "Signature: " ]
+                            , badge
+                            , Maybe.withDefault (text "") maybeError
+                            ]
+
+                    Nothing ->
+                        text ""
                 ]
 
         cardanoSignerExample =
@@ -4504,7 +4752,7 @@ viewSignerCard { name, witnessAlgorithm, publicKey, signature } =
 
 
 viewRationaleSignatureForm : RationaleSignatureForm -> Html Msg
-viewRationaleSignatureForm { authors } =
+viewRationaleSignatureForm { authors, error } =
     let
         cardanoSignerExample =
             "cardano-signer.js sign --cip100 \\\n"
@@ -4552,6 +4800,7 @@ viewRationaleSignatureForm { authors } =
                     [ Helper.secondaryButton "Skip Signatures" SkipRationaleSignaturesButtonClicked
                     , Helper.primaryButton "Confirm Signatures" ValidateRationaleSignaturesButtonClicked
                     ]
+                , viewError error
                 ]
             )
         ]
@@ -4622,9 +4871,13 @@ encodeAuthorWitness { name, witnessAlgorithm, publicKey, signature } =
         Just sig ->
             JE.object
                 [ ( "name", JE.string name )
-                , ( "witnessAlgorithm", JE.string witnessAlgorithm )
-                , ( "publicKey", JE.string publicKey )
-                , ( "signature", JE.string sig )
+                , ( "witness"
+                  , JE.object
+                        [ ( "witnessAlgorithm", JE.string witnessAlgorithm )
+                        , ( "publicKey", JE.string publicKey )
+                        , ( "signature", JE.string sig )
+                        ]
+                  )
                 ]
 
 

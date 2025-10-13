@@ -63,7 +63,7 @@ import ConcurrentTask.Extra
 import Dict exposing (Dict)
 import Footer
 import Header
-import Helper exposing (PreconfVoter)
+import Helper exposing (PreconfAuthor, PreconfVoter)
 import Html exposing (Html, div, text)
 import Html.Attributes as HA
 import Html.Events exposing (preventDefaultOn)
@@ -92,6 +92,7 @@ type alias Flags =
     , networkId : Int
     , ipfsPreconfig : { label : String, description : String }
     , voterPreconfig : List PreconfVoter
+    , authorPreconfig : List PreconfAuthor
     }
 
 
@@ -192,6 +193,7 @@ type alias Model =
     , networkId : NetworkId
     , ipfsPreconfig : { label : String, description : String }
     , voterPreconfig : List PreconfVoter
+    , authorPreconfig : List PreconfAuthor
     , cart : Page.Cart.Model
     , errors : List String
     }
@@ -218,13 +220,13 @@ type TaskCompleted
 
 
 init : Flags -> ( Model, Cmd Msg )
-init { url, jsonLdContexts, db, networkId, ipfsPreconfig, voterPreconfig } =
+init { url, jsonLdContexts, db, networkId, ipfsPreconfig, voterPreconfig, authorPreconfig } =
     let
         networkIdTyped =
             Address.networkIdFromInt networkId |> Maybe.withDefault Testnet
 
         config =
-            ModelConfig jsonLdContexts db networkIdTyped ipfsPreconfig voterPreconfig
+            ModelConfig jsonLdContexts db networkIdTyped ipfsPreconfig voterPreconfig authorPreconfig
     in
     initHelper (locationHrefToRoute url) config
 
@@ -271,11 +273,12 @@ type alias ModelConfig =
     , networkId : NetworkId
     , ipfsPreconfig : { label : String, description : String }
     , voterPreconfig : List PreconfVoter
+    , authorPreconfig : List PreconfAuthor
     }
 
 
 initialModel : ModelConfig -> Model
-initialModel { jsonLdContexts, db, networkId, ipfsPreconfig, voterPreconfig } =
+initialModel { jsonLdContexts, db, networkId, ipfsPreconfig, voterPreconfig, authorPreconfig } =
     { page = LandingPage
     , appUrl = routeToAppUrl RouteLanding
     , mobileMenuIsOpen = False
@@ -299,6 +302,7 @@ initialModel { jsonLdContexts, db, networkId, ipfsPreconfig, voterPreconfig } =
     , networkId = networkId
     , ipfsPreconfig = ipfsPreconfig
     , voterPreconfig = voterPreconfig
+    , authorPreconfig = authorPreconfig
     , cart = Page.Cart.init
     , errors = []
     }
@@ -626,6 +630,7 @@ update msg model =
                             , pdfBytesToFile = pdfBytesToFile
                             , costModels = Maybe.map .costModels model.protocolParams
                             , networkId = model.networkId
+                            , authorPreconfig = model.authorPreconfig
                             }
 
                         ( newPageModel, cmds, msgToParent ) =
@@ -955,6 +960,7 @@ handleUrlChange route model =
                     , networkId = networkId
                     , ipfsPreconfig = model.ipfsPreconfig
                     , voterPreconfig = model.voterPreconfig
+                    , authorPreconfig = model.authorPreconfig
                     }
 
             else if RemoteData.isSuccess model.proposals then
@@ -982,6 +988,7 @@ handleUrlChange route model =
                     , networkId = networkId
                     , ipfsPreconfig = model.ipfsPreconfig
                     , voterPreconfig = model.voterPreconfig
+                    , authorPreconfig = model.authorPreconfig
                     }
 
             else
@@ -1001,6 +1008,7 @@ handleUrlChange route model =
                     , networkId = networkId
                     , ipfsPreconfig = model.ipfsPreconfig
                     , voterPreconfig = model.voterPreconfig
+                    , authorPreconfig = model.authorPreconfig
                     }
 
             else

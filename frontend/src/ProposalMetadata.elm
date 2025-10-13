@@ -1,4 +1,4 @@
-module ProposalMetadata exposing (AuthorWitness, Body, ProposalMetadata, authorWitnessDecoder, decoder, encode, fromRaw)
+module ProposalMetadata exposing (AuthorWitness, Body, ProposalMetadata, authorWitnessDecoder, decoder, encode, fromRaw, justAuthorName)
 
 {-| Helper module to handle proposals metadata following [CIP-108](https://cips.cardano.org/cip/CIP-0108).
 -}
@@ -27,6 +27,15 @@ type alias AuthorWitness =
     , witnessAlgorithm : String
     , publicKey : String
     , signature : Maybe String
+    }
+
+
+justAuthorName : String -> AuthorWitness
+justAuthorName name =
+    { name = name
+    , witnessAlgorithm = ""
+    , publicKey = ""
+    , signature = Nothing
     }
 
 
@@ -89,18 +98,30 @@ bodyDecoder =
 
 
 {-| JSON decoder for author witness.
+Follows the standard CIP-100 format with nested witness object:
+{ "name": "...", "witness": { "witnessAlgorithm": "...", "publicKey": "...", "signature": "..." } }
 -}
 authorWitnessDecoder : JD.Decoder AuthorWitness
 authorWitnessDecoder =
-    JD.map4
-        (\name witnessAlgorithm publicKey signature ->
-            { name = name
-            , witnessAlgorithm = witnessAlgorithm
-            , publicKey = publicKey
-            , signature = signature
-            }
-        )
+    JD.map2 (\name w -> AuthorWitness name w.witnessAlgorithm w.publicKey w.signature)
         (JD.field "name" JD.string)
-        (JD.at [ "witness", "witnessAlgorithm" ] JD.string)
-        (JD.at [ "witness", "publicKey" ] JD.string)
-        (JD.map Just <| JD.at [ "witness", "signature" ] JD.string)
+        (JD.field "witness" witnessDecoder
+            |> JD.maybe
+            |> JD.map (Maybe.withDefault noWitness)
+        )
+
+
+witnessDecoder : JD.Decoder { witnessAlgorithm : String, publicKey : String, signature : Maybe String }
+witnessDecoder =
+    JD.map3 (\wa pk sig -> { witnessAlgorithm = wa, publicKey = pk, signature = sig })
+        (JD.field "witnessAlgorithm" JD.string)
+        (JD.field "publicKey" JD.string)
+        (JD.field "signature" JD.string |> JD.map Just)
+
+
+noWitness : { witnessAlgorithm : String, publicKey : String, signature : Maybe String }
+noWitness =
+    { witnessAlgorithm = ""
+    , publicKey = ""
+    , signature = Nothing
+    }
