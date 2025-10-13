@@ -3680,7 +3680,7 @@ viewProposalSelectionStep ctx model =
                 ]
 
         Done _ proposal ->
-            viewSelectedProposal ctx model proposal
+            viewSelectedProposal ctx model.cip100Verification proposal
 
 
 viewProposalSelectionForm : ViewContext msg -> InnerModel -> Html msg
@@ -3895,8 +3895,8 @@ viewProposalCardHelper wrapMsg networkId currentEpoch getPastVote proposal =
         (Helper.viewActionTypeIcon proposal.actionType)
 
 
-viewSelectedProposal : ViewContext msg -> InnerModel -> ActiveProposal -> Html msg
-viewSelectedProposal ctx model { id, actionType, metadata, metadataUrl, metadataHash } =
+viewSelectedProposal : ViewContext msg -> Dict String Cip100VerificationState -> ActiveProposal -> Html msg
+viewSelectedProposal ctx cip100Verification { id, actionType, metadata, metadataUrl, metadataHash } =
     let
         actionIdStr =
             Gov.actionIdToString id
@@ -3918,7 +3918,7 @@ viewSelectedProposal ctx model { id, actionType, metadata, metadataUrl, metadata
                 ]
 
         verificationState =
-            Dict.get actionIdStr model.cip100Verification
+            Dict.get actionIdStr cip100Verification
                 |> Maybe.withDefault VerificationNotStarted
 
         ( hashIsValid, abstractContent, authorsDetails ) =
