@@ -225,9 +225,9 @@ init { url, jsonLdContexts, db, networkId, ipfsPreconfig, voterPreconfig, author
         networkIdTyped =
             Address.networkIdFromInt networkId |> Maybe.withDefault Testnet
 
-        -- Decode authorPreconfig manually to handle name-only authors
+        -- Decode preconfigured authors
         decodedAuthorPreconfig =
-            JD.decodeValue (JD.list ProposalMetadata.authorWitnessDecoder) authorPreconfig
+            JD.decodeValue (JD.list ProposalMetadata.nameOnlyAuthorDecoder) authorPreconfig
                 |> Result.withDefault []
 
         config =

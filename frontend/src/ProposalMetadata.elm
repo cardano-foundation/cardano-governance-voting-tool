@@ -1,4 +1,4 @@
-module ProposalMetadata exposing (AuthorWitness, Body, ProposalMetadata, authorWitnessDecoder, decoder, encode, fromRaw)
+module ProposalMetadata exposing (AuthorWitness, Body, ProposalMetadata, authorWitnessDecoder, decoder, encode, fromRaw, nameOnlyAuthorDecoder)
 
 {-| Helper module to handle proposals metadata following [CIP-108](https://cips.cardano.org/cip/CIP-0108).
 -}
@@ -89,53 +89,28 @@ bodyDecoder =
 
 
 {-| JSON decoder for author witness.
-Supports three formats:
-
-1.  Name-only: { "name": "..." } - for preconfigured authors
-2.  Nested witness: { "name": "...", "witness": { "witnessAlgorithm": "...", "publicKey": "...", "signature": "..." } }
-3.  Flat witness: { "name": "...", "witnessAlgorithm": "...", "publicKey": "...", "signature": "..." }
-
+Follows the standard CIP-100 format with nested witness object:
+{ "name": "...", "witness": { "witnessAlgorithm": "...", "publicKey": "...", "signature": "..." } }
 -}
 authorWitnessDecoder : JD.Decoder AuthorWitness
 authorWitnessDecoder =
-    JD.field "name" JD.string
-        |> JD.andThen
-            (\name ->
-                -- Try nested witness format first
-                JD.oneOf
-                    [ JD.field "witness"
-                        (JD.map3
-                            (\witnessAlgorithm publicKey signature ->
-                                { name = name
-                                , witnessAlgorithm = witnessAlgorithm
-                                , publicKey = publicKey
-                                , signature = Just signature
-                                }
-                            )
-                            (JD.field "witnessAlgorithm" JD.string)
-                            (JD.field "publicKey" JD.string)
-                            (JD.field "signature" JD.string)
-                        )
+    JD.map4 AuthorWitness
+        (JD.field "name" JD.string)
+        (JD.at [ "witness", "witnessAlgorithm" ] JD.string)
+        (JD.at [ "witness", "publicKey" ] JD.string)
+        (JD.at [ "witness", "signature" ] JD.string |> JD.map Just)
 
-                    -- Try flat format
-                    , JD.map3
-                        (\witnessAlgorithm publicKey signature ->
-                            { name = name
-                            , witnessAlgorithm = witnessAlgorithm
-                            , publicKey = publicKey
-                            , signature = signature
-                            }
-                        )
-                        (JD.maybe (JD.field "witnessAlgorithm" JD.string) |> JD.map (Maybe.withDefault ""))
-                        (JD.maybe (JD.field "publicKey" JD.string) |> JD.map (Maybe.withDefault ""))
-                        (JD.maybe (JD.field "signature" JD.string))
 
-                    -- Default to name-only
-                    , JD.succeed
-                        { name = name
-                        , witnessAlgorithm = ""
-                        , publicKey = ""
-                        , signature = Nothing
-                        }
-                    ]
-            )
+{-| JSON decoder for name-only authors
+-}
+nameOnlyAuthorDecoder : JD.Decoder AuthorWitness
+nameOnlyAuthorDecoder =
+    JD.map
+        (\name ->
+            { name = name
+            , witnessAlgorithm = ""
+            , publicKey = ""
+            , signature = Nothing
+            }
+        )
+        (JD.field "name" JD.string)
