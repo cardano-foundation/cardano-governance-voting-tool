@@ -49,7 +49,7 @@ import Dict.Any
 import Dict.Extra
 import File exposing (File)
 import File.Select
-import Helper exposing (PreconfVoter)
+import Helper exposing (PreconfAuthor, PreconfVoter)
 import Html exposing (Html, div, text)
 import Html.Attributes as HA
 import Html.Events
@@ -865,7 +865,7 @@ type alias UpdateContext msg =
     , pdfBytesToFile : { fileContentHex : String, fileName : String } -> Cmd msg
     , costModels : Maybe CostModels
     , networkId : NetworkId
-    , authorPreconfig : List AuthorWitness
+    , authorPreconfig : List PreconfAuthor
     }
 
 
@@ -1331,7 +1331,7 @@ innerUpdate ctx msg model =
                 ( Validating form rationale, Done _ { id } ) ->
                     let
                         tempUnsignedRationaleForm =
-                            rationaleSignatureFromForm ctx.jsonLdContexts id { authors = ctx.authorPreconfig, error = Nothing, rationale = rationale }
+                            rationaleSignatureFromForm ctx.jsonLdContexts id { authors = [], error = Nothing, rationale = rationale }
 
                         rawFileContent =
                             tempUnsignedRationaleForm.signedJson
@@ -1348,7 +1348,7 @@ innerUpdate ctx msg model =
                     let
                         -- Initialize with preconfigured authors
                         form =
-                            { authors = ctx.authorPreconfig
+                            { authors = List.map (.name >> ProposalMetadata.justAuthorName) ctx.authorPreconfig
                             , rationale = newRationale
                             , error = Nothing
                             }
@@ -3051,7 +3051,7 @@ handlePdfIpfsAnswer ctx model form rationale ipfsAnswer =
 
                 -- Initialize rationale signature form with authors (empty unless preconfigured)
                 rationaleSignatureForm =
-                    { authors = ctx.authorPreconfig
+                    { authors = List.map (.name >> ProposalMetadata.justAuthorName) ctx.authorPreconfig
                     , rationale = updatedRationale
                     , error = Nothing
                     }
@@ -3226,7 +3226,6 @@ type alias ViewContext msg =
     , signingLink : Transaction -> List { keyName : String, keyHash : Bytes CredentialHash } -> List (Html msg) -> Html msg
     , ipfsPreconfig : { label : String, description : String }
     , voterPreconfig : List PreconfVoter
-    , authorPreconfig : List AuthorWitness
     }
 
 
@@ -4771,7 +4770,7 @@ viewRationaleSignatureStep ctx pickProposalStep storageConfigStep rationaleCreat
                         Helper.stepNotAvailableCard [ text "Please wait for the rationale creation to complete." ]
 
                     ( Done _ _, Done _ _, Preparing form ) ->
-                        Html.map ctx.wrapMsg <| viewRationaleSignatureForm ctx.authorPreconfig form
+                        Html.map ctx.wrapMsg <| viewRationaleSignatureForm form
 
                     ( _, Done _ _, Preparing _ ) ->
                         Helper.stepNotAvailableCard [ text "Please select a proposal first." ]
@@ -4824,8 +4823,8 @@ viewSignerCard { name, witnessAlgorithm, publicKey, signature } =
     Helper.signerCard name signature witnessAlgorithm publicKey (Maybe.withDefault "" signature)
 
 
-viewRationaleSignatureForm : List AuthorWitness -> RationaleSignatureForm -> Html Msg
-viewRationaleSignatureForm preconfiguredAuthors { authors, error } =
+viewRationaleSignatureForm : RationaleSignatureForm -> Html Msg
+viewRationaleSignatureForm { authors, error } =
     let
         cardanoSignerExample =
             "cardano-signer.js sign --cip100 \\\n"
@@ -4868,7 +4867,7 @@ viewRationaleSignatureForm preconfiguredAuthors { authors, error } =
                         , HA.style "flex-direction" "column"
                         , HA.style "gap" "1rem"
                         ]
-                        (List.indexedMap (viewOneAuthorForm preconfiguredAuthors) authors)
+                        (List.indexedMap viewOneAuthorForm authors)
                 , Helper.formButtonsRow
                     [ Helper.secondaryButton "Skip Signatures" SkipRationaleSignaturesButtonClicked
                     , Helper.primaryButton "Confirm Signatures" ValidateRationaleSignaturesButtonClicked
@@ -4879,62 +4878,37 @@ viewRationaleSignatureForm preconfiguredAuthors { authors, error } =
         ]
 
 
-viewOneAuthorForm : List AuthorWitness -> Int -> AuthorWitness -> Html Msg
-viewOneAuthorForm preconfiguredAuthors n author =
-    let
-        -- Check if this author is preconfigured name-only with no signature data
-        isPreconfigured =
-            List.any (\preconf -> preconf.name == author.name && preconf.signature == Nothing && preconf.witnessAlgorithm == "" && preconf.publicKey == "") preconfiguredAuthors
-    in
-    if isPreconfigured then
-        div
-            [ HA.style "border" "1px solid #E2E8F0"
-            , HA.style "border-radius" "0.5rem"
-            , HA.style "background-color" "#F0F9FF"
-            , HA.style "padding" "1rem"
-            ]
-            [ Html.h4
-                [ HA.style "font-weight" "500"
-                , HA.style "font-size" "1rem"
-                , HA.style "color" "#1A202C"
-                , HA.style "margin-bottom" "0.75rem"
+viewOneAuthorForm : Int -> AuthorWitness -> Html Msg
+viewOneAuthorForm n author =
+    Helper.authorForm n
+        (DeleteAuthorButtonClicked n)
+        [ Helper.labeledField "Author name"
+            (Html.input
+                [ HA.type_ "text"
+                , HA.value author.name
+                , Html.Events.onInput (AuthorNameChange n)
+                , HA.style "width" "100%"
+                , HA.style "padding" "0.75rem"
+                , HA.style "border" "1px solid #E2E8F0"
+                , HA.style "border-radius" "0.375rem"
+                , HA.style "background-color" "white"
                 ]
-                [ text ("Author " ++ String.fromInt (n + 1)) ]
-            , Helper.labeledField "Author name"
-                (Helper.readOnlyField author.name)
-            ]
+                []
+            )
+        , case author.signature of
+            Nothing ->
+                Helper.labeledField "Signature"
+                    (Helper.loadSignatureButton (LoadJsonSignatureButtonClicked n author.name))
 
-    else
-        -- Regular author
-        Helper.authorForm n
-            (DeleteAuthorButtonClicked n)
-            [ Helper.labeledField "Author name"
-                (Html.input
-                    [ HA.type_ "text"
-                    , HA.value author.name
-                    , Html.Events.onInput (AuthorNameChange n)
-                    , HA.style "width" "100%"
-                    , HA.style "padding" "0.75rem"
-                    , HA.style "border" "1px solid #E2E8F0"
-                    , HA.style "border-radius" "0.375rem"
-                    , HA.style "background-color" "white"
+            Just sig ->
+                div [ HA.style "display" "grid", HA.style "gap" "1rem" ]
+                    [ Helper.labeledField "Signature algorithm"
+                        (Helper.readOnlyField author.witnessAlgorithm)
+                    , Helper.labeledField "Public key"
+                        (Helper.readOnlyField author.publicKey)
+                    , Helper.signatureField sig (LoadJsonSignatureButtonClicked n author.name)
                     ]
-                    []
-                )
-            , case author.signature of
-                Nothing ->
-                    Helper.labeledField "Signature"
-                        (Helper.loadSignatureButton (LoadJsonSignatureButtonClicked n author.name))
-
-                Just sig ->
-                    div [ HA.style "display" "grid", HA.style "gap" "1rem" ]
-                        [ Helper.labeledField "Signature algorithm"
-                            (Helper.readOnlyField author.witnessAlgorithm)
-                        , Helper.labeledField "Public key"
-                            (Helper.readOnlyField author.publicKey)
-                        , Helper.signatureField sig (LoadJsonSignatureButtonClicked n author.name)
-                        ]
-            ]
+        ]
 
 
 {-| Creates a JSON-LD document for the rationale that follows CIP-0136.

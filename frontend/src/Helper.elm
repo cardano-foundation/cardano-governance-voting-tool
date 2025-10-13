@@ -8,7 +8,7 @@ module Helper exposing
     , sectionTitle, viewError
     , renderMarkdownContent
     , viewStepWithCircle, viewPageHeader
-    , PreconfVoter, viewVoterGrid, viewVoterCard, voterCustomCard, votingPowerDisplay, scriptInfoContainer, viewVoterCredDetails, viewVoterDetailsItem, viewCredInfo
+    , PreconfAuthor, PreconfVoter, viewVoterGrid, viewVoterCard, voterCustomCard, votingPowerDisplay, scriptInfoContainer, viewVoterCredDetails, viewVoterDetailsItem, viewCredInfo
     , viewUtxoRefForm, scriptSignerSection, scriptSignerCheckbox, viewIdentifiedVoterCard, viewVoterInfoItem
     , proposalListContainer, showMoreButton, proposalCard, selectedProposalCard, proposalDetailsItem, viewProposalsListInCart
     , storageConfigCard, storageMethodOption, storageProviderForm, storageProviderCard, storageConfigItem, addHeaderButton
@@ -72,7 +72,7 @@ and are potentially useful in multiple places.
 
 # Voter Identification Components
 
-@docs PreconfVoter, viewVoterGrid, viewVoterCard, voterCustomCard, votingPowerDisplay, scriptInfoContainer, viewVoterCredDetails, viewVoterDetailsItem, viewCredInfo
+@docs PreconfAuthor, PreconfVoter, viewVoterGrid, viewVoterCard, voterCustomCard, votingPowerDisplay, scriptInfoContainer, viewVoterCredDetails, viewVoterDetailsItem, viewCredInfo
 @docs viewUtxoRefForm, scriptSignerSection, scriptSignerCheckbox, viewIdentifiedVoterCard, viewVoterInfoItem
 
 
@@ -894,6 +894,10 @@ viewGrid minmaxWidth elems =
 
 type alias PreconfVoter =
     { voterType : String, description : String, govId : String }
+
+
+type alias PreconfAuthor =
+    { name : String }
 
 
 {-| Card for displaying a voter role option

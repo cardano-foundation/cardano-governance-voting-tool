@@ -63,7 +63,7 @@ import ConcurrentTask.Extra
 import Dict exposing (Dict)
 import Footer
 import Header
-import Helper exposing (PreconfVoter)
+import Helper exposing (PreconfAuthor, PreconfVoter)
 import Html exposing (Html, div, text)
 import Html.Attributes as HA
 import Html.Events exposing (preventDefaultOn)
@@ -78,7 +78,7 @@ import Page.Pdf
 import Page.Preparation exposing (JsonLdContexts, StorageConfig)
 import Page.Signing
 import Platform.Cmd as Cmd
-import ProposalMetadata exposing (AuthorWitness, ProposalMetadata)
+import ProposalMetadata exposing (ProposalMetadata)
 import RemoteData exposing (WebData)
 import ScriptInfo exposing (ScriptInfo)
 import Storage
@@ -92,7 +92,7 @@ type alias Flags =
     , networkId : Int
     , ipfsPreconfig : { label : String, description : String }
     , voterPreconfig : List PreconfVoter
-    , authorPreconfig : List AuthorWitness
+    , authorPreconfig : List PreconfAuthor
     }
 
 
@@ -193,7 +193,7 @@ type alias Model =
     , networkId : NetworkId
     , ipfsPreconfig : { label : String, description : String }
     , voterPreconfig : List PreconfVoter
-    , authorPreconfig : List AuthorWitness
+    , authorPreconfig : List PreconfAuthor
     , cart : Page.Cart.Model
     , errors : List String
     }
@@ -273,7 +273,7 @@ type alias ModelConfig =
     , networkId : NetworkId
     , ipfsPreconfig : { label : String, description : String }
     , voterPreconfig : List PreconfVoter
-    , authorPreconfig : List AuthorWitness
+    , authorPreconfig : List PreconfAuthor
     }
 
 
@@ -1557,7 +1557,6 @@ viewContent model =
                         link (RouteSigning { networkId = model.networkId, tx = Just tx, expectedSigners = expectedSigners }) []
                 , ipfsPreconfig = model.ipfsPreconfig
                 , voterPreconfig = model.voterPreconfig
-                , authorPreconfig = model.authorPreconfig
                 }
                 prepModel
 
