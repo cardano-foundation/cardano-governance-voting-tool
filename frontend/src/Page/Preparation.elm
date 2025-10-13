@@ -3955,7 +3955,6 @@ viewSelectedProposal ctx cip100Verification { id, actionType, metadata, metadata
                         ]
                         [ Html.ul
                             [ HA.style "list-style-type" "disc"
-                            , HA.style "margin-left" "1.5rem"
                             ]
                             (List.map (viewOneAuthor verificationResult) authors)
                         , viewVerificationStatus verificationResult
@@ -4096,8 +4095,14 @@ viewSelectedProposal ctx cip100Verification { id, actionType, metadata, metadata
                             else
                                 Nothing
             in
-            Html.div []
-                [ Html.li
+            Html.div
+                [ HA.style "padding" "1rem"
+                , HA.style "margin-bottom" "1rem"
+                , HA.style "background-color" "#F9FAFB"
+                , HA.style "border" "1px solid #E5E7EB"
+                , HA.style "border-radius" "0.5rem"
+                ]
+                [ Html.div
                     [ HA.style "margin-bottom" "0.5rem"
                     , HA.style "line-height" "1.6"
                     , HA.style "color" "#4A5568"
@@ -4106,7 +4111,7 @@ viewSelectedProposal ctx cip100Verification { id, actionType, metadata, metadata
                     , text name
                     ]
                 , if publicKey /= "" then
-                    Html.li
+                    Html.div
                         [ HA.style "margin-bottom" "0.5rem"
                         , HA.style "line-height" "1.6"
                         , HA.style "color" "#4A5568"
@@ -4119,7 +4124,7 @@ viewSelectedProposal ctx cip100Verification { id, actionType, metadata, metadata
                     text ""
                 , case signatureStatus of
                     Just ( badge, maybeError ) ->
-                        Html.li
+                        Html.div
                             [ HA.style "margin-bottom" "0.5rem"
                             , HA.style "line-height" "1.6"
                             , HA.style "color" "#4A5568"
