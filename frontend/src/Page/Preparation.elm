@@ -1443,11 +1443,11 @@ innerUpdate ctx msg model =
             )
 
         LoadedAuthorSignatureJsonRationale n authorName jsonStr ->
-            ( case JD.decodeString (authorWitnessExtractDecoder authorName) jsonStr of
-                Err decodingError ->
+            ( case authorWitnessExtractResult authorName jsonStr of
+                Err loadError ->
                     { model
                         | rationaleSignatureStep =
-                            signatureDecodingError decodingError authorName model.rationaleSignatureStep
+                            handleSignatureLoadError loadError model.rationaleSignatureStep
                     }
 
                 Ok authorWitness ->
@@ -2758,38 +2758,45 @@ handleJsonSignatureFileRead n authorName result =
             LoadedAuthorSignatureJsonRationale n authorName json
 
 
-authorWitnessExtractDecoder : String -> JD.Decoder AuthorWitness
-authorWitnessExtractDecoder authorName =
-    JD.field "authors" (JD.list ProposalMetadata.authorWitnessDecoder)
-        |> JD.andThen
-            (\authors ->
-                case List.head <| List.filter (\a -> a.name == authorName) authors of
-                    Just author ->
-                        JD.succeed author
-
-                    Nothing ->
-                        JD.fail <| "No witness found for author: " ++ authorName
-            )
+type SignatureLoadError
+    = AuthorNotFoundInFile String
+    | InvalidSignatureFileFormat
+    | JsonDecodingFailed
 
 
-signatureDecodingError : JD.Error -> String -> Step RationaleSignatureForm {} RationaleSignature -> Step RationaleSignatureForm {} RationaleSignature
-signatureDecodingError decodingError authorName rationaleSignatureStep =
-    let
-        errorMessage =
-            case decodingError of
-                JD.Failure message _ ->
-                    if String.contains "No witness found for author" message then
-                        "No witness found for author \"" ++ authorName ++ "\" in the uploaded signature file. Please ensure the signature file matches the author name."
+authorWitnessExtractResult : String -> String -> Result SignatureLoadError AuthorWitness
+authorWitnessExtractResult authorName jsonStr =
+    case JD.decodeString (JD.field "authors" (JD.list ProposalMetadata.authorWitnessDecoder)) jsonStr of
+        Err _ ->
+            Err InvalidSignatureFileFormat
 
-                    else
-                        "Invalid signature file format. Please upload a valid JSON signature file."
+        Ok authors ->
+            case List.head <| List.filter (\a -> a.name == authorName) authors of
+                Just author ->
+                    Ok author
 
-                _ ->
-                    "Failed to read signature file. Please check the file format."
-    in
+                Nothing ->
+                    Err (AuthorNotFoundInFile authorName)
+
+
+signatureLoadErrorToString : SignatureLoadError -> String
+signatureLoadErrorToString error =
+    case error of
+        AuthorNotFoundInFile authorName ->
+            "No witness found for author \"" ++ authorName ++ "\" in the uploaded signature file. Please ensure the signature file matches the author name."
+
+        InvalidSignatureFileFormat ->
+            "Invalid signature file format. Please upload a valid JSON signature file."
+
+        JsonDecodingFailed ->
+            "Failed to read signature file. Please check the file format."
+
+
+handleSignatureLoadError : SignatureLoadError -> Step RationaleSignatureForm {} RationaleSignature -> Step RationaleSignatureForm {} RationaleSignature
+handleSignatureLoadError error rationaleSignatureStep =
     case rationaleSignatureStep of
         Preparing form ->
-            Preparing { form | error = Just errorMessage }
+            Preparing { form | error = Just (signatureLoadErrorToString error) }
 
         _ ->
             rationaleSignatureStep
