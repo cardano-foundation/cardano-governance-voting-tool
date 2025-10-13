@@ -60,6 +60,17 @@
             version: 3,
             storeNames: ["proposalMetadata", "tx", "scriptInfo", "app"],
         });
+        
+        // Transform name-only author format
+        const transformAuthors = (authors) => {
+            return authors.map(author => ({
+                name: author.name,
+                witnessAlgorithm: author.witnessAlgorithm || "",
+                publicKey: author.publicKey || "",
+                signature: author.signature || null
+            }));
+        };
+        
         var mainApp = Elm.Main.init({
             node: document.getElementById("main-app"),
             flags: {
@@ -72,7 +83,7 @@
                     description: {{ipfs_description|tojson}},
                 },
                 voterPreconfig: JSON.parse({{preconfigured_voters|tojson}}),
-                authorPreconfig: JSON.parse({{preconfigured_authors|tojson}}),
+                authorPreconfig: transformAuthors(JSON.parse({{preconfigured_authors|tojson}})),
             },
         });
         ElmCardano.init({

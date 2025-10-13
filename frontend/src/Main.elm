@@ -92,7 +92,7 @@ type alias Flags =
     , networkId : Int
     , ipfsPreconfig : { label : String, description : String }
     , voterPreconfig : List PreconfVoter
-    , authorPreconfig : Value
+    , authorPreconfig : List AuthorWitness
     }
 
 
@@ -225,13 +225,8 @@ init { url, jsonLdContexts, db, networkId, ipfsPreconfig, voterPreconfig, author
         networkIdTyped =
             Address.networkIdFromInt networkId |> Maybe.withDefault Testnet
 
-        -- Decode preconfigured authors
-        decodedAuthorPreconfig =
-            JD.decodeValue (JD.list ProposalMetadata.nameOnlyAuthorDecoder) authorPreconfig
-                |> Result.withDefault []
-
         config =
-            ModelConfig jsonLdContexts db networkIdTyped ipfsPreconfig voterPreconfig decodedAuthorPreconfig
+            ModelConfig jsonLdContexts db networkIdTyped ipfsPreconfig voterPreconfig authorPreconfig
     in
     initHelper (locationHrefToRoute url) config
 
