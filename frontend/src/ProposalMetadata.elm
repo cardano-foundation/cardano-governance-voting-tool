@@ -1,4 +1,4 @@
-module ProposalMetadata exposing (AuthorWitness, Body, ProposalMetadata, authorWitnessDecoder, decoder, encode, fromRaw, nameOnlyAuthorDecoder)
+module ProposalMetadata exposing (AuthorWitness, Body, ProposalMetadata, authorWitnessDecoder, decoder, encode, fromRaw)
 
 {-| Helper module to handle proposals metadata following [CIP-108](https://cips.cardano.org/cip/CIP-0108).
 -}
@@ -99,18 +99,3 @@ authorWitnessDecoder =
         (JD.at [ "witness", "witnessAlgorithm" ] JD.string)
         (JD.at [ "witness", "publicKey" ] JD.string)
         (JD.at [ "witness", "signature" ] JD.string |> JD.map Just)
-
-
-{-| JSON decoder for name-only authors
--}
-nameOnlyAuthorDecoder : JD.Decoder AuthorWitness
-nameOnlyAuthorDecoder =
-    JD.map
-        (\name ->
-            { name = name
-            , witnessAlgorithm = ""
-            , publicKey = ""
-            , signature = Nothing
-            }
-        )
-        (JD.field "name" JD.string)

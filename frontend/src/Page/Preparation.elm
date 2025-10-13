@@ -2745,7 +2745,6 @@ handleJsonSignatureFileRead n authorName result =
 type SignatureLoadError
     = AuthorNotFoundInFile String
     | InvalidSignatureFileFormat
-    | JsonDecodingFailed
 
 
 authorWitnessExtractResult : String -> String -> Result SignatureLoadError AuthorWitness
@@ -2771,9 +2770,6 @@ signatureLoadErrorToString error =
 
         InvalidSignatureFileFormat ->
             "Invalid signature file format. Please upload a valid JSON signature file."
-
-        JsonDecodingFailed ->
-            "Failed to read signature file. Please check the file format."
 
 
 handleSignatureLoadError : SignatureLoadError -> Step RationaleSignatureForm {} RationaleSignature -> Step RationaleSignatureForm {} RationaleSignature
