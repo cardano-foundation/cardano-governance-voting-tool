@@ -4032,82 +4032,105 @@ viewSelectedProposal ctx model { id, actionType, metadata, metadataUrl, metadata
                     else
                         Nothing
 
-                verificationBadge =
+                signatureStatus =
                     case verification of
                         Just { isValid, errorMessage } ->
                             if isValid then
-                                Html.span
-                                    [ HA.style "display" "inline-flex"
-                                    , HA.style "align-items" "center"
-                                    , HA.style "margin-left" "0.5rem"
-                                    , HA.style "padding" "0.125rem 0.5rem"
-                                    , HA.style "background-color" "#D1FAE5"
-                                    , HA.style "color" "#065F46"
-                                    , HA.style "border-radius" "0.25rem"
-                                    , HA.style "font-size" "0.75rem"
-                                    , HA.style "font-weight" "600"
-                                    , HA.style "vertical-align" "middle"
-                                    , HA.attribute "title" "Signature verified by CIP-100 verification API"
-                                    ]
-                                    [ text "✓ VERIFIED" ]
+                                Just
+                                    ( Html.span
+                                        [ HA.style "display" "inline-flex"
+                                        , HA.style "align-items" "center"
+                                        , HA.style "padding" "0.125rem 0.5rem"
+                                        , HA.style "background-color" "#D1FAE5"
+                                        , HA.style "color" "#065F46"
+                                        , HA.style "border-radius" "0.25rem"
+                                        , HA.style "font-size" "0.75rem"
+                                        , HA.style "font-weight" "600"
+                                        ]
+                                        [ text "✓ VERIFIED" ]
+                                    , Nothing
+                                    )
 
                             else
-                                Html.span
-                                    [ HA.style "display" "inline-flex"
-                                    , HA.style "align-items" "center"
-                                    , HA.style "margin-left" "0.5rem"
-                                    , HA.style "padding" "0.125rem 0.5rem"
-                                    , HA.style "background-color" "#FEE2E2"
-                                    , HA.style "color" "#991B1B"
-                                    , HA.style "border-radius" "0.25rem"
-                                    , HA.style "font-size" "0.75rem"
-                                    , HA.style "font-weight" "600"
-                                    , HA.style "vertical-align" "middle"
-                                    , HA.attribute "title" (Maybe.withDefault "Signature verification failed" errorMessage)
-                                    ]
-                                    [ text "✗ INVALID" ]
+                                Just
+                                    ( Html.span
+                                        [ HA.style "display" "inline-flex"
+                                        , HA.style "align-items" "center"
+                                        , HA.style "padding" "0.125rem 0.5rem"
+                                        , HA.style "background-color" "#FEE2E2"
+                                        , HA.style "color" "#991B1B"
+                                        , HA.style "border-radius" "0.25rem"
+                                        , HA.style "font-size" "0.75rem"
+                                        , HA.style "font-weight" "600"
+                                        ]
+                                        [ text "✗ INVALID" ]
+                                    , Maybe.map
+                                        (\err ->
+                                            Html.div
+                                                [ HA.style "margin-top" "0.25rem"
+                                                , HA.style "font-size" "0.875rem"
+                                                , HA.style "color" "#DC2626"
+                                                ]
+                                                [ text err ]
+                                        )
+                                        errorMessage
+                                    )
 
                         Nothing ->
                             if witnessAlgorithm == "" || publicKey == "" then
-                                Html.span
-                                    [ HA.style "display" "inline-flex"
-                                    , HA.style "align-items" "center"
-                                    , HA.style "margin-left" "0.5rem"
-                                    , HA.style "padding" "0.125rem 0.5rem"
-                                    , HA.style "background-color" "#F3F4F6"
-                                    , HA.style "color" "#6B7280"
-                                    , HA.style "border-radius" "0.25rem"
-                                    , HA.style "font-size" "0.75rem"
-                                    , HA.style "font-weight" "600"
-                                    , HA.style "vertical-align" "middle"
-                                    , HA.attribute "title" "No signature to verify"
-                                    ]
-                                    [ text "NAME ONLY" ]
+                                Just
+                                    ( Html.span
+                                        [ HA.style "display" "inline-flex"
+                                        , HA.style "align-items" "center"
+                                        , HA.style "padding" "0.125rem 0.5rem"
+                                        , HA.style "background-color" "#F3F4F6"
+                                        , HA.style "color" "#6B7280"
+                                        , HA.style "border-radius" "0.25rem"
+                                        , HA.style "font-size" "0.75rem"
+                                        , HA.style "font-weight" "600"
+                                        ]
+                                        [ text "None" ]
+                                    , Nothing
+                                    )
 
                             else
-                                text ""
+                                Nothing
             in
-            Html.li
-                [ HA.style "margin-bottom" "0.75rem"
-                , HA.style "line-height" "1.6"
-                , HA.style "color" "#4A5568"
-                ]
-                [ Html.div [ HA.style "display" "flex", HA.style "align-items" "center" ]
-                    [ Html.span []
-                        [ Html.strong [] [ text "Name: " ]
-                        , text name
-                        ]
-                    , verificationBadge
+            Html.div []
+                [ Html.li
+                    [ HA.style "margin-bottom" "0.5rem"
+                    , HA.style "line-height" "1.6"
+                    , HA.style "color" "#4A5568"
+                    ]
+                    [ Html.strong [] [ text "Name: " ]
+                    , text name
                     ]
                 , if publicKey /= "" then
-                    Html.div []
-                        [ Html.br [] []
-                        , Html.strong [] [ text "Public key: " ]
+                    Html.li
+                        [ HA.style "margin-bottom" "0.5rem"
+                        , HA.style "line-height" "1.6"
+                        , HA.style "color" "#4A5568"
+                        ]
+                        [ Html.strong [] [ text "Public key: " ]
                         , text publicKey
                         ]
 
                   else
                     text ""
+                , case signatureStatus of
+                    Just ( badge, maybeError ) ->
+                        Html.li
+                            [ HA.style "margin-bottom" "0.5rem"
+                            , HA.style "line-height" "1.6"
+                            , HA.style "color" "#4A5568"
+                            ]
+                            [ Html.strong [] [ text "Signature: " ]
+                            , badge
+                            , Maybe.withDefault (text "") maybeError
+                            ]
+
+                    Nothing ->
+                        text ""
                 ]
 
         cardanoSignerExample =
