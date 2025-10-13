@@ -13,6 +13,7 @@ import Cardano.Utxo exposing (TransactionId)
 import ConcurrentTask exposing (ConcurrentTask)
 import ConcurrentTask.Http
 import File exposing (File)
+import Helper
 import Http
 import Json.Decode as JD exposing (Decoder)
 import Json.Encode as JE
@@ -825,11 +826,7 @@ taskLoadProposalMetadata url =
     let
         adjustedUrl =
             -- Differentiate HTTP and IPFS protocols to adjust the IPFS URL to a gateway
-            if String.startsWith "ipfs://" url then
-                "https://ipfs.io/ipfs/" ++ String.dropLeft 7 url
-
-            else
-                url
+            Helper.ipfsToHttpsUrl url
     in
     ConcurrentTask.Http.get
         { url = adjustedUrl

@@ -794,15 +794,7 @@ viewVoteRecord ctx voterIdStr ( actionIdStr, { proposalTitle, voteIntent } ) =
         { vote, rationale } =
             voteIntent
 
-        -- Convert ipfs URL to a gateway link
-        toWebUrl : String -> String
-        toWebUrl url =
-            if String.startsWith "ipfs://" url then
-                "https://ipfs.io/ipfs/" ++ String.dropLeft 7 url
-
-            else
-                url
-
+        -- Display rationale with IPFS link conversion
         rationaleView : Html msg
         rationaleView =
             case rationale of
@@ -811,7 +803,7 @@ viewVoteRecord ctx voterIdStr ( actionIdStr, { proposalTitle, voteIntent } ) =
 
                 Just { url } ->
                     Html.a
-                        [ HA.href (toWebUrl url)
+                        [ HA.href (Helper.ipfsToHttpsUrl url)
                         , HA.target "_blank"
                         , HA.style "color" "#2563EB"
                         , HA.style "text-decoration" "underline"

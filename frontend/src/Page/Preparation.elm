@@ -632,22 +632,6 @@ uploadedIdentifierToLink identifier =
 -- ###################################################################
 
 
-{-| Convert IPFS URL to HTTPS gateway URL for the verification API.
-The CIP-100 verification API only accepts HTTPS URLs.
--}
-ipfsToHttpsUrl : String -> String
-ipfsToHttpsUrl url =
-    if String.startsWith "ipfs://" url then
-        let
-            cid =
-                String.dropLeft 7 url
-        in
-        "https://ipfs.io/ipfs/" ++ cid
-
-    else
-        url
-
-
 {-| Call the CIP-100 verification API for a given metadata URL.
 Uses the backend proxy to avoid CORS issues.
 -}
@@ -656,7 +640,7 @@ verifyCip100Metadata actionId metadataUrl =
     let
         -- Convert IPFS URLs to HTTPS gateway URLs
         httpsUrl =
-            ipfsToHttpsUrl metadataUrl
+            Helper.ipfsToHttpsUrl metadataUrl
 
         verificationApiUrl =
             "https://verifycardanomessage.cardanofoundation.org/api/verify-cip100?url=" ++ Url.percentEncode httpsUrl
@@ -3039,8 +3023,11 @@ handlePdfIpfsAnswer ctx model form rationale ipfsAnswer =
         -- and in the list of references.
         ( Done _ { id }, IpfsAddSuccessful file ) ->
             let
+                ipfsUri =
+                    "ipfs://" ++ file.cid
+
                 pdfLink =
-                    "https://ipfs.io/ipfs/" ++ file.cid
+                    Helper.ipfsToHttpsUrl ipfsUri
 
                 updatedRationaleStatement =
                     "A [PDF version][pdf-link] of this rationale is also made available."
@@ -3053,7 +3040,7 @@ handlePdfIpfsAnswer ctx model form rationale ipfsAnswer =
                     rationale.references
                         ++ [ { type_ = OtherRefType
                              , label = "Rationale PDF"
-                             , uri = "ipfs://" ++ file.cid
+                             , uri = ipfsUri
                              }
                            ]
 
@@ -3124,7 +3111,11 @@ checkPublishedRationaleUrl { raw, uri } =
     -- Make a request to retrieve the rationale at the given URI.
     -- If that is an IPFS url (ipfs://<cid>), try to fetch it with a gateway over HTTP.
     if String.startsWith "ipfs://" uri then
-        Api.defaultApiProvider.getFromIpfsGateway (GotRawPublishedRationale raw) "https://ipfs.io/ipfs" (String.dropLeft 7 uri)
+        let
+            cid =
+                String.dropLeft 7 uri
+        in
+        Api.defaultApiProvider.getFromIpfsGateway (GotRawPublishedRationale raw) "https://ipfs.io/ipfs" cid
 
     else
         Http.get

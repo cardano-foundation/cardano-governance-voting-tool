@@ -1,5 +1,5 @@
 module Helper exposing
-    ( shortenedHex, prettyAdaLovelace
+    ( ipfsToHttpsUrl, shortenedHex, prettyAdaLovelace
     , textFieldInline, textInputField
     , formContainer, boxContainer, viewGrid, cardContainer, cardHeader, cardContent
     , viewButton, viewWalletButton, externalLink, externalLinkButton, trashButton
@@ -27,7 +27,7 @@ and are potentially useful in multiple places.
 
 # String formatting
 
-@docs shortenedHex, prettyAdaLovelace
+@docs ipfsToHttpsUrl, shortenedHex, prettyAdaLovelace
 
 
 # Form elements
@@ -128,6 +128,23 @@ import Url
 
 
 -- STRING FORMATTING ###########################################################
+
+
+{-| Convert IPFS URL to HTTPS gateway URL.
+Converts `ipfs://<cid>` to `https://ipfs.io/ipfs/<cid>`.
+Non-IPFS URLs are returned unchanged.
+-}
+ipfsToHttpsUrl : String -> String
+ipfsToHttpsUrl url =
+    if String.startsWith "ipfs://" url then
+        let
+            cid =
+                String.dropLeft 7 url
+        in
+        "https://ipfs.io/ipfs/" ++ cid
+
+    else
+        url
 
 
 {-| Shorten some string, by only keeping the first and last few characters.
@@ -2209,11 +2226,8 @@ formattedReference typeToString ref =
             ]
         , if String.startsWith "ipfs://" ref.uri then
             let
-                cid =
-                    String.dropLeft 7 ref.uri
-
                 gatewayUrl =
-                    "https://ipfs.io/ipfs/" ++ cid
+                    ipfsToHttpsUrl ref.uri
             in
             Html.a
                 [ HA.href gatewayUrl
