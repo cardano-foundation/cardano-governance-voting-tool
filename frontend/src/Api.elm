@@ -1,4 +1,4 @@
-module Api exposing (ActiveProposal, ApiProvider, CcInfo, DrepInfo, IpfsAnswer(..), IpfsFile, OnchainVote, PoolInfo, ProtocolParams, defaultApiProvider)
+module Api exposing (ActiveProposal, ApiProvider, AuthorVerification, CcInfo, Cip100VerificationResponse, DrepInfo, IpfsAnswer(..), IpfsFile, OnchainVote, PoolInfo, ProtocolParams, defaultApiProvider)
 
 {-| Module gathering all the remote HTTP calls made by the app.
 -}
@@ -24,6 +24,7 @@ import ProposalMetadata exposing (ProposalMetadata)
 import RemoteData exposing (RemoteData)
 import ScriptInfo exposing (ScriptInfo)
 import Task
+import Url
 
 
 {-| Free Tier Koios API token.
@@ -63,6 +64,7 @@ type alias ApiProvider msg =
     , ipfsAddFile : { file : File } -> (Result String IpfsAnswer -> msg) -> Cmd msg
     , convertToPdf : String -> (Result Http.Error ElmBytes.Bytes -> msg) -> Cmd msg
     , getFromIpfsGateway : (Result Http.Error String -> msg) -> String -> String -> Cmd msg
+    , verifyCip100Metadata : String -> (Result Http.Error Cip100VerificationResponse -> msg) -> Cmd msg
     }
 
 
@@ -469,6 +471,43 @@ ipfsAnswerDecoder =
 
 
 
+-- CIP100 signature verification
+
+
+{-| Response from the CIP-100 verification API.
+-}
+type alias Cip100VerificationResponse =
+    { authors : List AuthorVerification
+    }
+
+
+{-| Verification result for a single author.
+-}
+type alias AuthorVerification =
+    { authorName : String
+    , isValid : Bool
+    , errorMessage : Maybe String
+    }
+
+
+{-| Decoder for CIP-100 verification response.
+The API returns a nested structure with data.authors.
+-}
+cip100VerificationDecoder : JD.Decoder Cip100VerificationResponse
+cip100VerificationDecoder =
+    JD.map Cip100VerificationResponse
+        (JD.at [ "data", "authors" ] (JD.list authorVerificationDecoder))
+
+
+authorVerificationDecoder : JD.Decoder AuthorVerification
+authorVerificationDecoder =
+    JD.map3 AuthorVerification
+        (JD.field "name" JD.string)
+        (JD.field "valid" JD.bool)
+        (JD.maybe (JD.field "error" JD.string))
+
+
+
 -- Default API Provider
 
 
@@ -784,6 +823,28 @@ defaultApiProvider =
             Http.get
                 { url = gateway ++ "/" ++ cid
                 , expect = Http.expectString toMsg
+                }
+    , verifyCip100Metadata =
+        \metadataUrl toMsg ->
+            let
+                -- Convert IPFS URLs to HTTPS gateway URLs
+                httpsUrl =
+                    Helper.ipfsToHttpsUrl metadataUrl
+
+                verificationApiUrl =
+                    "https://verifycardanomessage.cardanofoundation.org/api/verify-cip100?url=" ++ Url.percentEncode httpsUrl
+
+                proxyRequestBody =
+                    JE.object
+                        [ ( "url", JE.string verificationApiUrl )
+                        , ( "method", JE.string "GET" )
+                        , ( "headers", JE.object [] )
+                        ]
+            in
+            Http.post
+                { url = "/proxy/json"
+                , body = Http.jsonBody proxyRequestBody
+                , expect = Http.expectJson toMsg cip100VerificationDecoder
                 }
     }
 

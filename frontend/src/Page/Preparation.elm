@@ -25,7 +25,7 @@ The steps are sequential but allow going back to modify previous steps.
 
 -}
 
-import Api exposing (ActiveProposal, CcInfo, DrepInfo, IpfsAnswer(..), OnchainVote, PoolInfo)
+import Api exposing (ActiveProposal, AuthorVerification, CcInfo, DrepInfo, IpfsAnswer(..), OnchainVote, PoolInfo)
 import Blake2b exposing (blake2b256)
 import Browser.Dom as Dom
 import Bytes as ElmBytes
@@ -127,22 +127,6 @@ type Cip100VerificationState
     | VerificationLoading
     | VerificationSuccess (List AuthorVerification)
     | VerificationError String
-
-
-{-| Verification result for a single author.
--}
-type alias AuthorVerification =
-    { authorName : String
-    , isValid : Bool
-    , errorMessage : Maybe String
-    }
-
-
-{-| Response from the CIP-100 verification API.
--}
-type alias Cip100VerificationResponse =
-    { authors : List AuthorVerification
-    }
 
 
 init : { label : String, description : String } -> Model
@@ -626,64 +610,8 @@ uploadedIdentifierToLink identifier =
             url
 
 
-
--- ###################################################################
--- CIP-100 Verification API
--- ###################################################################
-
-
-{-| Call the CIP-100 verification API for a given metadata URL.
-Uses the backend proxy to avoid CORS issues.
+{-| Convert Error to readable error :D
 -}
-verifyCip100Metadata : String -> String -> Cmd Msg
-verifyCip100Metadata actionId metadataUrl =
-    let
-        -- Convert IPFS URLs to HTTPS gateway URLs
-        httpsUrl =
-            Helper.ipfsToHttpsUrl metadataUrl
-
-        verificationApiUrl =
-            "https://verifycardanomessage.cardanofoundation.org/api/verify-cip100?url=" ++ Url.percentEncode httpsUrl
-
-        proxyRequestBody =
-            JE.object
-                [ ( "url", JE.string verificationApiUrl )
-                , ( "method", JE.string "GET" )
-                , ( "headers", JE.object [] )
-                ]
-    in
-    Http.post
-        { url = "/proxy/json"
-        , body = Http.jsonBody proxyRequestBody
-        , expect = Http.expectJson (GotCip100Verification actionId) cip100VerificationDecoder
-        }
-
-
-{-| Decoder for CIP-100 verification response.
-The API returns a nested structure with data.authors.
--}
-cip100VerificationDecoder : JD.Decoder Cip100VerificationResponse
-cip100VerificationDecoder =
-    JD.map Cip100VerificationResponse
-        (JD.at [ "data", "authors" ] (JD.list authorVerificationDecoder))
-
-
-
--- Decoder for individual author verification result.
-
-
-authorVerificationDecoder : JD.Decoder AuthorVerification
-authorVerificationDecoder =
-    JD.map3 AuthorVerification
-        (JD.field "name" JD.string)
-        (JD.field "valid" JD.bool)
-        (JD.maybe (JD.field "error" JD.string))
-
-
-
--- Convert Error to readable error :D
-
-
 httpErrorToString : Http.Error -> String
 httpErrorToString error =
     case error of
@@ -781,7 +709,7 @@ type Msg
     | PickProposalButtonClicked String
     | ChangeProposalButtonClicked
     | ShowMoreProposals Int
-    | GotCip100Verification String (Result Http.Error Cip100VerificationResponse)
+    | GotCip100Verification String (Result Http.Error Api.Cip100VerificationResponse)
       -- Storage Config Step
     | StorageMethodSelected StorageMethod
     | BlockfrostProjectIdChange String
@@ -1066,7 +994,7 @@ innerUpdate ctx msg model =
                                 ( verificationCmd, verificationDict ) =
                                     case ( prop.metadata, Dict.get actionId model.cip100Verification ) of
                                         ( RemoteData.Success _, Nothing ) ->
-                                            ( verifyCip100Metadata actionId prop.metadataUrl
+                                            ( Api.defaultApiProvider.verifyCip100Metadata prop.metadataUrl (GotCip100Verification actionId)
                                                 |> Cmd.map ctx.wrapMsg
                                             , Dict.insert actionId VerificationLoading model.cip100Verification
                                             )
