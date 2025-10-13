@@ -1062,19 +1062,22 @@ innerUpdate ctx msg model =
                     case Dict.get actionId proposalsDict of
                         Just prop ->
                             let
-                                verificationCmd =
-                                    case prop.metadata of
-                                        RemoteData.Success _ ->
-                                            verifyCip100Metadata actionId prop.metadataUrl
+                                -- Only make this request if not already verified
+                                ( verificationCmd, verificationDict ) =
+                                    case ( prop.metadata, Dict.get actionId model.cip100Verification ) of
+                                        ( RemoteData.Success _, Nothing ) ->
+                                            ( verifyCip100Metadata actionId prop.metadataUrl
                                                 |> Cmd.map ctx.wrapMsg
+                                            , Dict.insert actionId VerificationLoading model.cip100Verification
+                                            )
 
                                         _ ->
-                                            Cmd.none
+                                            ( Cmd.none, model.cip100Verification )
 
                                 updatedModel =
                                     { model
                                         | pickProposalStep = Done form prop
-                                        , cip100Verification = Dict.insert actionId VerificationLoading model.cip100Verification
+                                        , cip100Verification = verificationDict
                                     }
                             in
                             ( updatedModel
