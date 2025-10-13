@@ -4868,37 +4868,15 @@ viewOneAuthorForm preconfiguredAuthors n author =
             , HA.style "background-color" "#F0F9FF"
             , HA.style "padding" "1rem"
             ]
-            [ div
-                [ HA.style "display" "flex"
-                , HA.style "justify-content" "space-between"
-                , HA.style "align-items" "center"
+            [ Html.h4
+                [ HA.style "font-weight" "500"
+                , HA.style "font-size" "1rem"
+                , HA.style "color" "#1A202C"
                 , HA.style "margin-bottom" "0.75rem"
                 ]
-                [ Html.h4
-                    [ HA.style "font-weight" "500"
-                    , HA.style "font-size" "1rem"
-                    , HA.style "color" "#1A202C"
-                    ]
-                    [ text ("Author " ++ String.fromInt (n + 1)) ]
-                , Html.span
-                    [ HA.style "font-size" "0.75rem"
-                    , HA.style "color" "#0284C7"
-                    , HA.style "font-weight" "500"
-                    , HA.style "background-color" "#E0F2FE"
-                    , HA.style "padding" "0.25rem 0.5rem"
-                    , HA.style "border-radius" "0.25rem"
-                    ]
-                    [ text "Preconfigured" ]
-                ]
+                [ text ("Author " ++ String.fromInt (n + 1)) ]
             , Helper.labeledField "Author name"
                 (Helper.readOnlyField author.name)
-            , Html.p
-                [ HA.style "margin-top" "0.75rem"
-                , HA.style "font-size" "0.875rem"
-                , HA.style "color" "#4A5568"
-                , HA.style "font-style" "italic"
-                ]
-                [ text "This author does not require a cryptographic signature." ]
             ]
 
     else
