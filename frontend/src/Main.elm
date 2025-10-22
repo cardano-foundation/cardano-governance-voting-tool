@@ -338,6 +338,7 @@ type Msg
     | CartPageMsg Page.Cart.Msg
     | DeleteVote { voterIdStr : String, actionIdStr : String }
     | ClearCart
+    | SaveImportedCart
     | CartBroadcastReceived Value
       -- Multisig DRep registration page
     | MultisigPageMsg Page.MultisigRegistration.Msg
@@ -705,6 +706,7 @@ update msg model =
                     { wrapMsg = CartPageMsg
                     , costModels = Maybe.map .costModels model.protocolParams
                     , loadedWallet = loadedWallet
+                    , saveImportedCart = SaveImportedCart
                     }
 
                 ( updatedCart, cmds ) =
@@ -725,18 +727,11 @@ update msg model =
                 |> Tuple.mapFirst (\newTaskPool -> { model | taskPool = newTaskPool, cart = updatedCart })
                 |> Cmd.Extra.add (broadcastCart networkId updatedCart)
 
-        ( ClearCart, { networkId } ) ->
-            let
-                emptyCart =
-                    Page.Cart.init
+        ( ClearCart, _ ) ->
+            saveCart Page.Cart.init model
 
-                writeCartToDb =
-                    Storage.write { db = model.db, storeName = "app" } Page.Cart.serialize { key = "cart:" ++ networkIdToString networkId } emptyCart
-                        |> ConcurrentTask.map (always Ignore)
-            in
-            ConcurrentTask.attempt { pool = model.taskPool, send = sendTask, onComplete = OnTaskComplete } writeCartToDb
-                |> Tuple.mapFirst (\newTaskPool -> { model | taskPool = newTaskPool, cart = emptyCart })
-                |> Cmd.Extra.add (broadcastCart networkId emptyCart)
+        ( SaveImportedCart, _ ) ->
+            saveCart model.cart model
 
         ( CartBroadcastReceived value, _ ) ->
             let
@@ -1294,6 +1289,18 @@ updateModelWithPrepToParentMsg msgToParent model =
                         updateModelWithPrepToParentMsg (Just msg2) newModel
                             |> Tuple.mapSecond (\cmd2 -> Cmd.batch [ cmd1, cmd2 ])
                    )
+
+
+saveCart : Page.Cart.Model -> Model -> ( Model, Cmd Msg )
+saveCart cart model =
+    let
+        writeCartToDb =
+            Storage.write { db = model.db, storeName = "app" } Page.Cart.serialize { key = "cart:" ++ networkIdToString model.networkId } cart
+                |> ConcurrentTask.map (always Ignore)
+    in
+    ConcurrentTask.attempt { pool = model.taskPool, send = sendTask, onComplete = OnTaskComplete } writeCartToDb
+        |> Tuple.mapFirst (\newTaskPool -> { model | taskPool = newTaskPool, cart = cart })
+        |> Cmd.Extra.add (broadcastCart model.networkId cart)
 
 
 {-| Helper function to reset the signing step of the Preparation.
