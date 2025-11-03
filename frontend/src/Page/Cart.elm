@@ -12,14 +12,19 @@ import Cardano.Uplc as Uplc
 import Cardano.Utils as Utils
 import Cardano.Utxo as Utxo exposing (Output)
 import Cardano.Witness as Witness exposing (Voter(..))
+import Cmd.Extra
 import Dict exposing (Dict)
 import Dict.Any
+import File exposing (File)
+import File.Select
 import Helper exposing (cardContainer, cardContent, cardHeader, sectionTitle, viewButton, viewError)
 import Html exposing (Html, div, text)
 import Html.Attributes as HA
 import Json.Decode as JD
 import Json.Encode as JE
 import Natural as N
+import Task
+import Url
 
 
 {-| The Cart model has two states, preparing and ready.
@@ -127,7 +132,11 @@ getVoter voterId model =
 
 
 type Msg
-    = BuildTx
+    = NoMsg
+    | BuildTx
+    | ImportCartButtonClicked
+    | CartFileSelected File
+    | LoadedCart String
 
 
 type alias UpdateContext a msg =
@@ -135,12 +144,16 @@ type alias UpdateContext a msg =
         | wrapMsg : Msg -> msg
         , costModels : Maybe CostModels
         , loadedWallet : Maybe { wallet : Cip30.Wallet, utxos : Utxo.RefDict Output }
+        , saveImportedCart : msg
     }
 
 
 update : UpdateContext a msg -> Msg -> Model -> ( Model, Cmd msg )
 update ctx msg model =
     case ( ( ctx.loadedWallet, ctx.costModels ), msg, model ) of
+        ( _, NoMsg, _ ) ->
+            ( model, Cmd.none )
+
         ( ( Just { wallet, utxos }, Just costModels ), BuildTx, Preparing ({ votersIntents } as cartPrep) ) ->
             let
                 walletAddress =
@@ -187,10 +200,49 @@ update ctx msg model =
             ( Preparing { cartPrep | error = Just "We failed to load the cost models, maybe try to refresh." }, Cmd.none )
 
         ( ( Nothing, _ ), BuildTx, Preparing cartPrep ) ->
-            ( Preparing { cartPrep | error = Just "Please connect a wallet to build the transaction" }, Cmd.none )
+            ( Preparing { cartPrep | error = Just "Please connect a wallet to build the transaction, or export your cart and import it in your other browser with a wallet." }, Cmd.none )
 
         ( _, BuildTx, _ ) ->
             ( model, Cmd.none )
+
+        ( _, ImportCartButtonClicked, _ ) ->
+            ( model
+            , Cmd.map ctx.wrapMsg <|
+                File.Select.file [] CartFileSelected
+            )
+
+        ( _, CartFileSelected file, _ ) ->
+            ( model
+            , Task.attempt handleCartFileRead (File.toString file)
+                |> Cmd.map ctx.wrapMsg
+            )
+
+        ( _, LoadedCart cartJsonStr, _ ) ->
+            case JD.decodeString deserialize cartJsonStr of
+                Ok cartModel ->
+                    ( cartModel, Cmd.Extra.perform ctx.saveImportedCart )
+
+                Err error ->
+                    let
+                        reportError votersIntents errorStr =
+                            ( Preparing { votersIntents = votersIntents, error = Just errorStr }, Cmd.none )
+                    in
+                    case model of
+                        Preparing { votersIntents } ->
+                            reportError votersIntents (JD.errorToString error)
+
+                        Ready { votersIntents } ->
+                            reportError votersIntents (JD.errorToString error)
+
+
+handleCartFileRead : Result x String -> Msg
+handleCartFileRead result =
+    case result of
+        Err _ ->
+            NoMsg
+
+        Ok cartJsonStr ->
+            LoadedCart cartJsonStr
 
 
 
@@ -739,11 +791,28 @@ viewPreparingCart ctx { votersIntents, error } =
         actionsBar =
             div
                 [ HA.style "display" "flex"
+                , HA.style "align-items" "center"
+                , HA.style "justify-content" "space-between"
+                , HA.style "margin-bottom" "0.75rem"
+                , HA.style "flex-wrap" "wrap"
                 , HA.style "gap" "0.75rem"
-                , HA.style "margin-top" "0.5rem"
-                , HA.style "margin-bottom" "1rem"
                 ]
-                [ viewButton "Build Transaction" (ctx.wrapMsg BuildTx) ]
+                [ viewButton "Build Transaction" (ctx.wrapMsg BuildTx)
+                , Html.div
+                    [ HA.style "display" "flex"
+                    , HA.style "gap" "0.5rem"
+                    , HA.style "align-items" "center"
+                    , HA.style "flex-wrap" "wrap"
+                    ]
+                    [ Html.a
+                        [ HA.href <| "data:application/json;charset=utf-8," ++ Url.percentEncode (JE.encode 0 <| serializeVotersIntents votersIntents)
+                        , HA.download "vote-cart.json"
+                        , HA.style "text-decoration" "none"
+                        ]
+                        [ viewButton "Export Cart" (ctx.wrapMsg NoMsg) ]
+                    , viewButton "Import Cart" (ctx.wrapMsg ImportCartButtonClicked)
+                    ]
+                ]
     in
     if hasVotes then
         div pageAttrs <|
@@ -758,6 +827,13 @@ viewPreparingCart ctx { votersIntents, error } =
             [ viewCartHeader
             , summaryBar
             , viewEmptyCart
+            , Html.div
+                [ HA.style "display" "flex"
+                , HA.style "justify-content" "flex-end"
+                , HA.style "margin-bottom" "0.75rem"
+                , HA.style "flex-wrap" "wrap"
+                ]
+                [ viewButton "Import Cart" (ctx.wrapMsg ImportCartButtonClicked) ]
             , viewError error
             ]
 
@@ -962,7 +1038,7 @@ viewEmptyCart =
                     [ HA.style "color" "#6B7280"
                     , HA.style "font-size" "0.95rem"
                     ]
-                    [ text "Add votes from Vote Preparation page to see them here." ]
+                    [ text "Add votes from Vote Preparation page to see them here, or import a saved cart with the button below." ]
                 ]
             ]
         ]
