@@ -35,9 +35,9 @@ import Cardano.Cip30 as Cip30
 import Cardano.Gov as Gov exposing (ActionId, Anchor, CostModels, Id(..), Vote)
 import Cardano.Pool as Pool
 import Cardano.Script as Script
-import Cardano.Transaction as Transaction exposing (Transaction, VKeyWitness)
+import Cardano.Transaction as Transaction exposing (Transaction)
 import Cardano.TxIntent exposing (VoteIntent)
-import Cardano.Utxo as Utxo exposing (Output, OutputReference, TransactionId)
+import Cardano.Utxo as Utxo exposing (Output, OutputReference)
 import Cardano.Witness as Witness
 import Cbor.Encode
 import Cmd.Extra
@@ -96,7 +96,6 @@ type alias InnerModel =
     , rationaleSignatureStep : Step RationaleSignatureForm {} RationaleSignature
     , permanentStorageStep : Step StorageForm {} Storage
     , buildTxStep : Step BuildTxPrep {} {}
-    , signTxStep : Step { error : Maybe String } SigningTx SignedTx
     , visibleProposalCount : Int
     , showCartToast : Bool
     , flyToCart : Maybe { x : Float, y : Float, opacity : String, color : String }
@@ -141,7 +140,6 @@ init ipfsPreconfig =
         , rationaleSignatureStep = Preparing initRationaleSignatureForm
         , permanentStorageStep = Preparing initStorageForm
         , buildTxStep = Preparing { error = Nothing }
-        , signTxStep = Preparing { error = Nothing }
         , visibleProposalCount = 10
         , showCartToast = False
         , flyToCart = Nothing
@@ -641,23 +639,6 @@ type alias BuildTxPrep =
 
 
 
--- Sign Tx Step
-
-
-type alias SigningTx =
-    { tx : Transaction
-    , expectedSignatures : List (Bytes CredentialHash)
-    , vkeyWitnesses : List VKeyWitness
-    }
-
-
-type alias SignedTx =
-    { signedTx : Transaction
-    , txId : Bytes TransactionId
-    }
-
-
-
 -- ###################################################################
 -- UPDATE
 -- ###################################################################
@@ -1002,10 +983,26 @@ innerUpdate ctx msg model =
                                         _ ->
                                             ( Cmd.none, model.cip100Verification )
 
+                                -- Reset the rationale if it is not "pre-published"
+                                resetRationaleModel =
+                                    case model.storageConfigStep of
+                                        Done _ (UseCustomPrepublished _) ->
+                                            model
+
+                                        _ ->
+                                            { model
+                                                | rationaleCreationStep = Preparing initRationaleForm
+                                                , rationaleSignatureStep = Preparing initRationaleSignatureForm
+                                                , permanentStorageStep = Preparing initStorageForm
+                                            }
+
                                 updatedModel =
-                                    { model
+                                    { resetRationaleModel
                                         | pickProposalStep = Done form prop
                                         , cip100Verification = verificationDict
+
+                                        -- reset Tx building steps
+                                        , buildTxStep = Preparing { error = Nothing }
                                     }
                             in
                             ( updatedModel
