@@ -3,12 +3,15 @@ export const jsonLdContexts = {
     "@language": "en-us",
     CIP100:
       "https://github.com/cardano-foundation/CIPs/blob/master/CIP-0100/README.md#",
+    CIP129:
+      "https://github.com/cardano-foundation/CIPs/blob/master/CIP-0129/README.md#",
     CIP136:
       "https://github.com/cardano-foundation/CIPs/blob/master/CIP-0136/README.md#",
     hashAlgorithm: "CIP100:hashAlgorithm",
     body: {
       "@id": "CIP136:body",
       "@context": {
+        govActionId: "CIP129:governance-action-identifiers",
         references: {
           "@id": "CIP100:references",
           "@container": "@set",
@@ -33,6 +36,7 @@ export const jsonLdContexts = {
             unconstitutional: "CIP136:unconstitutional",
             abstain: "CIP136:abstain",
             didNotVote: "CIP136:didNotVote",
+            againstVote: "CIP136:againstVote",
           },
         },
       },
