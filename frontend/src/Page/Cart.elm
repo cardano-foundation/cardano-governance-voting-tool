@@ -24,6 +24,7 @@ import Json.Decode as JD
 import Json.Encode as JE
 import Natural as N
 import Task
+import Url
 
 
 {-| The Cart model has two states, preparing and ready.
@@ -793,14 +794,23 @@ viewPreparingCart ctx { votersIntents, error } =
                 , HA.style "align-items" "center"
                 , HA.style "justify-content" "space-between"
                 , HA.style "margin-bottom" "0.75rem"
+                , HA.style "flex-wrap" "wrap"
+                , HA.style "gap" "0.75rem"
                 ]
                 [ viewButton "Build Transaction" (ctx.wrapMsg BuildTx)
-                , Html.div []
-                    [ Helper.downloadJSONButton "Export Cart"
-                        { filename = "vote-cart.json"
-                        , rawJson = JE.encode 0 <| serializeVotersIntents votersIntents
-                        }
-                    , Helper.primaryButton "Import Cart" (ctx.wrapMsg ImportCartButtonClicked)
+                , Html.div
+                    [ HA.style "display" "flex"
+                    , HA.style "gap" "0.5rem"
+                    , HA.style "align-items" "center"
+                    , HA.style "flex-wrap" "wrap"
+                    ]
+                    [ Html.a
+                        [ HA.href <| "data:application/json;charset=utf-8," ++ Url.percentEncode (JE.encode 0 <| serializeVotersIntents votersIntents)
+                        , HA.download "vote-cart.json"
+                        , HA.style "text-decoration" "none"
+                        ]
+                        [ viewButton "Export Cart" (ctx.wrapMsg NoMsg) ]
+                    , viewButton "Import Cart" (ctx.wrapMsg ImportCartButtonClicked)
                     ]
                 ]
     in
@@ -817,7 +827,13 @@ viewPreparingCart ctx { votersIntents, error } =
             [ viewCartHeader
             , summaryBar
             , viewEmptyCart
-            , Helper.primaryButton "Import Cart" (ctx.wrapMsg ImportCartButtonClicked)
+            , Html.div
+                [ HA.style "display" "flex"
+                , HA.style "justify-content" "flex-end"
+                , HA.style "margin-bottom" "0.75rem"
+                , HA.style "flex-wrap" "wrap"
+                ]
+                [ viewButton "Import Cart" (ctx.wrapMsg ImportCartButtonClicked) ]
             , viewError error
             ]
 
