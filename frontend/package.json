@@ -27,7 +27,7 @@
     "@lydell/elm": "^0.19.1-14",
     "autoprefixer": "^10.4.23",
     "elm-cardano": "^0.8.0",
-    "elm-doc-preview": "github:dmy/elm-doc-preview#a9c6d8c28f16e94c312f2343c11b9321d6b316b9",
+    "elm-doc-preview": "^6.0.1",
     "elm-format": "^0.8.8",
     "elm-review": "^2.13.5",
     "elm-test": "^0.19.1-revision17",
