@@ -1970,19 +1970,35 @@ voteNumberInput label value onInputMsg =
 
 {-| Card for references with add button in header
 -}
-referenceCard : List (Html msg) -> msg -> Html msg
-referenceCard content addMsg =
+referenceCard : List (Html msg) -> msg -> Maybe msg -> Html msg
+referenceCard content addMsg maybeConstitutionMsg =
+    let
+        quickAddSection =
+            case maybeConstitutionMsg of
+                Just constitutionMsg ->
+                    div []
+                        [ blackSquareButton [] "+ Constitution" constitutionMsg
+                        ]
+
+                Nothing ->
+                    text ""
+    in
     cardContainer []
-        [ cardHeader
-            [ HA.style "display" "flex"
-            , HA.style "justify-content" "space-between"
-            , HA.style "align-items" "center"
-            ]
+        [ cardHeader []
             "References"
             "Add links and references to support your rationale."
-            [ blackSquareButton [] "+ Add Reference" addMsg ]
+            []
         , cardContent []
-            [ if List.isEmpty content then
+            [ div
+                [ HA.style "display" "flex"
+                , HA.style "justify-content" "space-between"
+                , HA.style "align-items" "center"
+                , HA.style "margin-bottom" "1rem"
+                , HA.style "padding-bottom" "1rem"
+                , HA.style "border-bottom" "1px solid #E2E8F0"
+                ]
+                [ quickAddSection, blackSquareButton [] "+ Add Reference" addMsg ]
+            , if List.isEmpty content then
                 Html.p
                     [ HA.style "text-align" "center"
                     , HA.style "color" "#6B7280"

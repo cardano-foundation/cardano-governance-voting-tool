@@ -50,6 +50,7 @@ So this is how there is a mix of regular `(...) -> Cmd msg` and `ConcurrentTask 
 type alias ApiProvider msg =
     { loadProtocolParams : NetworkId -> (Result Http.Error ProtocolParams -> msg) -> Cmd msg
     , queryEpoch : NetworkId -> (Result Http.Error Int -> msg) -> Cmd msg
+    , queryConstitution : NetworkId -> (Result Http.Error String -> msg) -> Cmd msg
     , loadGovProposals : NetworkId -> Int -> (Result Http.Error (List ActiveProposal) -> msg) -> Cmd msg
     , loadProposalMetadata : String -> ConcurrentTask String ProposalMetadata
     , retrieveTx : NetworkId -> Bytes TransactionId -> ConcurrentTask ConcurrentTask.Http.Error (Bytes Transaction)
@@ -101,6 +102,14 @@ protocolParamsDecoder =
 ogmiosEpochDecoder : Decoder Int
 ogmiosEpochDecoder =
     JD.field "result" JD.int
+
+
+{-| Decoder for the Cardano constitution URI from Ogmios.
+The constitution metadata contains a URL field that points to the constitution document.
+-}
+ogmiosConstitutionDecoder : Decoder String
+ogmiosConstitutionDecoder =
+    JD.at [ "result", "metadata", "url" ] JD.string
 
 
 
@@ -559,6 +568,25 @@ defaultApiProvider =
                             ]
                         )
                 , expect = Http.expectJson toMsg ogmiosEpochDecoder
+                , timeout = Nothing
+                , tracker = Nothing
+                }
+
+    -- Query constitution URI via Koios
+    , queryConstitution =
+        \networkId toMsg ->
+            Http.request
+                { method = "POST"
+                , url = koiosUrl networkId ++ "/ogmios"
+                , headers = [ Http.header "Authorization" <| "Bearer " ++ koiosApiToken ]
+                , body =
+                    Http.jsonBody
+                        (JE.object
+                            [ ( "jsonrpc", JE.string "2.0" )
+                            , ( "method", JE.string "queryLedgerState/constitution" )
+                            ]
+                        )
+                , expect = Http.expectJson toMsg ogmiosConstitutionDecoder
                 , timeout = Nothing
                 , tracker = Nothing
                 }
