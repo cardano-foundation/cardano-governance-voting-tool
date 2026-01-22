@@ -717,6 +717,7 @@ type Msg
     | InternalAgainstVoteChange String
     | AddRefButtonClicked
     | AddConstitutionRefButtonClicked
+    | AddProposalMetadataRefsButtonClicked String String
     | DeleteRefButtonClicked Int
     | ReferenceLabelChange Int String
     | ReferenceUriChange Int String
@@ -1231,6 +1232,25 @@ innerUpdate ctx msg model =
                     }
             in
             ( updateRationaleForm (\form -> { form | references = form.references ++ [ constitutionRef ] }) model
+            , Cmd.none
+            , Nothing
+            )
+
+        AddProposalMetadataRefsButtonClicked metadataUrl metadataHash ->
+            let
+                urlRef =
+                    { type_ = GovernanceMetadataRefType
+                    , label = "Proposal Metadata Anchor URI"
+                    , uri = metadataUrl
+                    }
+
+                hashRef =
+                    { type_ = GovernanceMetadataRefType
+                    , label = "Proposal Metadata Anchor Hash"
+                    , uri = metadataHash
+                    }
+            in
+            ( updateRationaleForm (\form -> { form | references = form.references ++ [ urlRef, hashRef ] }) model
             , Cmd.none
             , Nothing
             )
@@ -4445,8 +4465,8 @@ viewRationaleStep ctx pickProposalStep storageConfigStep step =
                     , Helper.stepNotAvailableCard [ text description ]
                     ]
 
-            ( Done _ _, Done _ storageConfig, Preparing form ) ->
-                viewRationaleForm ctx { hostingIsAppControlled = isHostingAppControlled storageConfig } form
+            ( Done _ proposal, Done _ storageConfig, Preparing form ) ->
+                viewRationaleForm ctx proposal { hostingIsAppControlled = isHostingAppControlled storageConfig } form
 
             ( Done _ _, Done _ _, Validating _ _ ) ->
                 div []
@@ -4498,8 +4518,8 @@ isHostingAppControlled storageConfig =
             False
 
 
-viewRationaleForm : ViewContext msg -> { hostingIsAppControlled : Bool } -> RationaleForm -> Html Msg
-viewRationaleForm ctx { hostingIsAppControlled } form =
+viewRationaleForm : ViewContext msg -> ActiveProposal -> { hostingIsAppControlled : Bool } -> RationaleForm -> Html Msg
+viewRationaleForm ctx proposal { hostingIsAppControlled } form =
     div []
         [ Helper.sectionTitle "Vote Rationale"
         , div [ HA.style "display" "grid", HA.style "gap" "1.5rem", HA.style "position" "relative" ]
@@ -4537,6 +4557,7 @@ viewRationaleForm ctx { hostingIsAppControlled } form =
                         (List.indexedMap viewOneRefForm form.references)
                         AddRefButtonClicked
                         (Maybe.map (\_ -> AddConstitutionRefButtonClicked) ctx.constitutionUri)
+                        (Just (AddProposalMetadataRefsButtonClicked proposal.metadataUrl proposal.metadataHash))
                     ]
 
               else

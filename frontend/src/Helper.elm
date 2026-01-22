@@ -1970,18 +1970,22 @@ voteNumberInput label value onInputMsg =
 
 {-| Card for references with add button in header
 -}
-referenceCard : List (Html msg) -> msg -> Maybe msg -> Html msg
-referenceCard content addMsg maybeConstitutionMsg =
+referenceCard : List (Html msg) -> msg -> Maybe msg -> Maybe msg -> Html msg
+referenceCard content addMsg maybeConstitutionMsg maybeProposalMetadataMsg =
     let
-        quickAddSection =
-            case maybeConstitutionMsg of
-                Just constitutionMsg ->
-                    div []
-                        [ blackSquareButton [] "+ Constitution" constitutionMsg
-                        ]
+        quickAddConstitution =
+            Maybe.map (blackSquareButton [] "+ Constitution") maybeConstitutionMsg
 
-                Nothing ->
+        quickAddProposalMetadata =
+            Maybe.map (blackSquareButton [] "+ Proposal Metadata") maybeProposalMetadataMsg
+
+        quickAddSection =
+            case List.filterMap identity [ quickAddConstitution, quickAddProposalMetadata ] of
+                [] ->
                     text ""
+
+                quickAddButtons ->
+                    div [ HA.style "display" "flex", HA.style "gap" "0.5rem" ] quickAddButtons
     in
     cardContainer []
         [ cardHeader []
