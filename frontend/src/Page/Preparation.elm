@@ -48,6 +48,7 @@ import Dict exposing (Dict)
 import Dict.Any
 import Dict.Extra
 import File exposing (File)
+import File.Download
 import File.Select
 import Helper exposing (PreconfAuthor, PreconfVoter)
 import Html exposing (Html, div, text)
@@ -2862,12 +2863,19 @@ reduceResults results =
 
 sendPinRequest : UpdateContext msg -> StorageForm -> InnerModel -> ( InnerModel, Cmd msg, Maybe MsgToParent )
 sendPinRequest ctx form model =
-    case model.rationaleSignatureStep of
-        Done _ ratSig ->
+    case ( model.rationaleSignatureStep, model.pickProposalStep ) of
+        ( Done _ ratSig, Done _ { id } ) ->
+            let
+                govActionId =
+                    Gov.idToBech32 (GovActionId id)
+
+                fileName =
+                    "rationale-" ++ govActionId ++ ".json"
+            in
             ( { model | permanentStorageStep = Validating { form | error = Nothing } {} }
             , ctx.jsonRationaleToFile
                 { fileContent = ratSig.signedJson
-                , fileName = "rationale-signed.json"
+                , fileName = fileName
                 }
             , Nothing
             )
@@ -2997,17 +3005,20 @@ handlePdfIpfsAnswer ctx model form rationale ipfsAnswer =
 
 handleRationaleIpfsAnswer : InnerModel -> StorageForm -> IpfsAnswer -> ( InnerModel, Cmd msg, Maybe MsgToParent )
 handleRationaleIpfsAnswer model form ipfsAnswer =
-    case ( ipfsAnswer, model.rationaleSignatureStep ) of
-        ( IpfsError error, _ ) ->
+    case ( ipfsAnswer, model.rationaleSignatureStep, model.pickProposalStep ) of
+        ( IpfsError error, _, _ ) ->
             ( { model | permanentStorageStep = Preparing { form | error = Just error } }
             , Cmd.none
             , Nothing
             )
 
-        ( IpfsAddSuccessful file, Done _ r ) ->
+        ( IpfsAddSuccessful file, Done _ r, Done _ { id } ) ->
             let
                 rawJson =
                     r.signedJson
+
+                fileName =
+                    "rationale-" ++ Gov.idToBech32 (GovActionId id) ++ ".json"
 
                 uploadedFile =
                     { name = file.name
@@ -3020,9 +3031,12 @@ handleRationaleIpfsAnswer model form ipfsAnswer =
                             |> blake2b256 Nothing
                             |> Bytes.fromU8
                     }
+
+                downloadCmd =
+                    File.Download.string fileName "application/json" rawJson
             in
             ( { model | permanentStorageStep = Done { form | error = Nothing } { jsonFile = uploadedFile } }
-            , Cmd.none
+            , downloadCmd
             , Nothing
             )
 
@@ -3180,7 +3194,7 @@ view ctx (Model model) =
             , Helper.viewStepWithCircle 3 "storage-config-step" (viewStorageConfigStep ctx model.storageConfigStep)
             , Helper.viewStepWithCircle 4 "rationale-step" (viewRationaleStep ctx model.pickProposalStep model.storageConfigStep model.rationaleCreationStep)
             , Helper.viewStepWithCircle 5 "rationale-signature-step" (viewRationaleSignatureStep ctx model.pickProposalStep model.storageConfigStep model.rationaleCreationStep model.rationaleSignatureStep)
-            , Helper.viewStepWithCircle 6 "storage-step" (viewPermanentStorageStep ctx model.rationaleSignatureStep model.storageConfigStep model.permanentStorageStep)
+            , Helper.viewStepWithCircle 6 "storage-step" (viewPermanentStorageStep ctx model.pickProposalStep model.rationaleSignatureStep model.storageConfigStep model.permanentStorageStep)
             , Html.map ctx.wrapMsg <| Helper.viewStepWithCircle 7 "build-tx-step" (viewBuildTxStep ctx model)
             ]
         , viewCartAddedToast model.showCartToast model.flyToCart
@@ -4704,13 +4718,25 @@ viewRationaleSignatureStep ctx pickProposalStep storageConfigStep rationaleCreat
                         Helper.formContainer
                             [ Html.p [ HA.class "text-gray-600" ] [ text "Validating signatures..." ] ]
 
+                    ( Done _ { id }, Done _ _, Done _ ratSig ) ->
+                        viewCompletedRationaleSignature ctx (Just id) ratSig
+
                     ( _, Done _ _, Done _ ratSig ) ->
-                        viewCompletedRationaleSignature ctx ratSig
+                        viewCompletedRationaleSignature ctx Nothing ratSig
         ]
 
 
-viewCompletedRationaleSignature : ViewContext msg -> RationaleSignature -> Html msg
-viewCompletedRationaleSignature ctx ratSig =
+viewCompletedRationaleSignature : ViewContext msg -> Maybe ActionId -> RationaleSignature -> Html msg
+viewCompletedRationaleSignature ctx maybeActionId ratSig =
+    let
+        fileName =
+            case maybeActionId of
+                Just actionId ->
+                    "rationale-" ++ Gov.idToBech32 (GovActionId actionId) ++ ".json"
+
+                Nothing ->
+                    "rationale.json"
+    in
     div []
         [ Helper.stepCard
             [ if List.isEmpty ratSig.authors then
@@ -4737,7 +4763,7 @@ viewCompletedRationaleSignature ctx ratSig =
                         ]
                         (List.map viewSignerCard ratSig.authors)
                     ]
-            , Html.p [ HA.style "margin-top" "1rem" ] [ Helper.downloadJSONButton "Download JSON rationale" { filename = "rationale.json", rawJson = ratSig.signedJson } ]
+            , Html.p [ HA.style "margin-top" "1rem" ] [ Helper.downloadJSONButton "Download JSON rationale" { filename = fileName, rawJson = ratSig.signedJson } ]
             ]
         , Html.map ctx.wrapMsg <| Helper.viewButton "Change authors" ChangeAuthorsButtonClicked
         ]
@@ -4886,11 +4912,12 @@ encodeAuthorWitness { name, witnessAlgorithm, publicKey, signature } =
 
 viewPermanentStorageStep :
     ViewContext msg
+    -> Step {} {} ActiveProposal
     -> Step RationaleSignatureForm {} RationaleSignature
     -> Step StorageConfigForm {} StorageConfig
     -> Step StorageForm {} Storage
     -> Html msg
-viewPermanentStorageStep ctx rationaleSignatureStep storageConfigStep step =
+viewPermanentStorageStep ctx pickProposalStep rationaleSignatureStep storageConfigStep step =
     Html.map ctx.wrapMsg <|
         div []
             [ Helper.sectionTitle "Rationale Storage"
@@ -4945,19 +4972,37 @@ viewPermanentStorageStep ctx rationaleSignatureStep storageConfigStep step =
                     Helper.uploadingSpinner "Checking rationale storage..."
 
                 ( Done _ (UseCustomPrepublished _), _, Done _ storage ) ->
-                    viewCompletedStorage storage
+                    case pickProposalStep of
+                        Done _ { id } ->
+                            viewCompletedStorage (Just id) storage
+
+                        _ ->
+                            viewCompletedStorage Nothing storage
 
                 ( Done _ _, Done _ _, Done _ storage ) ->
-                    viewCompletedStorage storage
+                    case pickProposalStep of
+                        Done _ { id } ->
+                            viewCompletedStorage (Just id) storage
+
+                        _ ->
+                            viewCompletedStorage Nothing storage
 
                 _ ->
                     Helper.storageNotAvailableCard
             ]
 
 
-viewCompletedStorage : Storage -> Html Msg
-viewCompletedStorage { jsonFile } =
+viewCompletedStorage : Maybe ActionId -> Storage -> Html Msg
+viewCompletedStorage maybeActionId { jsonFile } =
     let
+        fileName =
+            case maybeActionId of
+                Just actionId ->
+                    "rationale-" ++ Gov.idToBech32 (GovActionId actionId) ++ ".json"
+
+                Nothing ->
+                    "rationale.json"
+
         link =
             uploadedIdentifierToLink jsonFile.identifier
 
@@ -5000,7 +5045,7 @@ viewCompletedStorage { jsonFile } =
                 , HA.style "font-size" "0.9375rem"
                 ]
                 [ text "Your file has been uploaded. IPFS File pinning can take a few hours to complete. We recommend saving a local copy of your JSON file in case you need to re-upload it in the future." ]
-            , Html.p [ HA.style "margin" "1rem 0rem" ] [ Helper.downloadJSONButton "Download JSON rationale" { filename = "rationale.json", rawJson = jsonFile.raw } ]
+            , Html.p [ HA.style "margin" "1rem 0rem" ] [ Helper.downloadJSONButton "Download JSON rationale" { filename = fileName, rawJson = jsonFile.raw } ]
             , Helper.storageInfoGrid infoItems
             ]
         , Helper.viewButton "Change storage location" AddOtherStorageButtonCLicked
