@@ -2051,8 +2051,7 @@ referenceForm index typeName label uri deleteMsg typeChangeMsg labelChangeMsg ur
                     ]
                     [ text "Type" ]
                 , viewSelect
-                    [ HA.value typeName
-                    , Html.Events.onInput typeChangeMsg
+                    [ Html.Events.onInput typeChangeMsg
                     , HA.style "width" "100%"
                     , HA.style "padding" "0.5rem"
                     , HA.style "border" "1px solid #E2E8F0"
@@ -2060,9 +2059,9 @@ referenceForm index typeName label uri deleteMsg typeChangeMsg labelChangeMsg ur
                     , HA.style "font-size" "0.875rem"
                     , HA.style "background-color" "white"
                     ]
-                    [ Html.option [ HA.value "relevant articles" ] [ text "Relevant Articles" ]
-                    , Html.option [ HA.value "governance metadata" ] [ text "Governance Metadata" ]
-                    , Html.option [ HA.value "other" ] [ text "Other" ]
+                    [ Html.option [ HA.value "relevant articles", HA.selected (typeName == "relevant articles") ] [ text "Relevant Articles" ]
+                    , Html.option [ HA.value "governance metadata", HA.selected (typeName == "governance metadata") ] [ text "Governance Metadata" ]
+                    , Html.option [ HA.value "other", HA.selected (typeName == "other") ] [ text "Other" ]
                     ]
                 ]
             , div []
