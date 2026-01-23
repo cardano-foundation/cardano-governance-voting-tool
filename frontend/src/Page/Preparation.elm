@@ -717,6 +717,8 @@ type Msg
     | InternalDidNotVoteChange String
     | InternalAgainstVoteChange String
     | AddRefButtonClicked
+    | AddConstitutionRefButtonClicked
+    | AddProposalMetadataRefsButtonClicked String String
     | DeleteRefButtonClicked Int
     | ReferenceLabelChange Int String
     | ReferenceUriChange Int String
@@ -774,6 +776,7 @@ type alias UpdateContext msg =
     , jsonRationaleToFile : { fileContent : String, fileName : String } -> Cmd msg
     , pdfBytesToFile : { fileContentHex : String, fileName : String } -> Cmd msg
     , costModels : Maybe CostModels
+    , constitutionUri : Maybe String
     , networkId : NetworkId
     , authorPreconfig : List PreconfAuthor
     }
@@ -1217,6 +1220,38 @@ innerUpdate ctx msg model =
 
         AddRefButtonClicked ->
             ( updateRationaleForm (\form -> { form | references = form.references ++ [ initRefForm ] }) model
+            , Cmd.none
+            , Nothing
+            )
+
+        AddConstitutionRefButtonClicked ->
+            let
+                constitutionRef =
+                    { type_ = RelevantArticlesRefType
+                    , label = "Cardano Constitution"
+                    , uri = Maybe.withDefault "" ctx.constitutionUri
+                    }
+            in
+            ( updateRationaleForm (\form -> { form | references = form.references ++ [ constitutionRef ] }) model
+            , Cmd.none
+            , Nothing
+            )
+
+        AddProposalMetadataRefsButtonClicked metadataUrl metadataHash ->
+            let
+                urlRef =
+                    { type_ = GovernanceMetadataRefType
+                    , label = "Proposal Metadata Anchor URI"
+                    , uri = metadataUrl
+                    }
+
+                hashRef =
+                    { type_ = GovernanceMetadataRefType
+                    , label = "Proposal Metadata Anchor Hash"
+                    , uri = metadataHash
+                    }
+            in
+            ( updateRationaleForm (\form -> { form | references = form.references ++ [ urlRef, hashRef ] }) model
             , Cmd.none
             , Nothing
             )
@@ -3160,6 +3195,7 @@ type alias ViewContext msg =
     , proposals : WebData (Dict String ActiveProposal)
     , jsonLdContexts : JsonLdContexts
     , costModels : Maybe CostModels
+    , constitutionUri : Maybe String
     , networkId : NetworkId
     , changeNetworkLink : NetworkId -> List (Html msg) -> Html msg
     , signingLink : Transaction -> List { keyName : String, keyHash : Bytes CredentialHash } -> List (Html msg) -> Html msg
@@ -4443,8 +4479,8 @@ viewRationaleStep ctx pickProposalStep storageConfigStep step =
                     , Helper.stepNotAvailableCard [ text description ]
                     ]
 
-            ( Done _ _, Done _ storageConfig, Preparing form ) ->
-                viewRationaleForm { hostingIsAppControlled = isHostingAppControlled storageConfig } form
+            ( Done _ proposal, Done _ storageConfig, Preparing form ) ->
+                viewRationaleForm ctx proposal { hostingIsAppControlled = isHostingAppControlled storageConfig } form
 
             ( Done _ _, Done _ _, Validating _ _ ) ->
                 div []
@@ -4496,8 +4532,8 @@ isHostingAppControlled storageConfig =
             False
 
 
-viewRationaleForm : { hostingIsAppControlled : Bool } -> RationaleForm -> Html Msg
-viewRationaleForm { hostingIsAppControlled } form =
+viewRationaleForm : ViewContext msg -> ActiveProposal -> { hostingIsAppControlled : Bool } -> RationaleForm -> Html Msg
+viewRationaleForm ctx proposal { hostingIsAppControlled } form =
     div []
         [ Helper.sectionTitle "Vote Rationale"
         , div [ HA.style "display" "grid", HA.style "gap" "1.5rem", HA.style "position" "relative" ]
@@ -4534,6 +4570,8 @@ viewRationaleForm { hostingIsAppControlled } form =
                     , Helper.referenceCard
                         (List.indexedMap viewOneRefForm form.references)
                         AddRefButtonClicked
+                        (Maybe.map (\_ -> AddConstitutionRefButtonClicked) ctx.constitutionUri)
+                        (Just (AddProposalMetadataRefsButtonClicked proposal.metadataUrl proposal.metadataHash))
                     ]
 
               else

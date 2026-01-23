@@ -1970,19 +1970,39 @@ voteNumberInput label value onInputMsg =
 
 {-| Card for references with add button in header
 -}
-referenceCard : List (Html msg) -> msg -> Html msg
-referenceCard content addMsg =
+referenceCard : List (Html msg) -> msg -> Maybe msg -> Maybe msg -> Html msg
+referenceCard content addMsg maybeConstitutionMsg maybeProposalMetadataMsg =
+    let
+        quickAddConstitution =
+            Maybe.map (blackSquareButton [] "+ Constitution") maybeConstitutionMsg
+
+        quickAddProposalMetadata =
+            Maybe.map (blackSquareButton [] "+ Proposal Metadata") maybeProposalMetadataMsg
+
+        quickAddSection =
+            case List.filterMap identity [ quickAddConstitution, quickAddProposalMetadata ] of
+                [] ->
+                    text ""
+
+                quickAddButtons ->
+                    div [ HA.style "display" "flex", HA.style "gap" "0.5rem" ] quickAddButtons
+    in
     cardContainer []
-        [ cardHeader
-            [ HA.style "display" "flex"
-            , HA.style "justify-content" "space-between"
-            , HA.style "align-items" "center"
-            ]
+        [ cardHeader []
             "References"
             "Add links and references to support your rationale."
-            [ blackSquareButton [] "+ Add Reference" addMsg ]
+            []
         , cardContent []
-            [ if List.isEmpty content then
+            [ div
+                [ HA.style "display" "flex"
+                , HA.style "justify-content" "space-between"
+                , HA.style "align-items" "center"
+                , HA.style "margin-bottom" "1rem"
+                , HA.style "padding-bottom" "1rem"
+                , HA.style "border-bottom" "1px solid #E2E8F0"
+                ]
+                [ quickAddSection, blackSquareButton [] "+ Add Reference" addMsg ]
+            , if List.isEmpty content then
                 Html.p
                     [ HA.style "text-align" "center"
                     , HA.style "color" "#6B7280"
@@ -2031,8 +2051,7 @@ referenceForm index typeName label uri deleteMsg typeChangeMsg labelChangeMsg ur
                     ]
                     [ text "Type" ]
                 , viewSelect
-                    [ HA.value typeName
-                    , Html.Events.onInput typeChangeMsg
+                    [ Html.Events.onInput typeChangeMsg
                     , HA.style "width" "100%"
                     , HA.style "padding" "0.5rem"
                     , HA.style "border" "1px solid #E2E8F0"
@@ -2040,9 +2059,9 @@ referenceForm index typeName label uri deleteMsg typeChangeMsg labelChangeMsg ur
                     , HA.style "font-size" "0.875rem"
                     , HA.style "background-color" "white"
                     ]
-                    [ Html.option [ HA.value "relevant articles" ] [ text "Relevant Articles" ]
-                    , Html.option [ HA.value "governance metadata" ] [ text "Governance Metadata" ]
-                    , Html.option [ HA.value "other" ] [ text "Other" ]
+                    [ Html.option [ HA.value "relevant articles", HA.selected (typeName == "relevant articles") ] [ text "Relevant Articles" ]
+                    , Html.option [ HA.value "governance metadata", HA.selected (typeName == "governance metadata") ] [ text "Governance Metadata" ]
+                    , Html.option [ HA.value "other", HA.selected (typeName == "other") ] [ text "Other" ]
                     ]
                 ]
             , div []

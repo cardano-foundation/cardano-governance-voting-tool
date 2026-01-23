@@ -181,6 +181,7 @@ type alias Model =
     , walletUtxos : Maybe (Utxo.RefDict Output)
     , walletDrepId : Maybe (Bytes CredentialHash)
     , protocolParams : Maybe ProtocolParams
+    , constitutionUri : Maybe String
     , epoch : WebData Int
     , proposals : WebData (Dict String ActiveProposal)
     , scriptsInfo : Dict String ScriptInfo
@@ -262,6 +263,7 @@ initHelper route config =
     , Cmd.batch
         [ cmd
         , Api.defaultApiProvider.loadProtocolParams model.networkId GotProtocolParams
+        , Api.defaultApiProvider.queryConstitution model.networkId GotConstitution
         , Cmd.batch tasksCmds
         ]
     )
@@ -290,6 +292,7 @@ initialModel { jsonLdContexts, db, networkId, ipfsPreconfig, voterPreconfig, aut
     , walletUtxos = Nothing
     , walletDrepId = Nothing
     , protocolParams = Nothing
+    , constitutionUri = Nothing
     , epoch = RemoteData.NotAsked
     , proposals = RemoteData.NotAsked
     , scriptsInfo = Dict.empty
@@ -319,6 +322,7 @@ type Msg
     | UrlChanged Route
     | WalletMsg Value
     | GotProtocolParams (Result Http.Error ProtocolParams)
+    | GotConstitution (Result Http.Error String)
     | GotEpoch (Result Http.Error Int)
     | GotProposals (Result Http.Error (List ActiveProposal))
       -- Header
@@ -594,6 +598,14 @@ update msg model =
                 Err err ->
                     ( { model | errors = Debug.toString err :: model.errors }, Cmd.none )
 
+        ( GotConstitution result, _ ) ->
+            case result of
+                Ok uri ->
+                    ( { model | constitutionUri = Just uri }, Cmd.none )
+
+                Err err ->
+                    ( { model | errors = Debug.toString err :: model.errors }, Cmd.none )
+
         ( WalletMsg value, _ ) ->
             case JD.decodeValue walletResponseDecoder value of
                 Ok response ->
@@ -630,6 +642,7 @@ update msg model =
                             , jsonRationaleToFile = jsonRationaleToFile
                             , pdfBytesToFile = pdfBytesToFile
                             , costModels = Maybe.map .costModels model.protocolParams
+                            , constitutionUri = model.constitutionUri
                             , networkId = model.networkId
                             , authorPreconfig = model.authorPreconfig
                             }
@@ -1555,6 +1568,7 @@ viewContent model =
                 , proposals = model.proposals
                 , jsonLdContexts = model.jsonLdContexts
                 , costModels = Maybe.map .costModels model.protocolParams
+                , constitutionUri = model.constitutionUri
                 , networkId = model.networkId
                 , changeNetworkLink =
                     \networkId ->
