@@ -5,6 +5,7 @@ import Cardano.Address as Address exposing (Address, CredentialHash)
 import Cardano.Cip30 as Cip30
 import Cardano.CoinSelection as CoinSelection
 import Cardano.Gov as Gov exposing (ActionId, Anchor, CostModels, Id(..))
+import Cardano.Metadatum as Metadatum
 import Cardano.Script as Script
 import Cardano.Transaction as Transaction exposing (Transaction)
 import Cardano.TxIntent as TxIntent exposing (Fee(..), TxFinalized, TxIntent, VoteIntent)
@@ -706,6 +707,14 @@ buildTx costModels localStateUtxos walletAddress votersIntents =
 
         keyNames =
             Dict.fromList (feePayer ++ voterKeys)
+
+        message =
+            case List.length allVoteIntents of
+                1 ->
+                    "cfvt: 1 vote"
+
+                n ->
+                    "cfvt: " ++ String.fromInt n ++ " votes"
     in
     allVoteIntents
         |> TxIntent.finalizeAdvanced
@@ -716,7 +725,11 @@ buildTx costModels localStateUtxos walletAddress votersIntents =
             , costModels = costModels
             }
             (AutoFee { paymentSource = feeSource })
-            []
+            [ TxIntent.TxMetadata
+                { tag = N.fromSafeInt 674
+                , metadata = Metadatum.Map [ ( Metadatum.String "msg", Metadatum.List [ Metadatum.String message ] ) ]
+                }
+            ]
         |> Result.map (\txFinalized -> { keyNames = keyNames, txFinalized = txFinalized })
         |> Result.mapError TxIntent.errorToString
 

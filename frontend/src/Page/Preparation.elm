@@ -5140,7 +5140,7 @@ viewBuildTxStep ctx model =
                         ]
                     , Helper.viewButton "Change Vote" ChangeVoteButtonClicked
                     , text " "
-                    , Helper.viewButton "Pick Another Proposal" PickAnotherProposalButtonClicked
+                    , Helper.viewButton "Vote on another Proposal" PickAnotherProposalButtonClicked
                     , text " "
                     , Helper.viewButton "Go to Cart" GoToCartButtonClicked
                     , viewFlyToCart model.flyToCart
