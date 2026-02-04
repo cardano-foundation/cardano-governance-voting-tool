@@ -61,6 +61,7 @@ import Cmd.Extra
 import ConcurrentTask exposing (ConcurrentTask)
 import ConcurrentTask.Extra
 import Dict exposing (Dict)
+import Dict.Any
 import Footer
 import Header
 import Helper exposing (PreconfAuthor, PreconfVoter)
@@ -71,6 +72,7 @@ import Http
 import Json.Decode as JD exposing (Decoder, Value)
 import Json.Encode as JE
 import List.Extra
+import Natural as N
 import Page.Cart
 import Page.Disclaimer
 import Page.MultisigRegistration
@@ -1136,9 +1138,31 @@ handleWalletResponse response model =
 
         -- We just received the utxos
         Cip30.ApiResponse _ (Cip30ApiResponse (Cip30.WalletUtxos utxos)) ->
-            ( { model | walletUtxos = Just (Utxo.refDictFromList utxos) }
-            , Cmd.none
-            )
+            case model.wallet of
+                Nothing ->
+                    -- This should never happen in practice
+                    ( model, Cmd.none )
+
+                Just wallet ->
+                    ( { model | walletUtxos = Just (Utxo.refDictFromList utxos) }
+                      -- Also ask for collateral UTxOs after receiving the normal UTxOs
+                    , Cip30.getCollateral wallet { amount = N.fromSafeInt 1000000 }
+                        |> Cip30.encodeRequest
+                        |> toWallet
+                    )
+
+        -- We just received the collateral utxos
+        Cip30.ApiResponse _ (Cip30ApiResponse (Cip30.Collateral collateralUtxos)) ->
+            case model.walletUtxos of
+                Nothing ->
+                    ( { model | walletUtxos = Just (Utxo.refDictFromList collateralUtxos) }
+                    , Cmd.none
+                    )
+
+                Just utxos ->
+                    ( { model | walletUtxos = Just <| Dict.Any.union utxos (Utxo.refDictFromList collateralUtxos) }
+                    , Cmd.none
+                    )
 
         -- We just received the DRep ID of the wallet
         Cip30.ApiResponse _ (Cip95ApiResponse (Cip95.DrepKey drepKey)) ->
