@@ -5,7 +5,6 @@ import Cardano.Address as Address exposing (Address, CredentialHash)
 import Cardano.Cip30 as Cip30
 import Cardano.CoinSelection as CoinSelection
 import Cardano.Gov as Gov exposing (ActionId, Anchor, CostModels, Id(..))
-import Cardano.MultiAsset as MultiAsset
 import Cardano.Script as Script
 import Cardano.Transaction as Transaction exposing (Transaction)
 import Cardano.TxIntent as TxIntent exposing (Fee(..), TxFinalizationError(..), TxFinalized, TxIntent, VoteIntent)
