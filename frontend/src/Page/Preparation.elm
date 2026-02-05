@@ -667,6 +667,7 @@ type MsgToParent
     | CacheStorageConfig StorageConfig
     | AddVoteToCart Witness.Voter Cart.VoteRecord
     | GoToCart
+    | ProposalChanged (Maybe String)
     | RunTask (ConcurrentTask String TaskCompleted)
     | BatchToParent MsgToParent MsgToParent
 
@@ -1018,7 +1019,7 @@ innerUpdate ctx msg model =
                             in
                             ( updatedModel
                             , verificationCmd
-                            , Nothing
+                            , Just (ProposalChanged (Just actionId))
                             )
 
                         Nothing ->
@@ -1030,7 +1031,7 @@ innerUpdate ctx msg model =
         ChangeProposalButtonClicked ->
             ( { model | pickProposalStep = Preparing {} }
             , Cmd.none
-            , Nothing
+            , Just (ProposalChanged Nothing)
             )
 
         GotCip100Verification actionId result ->

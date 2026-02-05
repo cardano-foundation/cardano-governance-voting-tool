@@ -1354,6 +1354,15 @@ updateModelWithPrepToParentMsg msgToParent model =
         Just Page.Preparation.GoToCart ->
             handleUrlChange (RouteCart { networkId = model.networkId }) model
 
+        Just (Page.Preparation.ProposalChanged maybeProposalId) ->
+            let
+                newAppUrl =
+                    routeToAppUrl (RoutePreparation { networkId = model.networkId, proposalId = maybeProposalId })
+            in
+            ( { model | appUrl = newAppUrl }
+            , pushUrl <| AppUrl.toString newAppUrl
+            )
+
         Just (Page.Preparation.RunTask task) ->
             ConcurrentTask.attempt { pool = model.taskPool, send = sendTask, onComplete = OnTaskComplete }
                 (ConcurrentTask.map PreparationTaskCompleted task)
