@@ -16,7 +16,7 @@ module Helper exposing
     , rationaleCard, checkbox, rationaleMarkdownInput, rationaleTextArea, pdfAutogenCheckbox, voteNumberInput, referenceCard, referenceForm
     , rationaleCompletedCard, optionalSection, formattedInternalVote, formattedReferences
     , stepNotAvailableCard, downloadJSONButton, authorsCard, addAuthorButton, codeSnippetBox, noAuthorsPlaceholder
-    , signerCard, authorForm, labeledField, readOnlyField, signatureField, formButtonsRow, secondaryButton, primaryButton, loadSignatureButton
+    , signerCard, authorForm, labeledField, readOnlyField, formButtonsRow, secondaryButton, primaryButton, importSignedRationaleButton
     , stepCard, missingStepsList, missingStepItem, loadingSpinner
     , signingButton
     )
@@ -96,7 +96,7 @@ and are potentially useful in multiple places.
 # Document Creation Components
 
 @docs stepNotAvailableCard, downloadJSONButton, authorsCard, addAuthorButton, codeSnippetBox, noAuthorsPlaceholder
-@docs signerCard, authorForm, labeledField, readOnlyField, signatureField, formButtonsRow, secondaryButton, primaryButton, loadSignatureButton
+@docs signerCard, authorForm, labeledField, readOnlyField, formButtonsRow, secondaryButton, primaryButton, importSignedRationaleButton
 
 
 # Transaction Components
@@ -2345,7 +2345,7 @@ authorsCard headerContent content =
 -}
 addAuthorButton : msg -> Html msg
 addAuthorButton clickMsg =
-    blackSquareButton [] "+ Add Author" clickMsg
+    blackSquareButton [] "+ Add non-signing author" clickMsg
 
 
 {-| Code snippet box
@@ -2521,38 +2521,6 @@ readOnlyField value =
         [ text value ]
 
 
-{-| Signature field with replace button
--}
-signatureField : String -> msg -> Html msg
-signatureField signature replaceMsg =
-    div []
-        [ Html.div
-            [ HA.style "display" "flex"
-            , HA.style "justify-content" "space-between"
-            , HA.style "align-items" "center"
-            , HA.style "margin-bottom" "0.5rem"
-            ]
-            [ Html.label
-                [ HA.style "font-weight" "500"
-                , HA.style "font-size" "0.875rem"
-                , HA.style "color" "#4B5563"
-                ]
-                [ text "Signature" ]
-            , Html.button
-                [ HA.style "font-size" "0.75rem"
-                , HA.style "color" "#4B5563"
-                , HA.style "background" "none"
-                , HA.style "border" "none"
-                , HA.style "cursor" "pointer"
-                , HA.style "text-decoration" "underline"
-                , onClick replaceMsg
-                ]
-                [ text "Replace" ]
-            ]
-        , readOnlyField signature
-        ]
-
-
 {-| Form buttons row
 -}
 formButtonsRow : List (Html msg) -> Html msg
@@ -2585,29 +2553,11 @@ primaryButton label clickMsg =
     blackSquareButton [] label clickMsg
 
 
-{-| Load signature file button
+{-| Import signed rationale button for the header
 -}
-loadSignatureButton : msg -> Html msg
-loadSignatureButton msg =
-    Html.button
-        [ HA.style "background-color" "#F9FAFB"
-        , HA.style "color" "#272727"
-        , HA.style "font-weight" "500"
-        , HA.style "font-size" "0.875rem"
-        , HA.style "padding" "0.75rem"
-        , HA.style "border" "1px dashed #CBD5E0"
-        , HA.style "border-radius" "0.375rem"
-        , HA.style "width" "100%"
-        , HA.style "cursor" "pointer"
-        , HA.style "display" "flex"
-        , HA.style "align-items" "center"
-        , HA.style "justify-content" "center"
-        , HA.style "gap" "0.5rem"
-        , onClick msg
-        ]
-        [ Html.span [] [ text "📄" ]
-        , text "Load signature file"
-        ]
+importSignedRationaleButton : msg -> Html msg
+importSignedRationaleButton msg =
+    blackSquareButton [] "+ Import signed rationale" msg
 
 
 
