@@ -1390,15 +1390,20 @@ innerUpdate ctx msg model =
             )
 
         LoadedSignedRationale jsonStr ->
-            ( case extractSigningAuthors jsonStr of
-                Err loadError ->
-                    { model
-                        | rationaleSignatureStep =
-                            handleSignatureLoadError loadError model.rationaleSignatureStep
-                    }
+            ( case ( model.pickProposalStep, model.rationaleSignatureStep ) of
+                ( Done _ { id }, Preparing form ) ->
+                    case extractSigningAuthors id form.rationale jsonStr of
+                        Err loadError ->
+                            { model
+                                | rationaleSignatureStep =
+                                    handleSignatureLoadError loadError model.rationaleSignatureStep
+                            }
 
-                Ok signingAuthors ->
-                    updateAuthorsForm (\authors -> mergeSigningAuthors signingAuthors authors) model
+                        Ok signingAuthors ->
+                            updateAuthorsForm (\authors -> mergeSigningAuthors signingAuthors authors) model
+
+                _ ->
+                    model
             , Cmd.none
             , Nothing
             )
@@ -2708,10 +2713,11 @@ handleSignedRationaleFileRead result =
 type SignatureLoadError
     = NoSigningAuthorsFound
     | InvalidSignatureFileFormat
+    | RationaleBodyMismatch
 
 
-extractSigningAuthors : String -> Result SignatureLoadError (List AuthorWitness)
-extractSigningAuthors jsonStr =
+extractSigningAuthors : ActionId -> Rationale -> String -> Result SignatureLoadError (List AuthorWitness)
+extractSigningAuthors actionId rationale jsonStr =
     case JD.decodeString (JD.field "authors" (JD.list ProposalMetadata.authorWitnessDecoder)) jsonStr of
         Err _ ->
             Err InvalidSignatureFileFormat
@@ -2724,8 +2730,36 @@ extractSigningAuthors jsonStr =
             if List.isEmpty signed then
                 Err NoSigningAuthorsFound
 
+            else if not (rationaleBodyMatches actionId rationale jsonStr) then
+                Err RationaleBodyMismatch
+
             else
                 Ok signed
+
+
+rationaleBodyMatches : ActionId -> Rationale -> String -> Bool
+rationaleBodyMatches actionId rationale jsonStr =
+    let
+        importedGovActionId =
+            JD.decodeString (JD.at [ "body", "govActionId" ] JD.string) jsonStr
+                |> Result.toMaybe
+
+        localGovActionId =
+            Gov.idToBech32 (GovActionId actionId)
+    in
+    case importedGovActionId of
+        Just importedId ->
+            importedId == localGovActionId
+
+        Nothing ->
+            -- No govActionId in imported file, fall back to full body comparison
+            case JD.decodeString (JD.field "body" JD.value) jsonStr of
+                Err _ ->
+                    False
+
+                Ok importedBody ->
+                    JE.encode 0 importedBody
+                        == JE.encode 0 (encodeJsonLdRationale actionId rationale)
 
 
 signatureLoadErrorToString : SignatureLoadError -> String
@@ -2736,6 +2770,9 @@ signatureLoadErrorToString error =
 
         InvalidSignatureFileFormat ->
             "Invalid signature file format. Please upload a valid JSON signature file."
+
+        RationaleBodyMismatch ->
+            "The rationale body in the uploaded file does not match the current rationale in the application."
 
 
 mergeSigningAuthors : List AuthorWitness -> List AuthorWitness -> List AuthorWitness
