@@ -4813,8 +4813,8 @@ viewRationaleSignatureStep ctx pickProposalStep storageConfigStep rationaleCreat
                     ( _, Validating _ _, _ ) ->
                         Helper.stepNotAvailableCard [ text "Please wait for the rationale creation to complete." ]
 
-                    ( Done _ _, Done _ _, Preparing form ) ->
-                        Html.map ctx.wrapMsg <| viewRationaleSignatureForm form
+                    ( Done _ { id }, Done _ _, Preparing form ) ->
+                        Html.map ctx.wrapMsg <| viewRationaleSignatureForm ctx.jsonLdContexts id form
 
                     ( _, Done _ _, Preparing _ ) ->
                         Helper.stepNotAvailableCard [ text "Please select a proposal first." ]
@@ -4879,8 +4879,8 @@ viewSignerCard { name, witnessAlgorithm, publicKey, signature } =
     Helper.signerCard name signature witnessAlgorithm publicKey (Maybe.withDefault "" signature)
 
 
-viewRationaleSignatureForm : RationaleSignatureForm -> Html Msg
-viewRationaleSignatureForm { authors, error } =
+viewRationaleSignatureForm : JsonLdContexts -> ActionId -> RationaleSignatureForm -> Html Msg
+viewRationaleSignatureForm jsonLdContexts actionId { authors, rationale, error } =
     let
         cardanoSignerExample =
             "cardano-signer.js sign --cip100 \\\n"
@@ -4888,6 +4888,13 @@ viewRationaleSignatureForm { authors, error } =
                 ++ "   --secret-key dummy.skey \\\n"
                 ++ "   --author-name \"The great Name\" \\\n"
                 ++ "   --out-file rationale-signed.json"
+
+        fileName =
+            "rationale-" ++ Gov.idToBech32 (GovActionId actionId) ++ "-not-signed.json"
+
+        rawJson =
+            createJsonRationale jsonLdContexts actionId rationale []
+                |> JE.encode 0
     in
     div []
         [ Helper.authorsCard
@@ -4912,6 +4919,8 @@ viewRationaleSignatureForm { authors, error } =
                     , HA.style "color" "#4A5568"
                     ]
                     [ text "You can add non-signing authors manually, or download the JSON file, sign it with cardano-signer, and then import the signed rationale JSON file to automatically add signing authors." ]
+                , Html.p [ HA.style "margin-bottom" "1rem" ]
+                    [ Helper.downloadJSONButton "Download not-signed JSON rationale" { filename = fileName, rawJson = rawJson } ]
                 , Helper.codeSnippetBox cardanoSignerExample
                 , div
                     [ HA.style "display" "flex"
