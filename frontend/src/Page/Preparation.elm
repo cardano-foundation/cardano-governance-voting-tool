@@ -1,4 +1,4 @@
-module Page.Preparation exposing (InternalVote, JsonLdContexts, LoadedWallet, Model, Msg, MsgToParent(..), Rationale, Reference, ReferenceType(..), StorageConfig, TaskCompleted, UpdateContext, ViewContext, encodeStorageConfig, handleTaskCompleted, init, initStorageConfig, noInternalVote, pinPdfFile, pinRationaleFile, setLastStorageConfig, setLastVoter, storageConfigDecoder, update, view)
+module Page.Preparation exposing (InternalVote, JsonLdContexts, LoadedWallet, Model, Msg, MsgToParent(..), Rationale, Reference, ReferenceType(..), StorageConfig, TaskCompleted, UpdateContext, ViewContext, encodeStorageConfig, handleTaskCompleted, init, initStorageConfig, noInternalVote, pickProposalMsg, pinPdfFile, pinRationaleFile, setLastStorageConfig, setLastVoter, storageConfigDecoder, update, view)
 
 {-| This module handles the complete vote preparation workflow, from identifying
 the voter to signing the transaction, which is handled by another page.
@@ -146,6 +146,13 @@ init ipfsPreconfig =
         , flyToCart = Nothing
         , cip100Verification = Dict.empty
         }
+
+
+{-| Create a message to select a proposal by its action ID string.
+-}
+pickProposalMsg : String -> Msg
+pickProposalMsg actionId =
+    PickProposalButtonClicked actionId
 
 
 
@@ -3809,7 +3816,7 @@ viewProposalCardHelper : (Msg -> msg) -> NetworkId -> Maybe Int -> (ActionId -> 
 viewProposalCardHelper wrapMsg networkId currentEpoch getPastVote proposal =
     let
         idString =
-            Gov.actionIdToString proposal.id
+            Helper.actionIdToBech32 proposal.id
 
         hashIsValid =
             case proposal.metadata of
@@ -3870,7 +3877,7 @@ viewSelectedProposal : ViewContext msg -> Dict String Cip100VerificationState ->
 viewSelectedProposal ctx cip100Verification { id, actionType, metadata, metadataUrl, metadataHash } =
     let
         actionIdStr =
-            Gov.actionIdToString id
+            Helper.actionIdToBech32 id
 
         { title, maybeMetadata } =
             getProposalContent metadata metadataUrl

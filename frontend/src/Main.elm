@@ -197,6 +197,7 @@ type alias Model =
     , authorPreconfig : List PreconfAuthor
     , cart : Page.Cart.Model
     , errors : List String
+    , pendingProposalId : Maybe String
     }
 
 
@@ -308,6 +309,7 @@ initialModel { jsonLdContexts, db, networkId, ipfsPreconfig, voterPreconfig, aut
     , authorPreconfig = authorPreconfig
     , cart = Page.Cart.init
     , errors = []
+    , pendingProposalId = Nothing
     }
 
 
@@ -355,7 +357,7 @@ type Msg
 
 type Route
     = RouteLanding
-    | RoutePreparation { networkId : NetworkId }
+    | RoutePreparation { networkId : NetworkId, proposalId : Maybe String }
     | RouteSigning { networkId : NetworkId, expectedSigners : List { keyName : String, keyHash : Bytes CredentialHash }, tx : Maybe Transaction }
     | RouteCart { networkId : NetworkId }
     | RouteMultisigRegistration
@@ -422,7 +424,14 @@ locationHrefToRoute locationHref =
                     RouteLanding
 
                 [ "page", "preparation" ] ->
-                    RoutePreparation { networkId = networkId }
+                    RoutePreparation
+                        { networkId = networkId
+                        , proposalId =
+                            Dict.get "proposalId" queryParameters
+                                |> Maybe.andThen List.head
+                                -- Validate it's a proper bech32 gov_action ID
+                                |> Maybe.andThen (\pid -> Helper.actionIdFromBech32 pid |> Maybe.map (\_ -> pid))
+                        }
 
                 [ "page", "cart" ] ->
                     RouteCart { networkId = networkId }
@@ -469,9 +478,18 @@ routeToAppUrl route =
         RouteLanding ->
             AppUrl.fromPath []
 
-        RoutePreparation { networkId } ->
+        RoutePreparation { networkId, proposalId } ->
             { path = [ "page", "preparation" ]
-            , queryParameters = Dict.singleton "networkId" [ networkIdToString networkId ]
+            , queryParameters =
+                case proposalId of
+                    Nothing ->
+                        Dict.singleton "networkId" [ networkIdToString networkId ]
+
+                    Just pid ->
+                        Dict.fromList
+                            [ ( "networkId", [ networkIdToString networkId ] )
+                            , ( "proposalId", [ pid ] )
+                            ]
             , fragment = Nothing
             }
 
@@ -558,7 +576,7 @@ update msg model =
             in
             case model.page of
                 PreparationPage _ ->
-                    handleUrlChange (RoutePreparation { networkId = newNet }) updatedModel
+                    handleUrlChange (RoutePreparation { networkId = newNet, proposalId = model.pendingProposalId }) updatedModel
                         |> Cmd.Extra.add tasksCmds
 
                 SigningPage _ ->
@@ -847,7 +865,7 @@ update msg model =
                                 || (Maybe.withDefault False <| Maybe.map (\ratifiedEpoch -> currentEpoch > ratifiedEpoch) p.ratified)
 
                         proposalsList =
-                            List.map (\p -> ( Gov.actionIdToString p.id, p )) activeProposals
+                            List.map (\p -> ( Helper.actionIdToBech32 p.id, p )) activeProposals
                                 -- deduplicate proposals
                                 |> Dict.fromList
                                 |> Dict.toList
@@ -863,23 +881,27 @@ update msg model =
                                     ProposalMetadata.encode
                                     { key = metadataHash }
                                 |> ConcurrentTask.Extra.toResult
-                                |> ConcurrentTask.map (GotProposalMetadataTask <| Gov.actionIdToString id)
+                                |> ConcurrentTask.map (GotProposalMetadataTask <| Helper.actionIdToBech32 id)
 
                         ( newPool, cmds ) =
                             ConcurrentTask.Extra.attemptEach { pool = model.taskPool, send = sendTask, onComplete = OnTaskComplete }
                                 (List.map completeReadProposalMetadataTask activeProposals)
+
+                        updatedModel =
+                            { model
+                                | taskPool = newPool
+                                , proposals = RemoteData.Success <| Dict.fromList proposalsList
+                            }
+
+                        baseCmds =
+                            -- Let's also redo a wallet discovery,
+                            -- just to make sure all wallets have had the time to load,
+                            -- which should be the case by now.
+                            -- This is to prevent a situation where the browser extensions
+                            -- were not ready yet the first time around.
+                            Cmd.batch (toWallet (Cip30.encodeRequest Cip30.discoverWallets) :: cmds)
                     in
-                    ( { model
-                        | taskPool = newPool
-                        , proposals = RemoteData.Success <| Dict.fromList proposalsList
-                      }
-                      -- Let’s also redo a wallet discovery,
-                      -- just to make sure all wallets have had the time to load,
-                      -- which should be the case by now.
-                      -- This is to prevent a situation where the browser extensions
-                      -- were not ready yet the first time around.
-                    , Cmd.batch (toWallet (Cip30.encodeRequest Cip30.discoverWallets) :: cmds)
-                    )
+                    handlePendingProposalSelection updatedModel baseCmds
 
         ( OnTaskProgress ( taskPool, cmd ), _ ) ->
             ( { model | taskPool = taskPool }, cmd )
@@ -933,13 +955,14 @@ handleUrlChange route model =
             , pushUrlCmd
             )
 
-        RoutePreparation { networkId } ->
+        RoutePreparation { networkId, proposalId } ->
             let
                 newModel =
                     { model
                         | errors = []
                         , page = PreparationPage <| Page.Preparation.init model.ipfsPreconfig
                         , appUrl = appUrl
+                        , pendingProposalId = proposalId
                     }
 
                 reloadLatestVoterTask : ConcurrentTask String (Maybe Gov.Id)
@@ -972,9 +995,10 @@ handleUrlChange route model =
                     }
 
             else if RemoteData.isSuccess model.proposals then
-                ( { newModel | taskPool = newTaskPool }
-                , Cmd.batch (pushUrlCmd :: taskCmds)
-                )
+                -- If proposals are already loaded, handle pending proposal selection
+                handlePendingProposalSelection
+                    { newModel | taskPool = newTaskPool }
+                    (Cmd.batch (pushUrlCmd :: taskCmds))
 
             else
                 ( { newModel
@@ -1054,6 +1078,45 @@ handleUrlChange route model =
               }
             , pushUrlCmd
             )
+
+
+{-| Handle pending proposal selection after proposals have been loaded.
+If a proposalId was provided in the route, check if it exists:
+
+  - If it doesn't exist, clear the proposalId from the route.
+  - If it exists, keep the pending state; the proposal will be auto-selected
+    once its metadata has loaded (in the GotProposalMetadataTask handler).
+
+-}
+handlePendingProposalSelection : Model -> Cmd Msg -> ( Model, Cmd Msg )
+handlePendingProposalSelection model baseCmds =
+    case model.pendingProposalId of
+        Nothing ->
+            ( model, baseCmds )
+
+        Just proposalId ->
+            case model.proposals of
+                RemoteData.Success proposalsDict ->
+                    if Dict.member proposalId proposalsDict then
+                        -- Proposal exists, keep pending state until metadata loads
+                        ( model, baseCmds )
+
+                    else
+                        -- Proposal doesn't exist, clear it from the route
+                        let
+                            routeWithoutProposal =
+                                RoutePreparation { networkId = model.networkId, proposalId = Nothing }
+
+                            newAppUrl =
+                                routeToAppUrl routeWithoutProposal
+                        in
+                        ( { model | pendingProposalId = Nothing, appUrl = newAppUrl }
+                        , Cmd.batch [ baseCmds, pushUrl <| AppUrl.toString newAppUrl ]
+                        )
+
+                _ ->
+                    -- Proposals not loaded yet, keep the pending state
+                    ( model, baseCmds )
 
 
 type ApiResponse
@@ -1389,10 +1452,18 @@ handleCompletedTask response model =
 
                         ( Just p, Err error ) ->
                             Just { p | metadata = RemoteData.Failure error }
+
+                updatedModel =
+                    { model | proposals = RemoteData.map (\ps -> Dict.update id updateMetadata ps) model.proposals }
             in
-            ( { model | proposals = RemoteData.map (\ps -> Dict.update id updateMetadata ps) model.proposals }
-            , Cmd.none
-            )
+            -- If this is the pending proposal, auto-select it now that metadata is loaded
+            if model.pendingProposalId == Just id then
+                ( { updatedModel | pendingProposalId = Nothing }
+                , Cmd.Extra.perform <| PreparationPageMsg (Page.Preparation.pickProposalMsg id)
+                )
+
+            else
+                ( updatedModel, Cmd.none )
 
         ( ConcurrentTask.Success (GotCart cart), _ ) ->
             ( { model | cart = cart }, Cmd.none )
@@ -1490,7 +1561,7 @@ viewHeader model =
     let
         navigationItems =
             [ { label = "Vote Preparation"
-              , link = link <| RoutePreparation { networkId = model.networkId }
+              , link = link <| RoutePreparation { networkId = model.networkId, proposalId = Nothing }
               , isActive =
                     case model.page of
                         PreparationPage _ ->
@@ -1572,7 +1643,7 @@ viewContent model =
                 , networkId = model.networkId
                 , changeNetworkLink =
                     \networkId ->
-                        link (RoutePreparation { networkId = networkId }) []
+                        link (RoutePreparation { networkId = networkId, proposalId = Nothing }) []
                 , signingLink =
                     \tx expectedSigners ->
                         link (RouteSigning { networkId = model.networkId, tx = Just tx, expectedSigners = expectedSigners }) []
@@ -1644,7 +1715,7 @@ viewLandingPage networkId =
                 ]
                 [ text "Create, sign, and submit governance votes with proper rationale documentation. Generate formatted PDFs for transparency and record-keeping." ]
             , Html.p [ HA.style "margin-bottom" "4rem" ]
-                [ link (RoutePreparation { networkId = networkId })
+                [ link (RoutePreparation { networkId = networkId, proposalId = Nothing })
                     [ HA.class "inline-block" ]
                     [ Helper.viewButton "Start Voting Process" NoMsg ]
                 ]

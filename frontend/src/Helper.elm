@@ -1,5 +1,6 @@
 module Helper exposing
-    ( ipfsToHttpsUrl, shortenedHex, prettyAdaLovelace
+    ( actionIdToBech32, actionIdFromBech32
+    , ipfsToHttpsUrl, shortenedHex, prettyAdaLovelace
     , textFieldInline, textInputField
     , formContainer, boxContainer, viewGrid, cardContainer, cardHeader, cardContent
     , viewButton, viewWalletButton, externalLink, externalLinkButton, trashButton
@@ -23,6 +24,11 @@ module Helper exposing
 
 {-| Helper module for miscellaneous functions that didn't fit elsewhere,
 and are potentially useful in multiple places.
+
+
+# Gov ActionId helpers
+
+@docs actionIdToBech32, actionIdFromBech32
 
 
 # String formatting
@@ -110,7 +116,7 @@ and are potentially useful in multiple places.
 
 -}
 
-import Cardano.Gov as Gov
+import Cardano.Gov as Gov exposing (ActionId, Id(..))
 import Cardano.TxIntent exposing (VoteIntent)
 import Html exposing (Html, div, text)
 import Html.Attributes as HA
@@ -124,6 +130,29 @@ import RemoteData
 import Svg
 import Svg.Attributes as SA
 import Url
+
+
+
+-- GOV ACTION ID HELPERS #######################################################
+
+
+{-| Convert an ActionId into its Bech32 representation (CIP-129).
+-}
+actionIdToBech32 : ActionId -> String
+actionIdToBech32 actionId =
+    Gov.idToBech32 (GovActionId actionId)
+
+
+{-| Parse an ActionId from its Bech32 representation (CIP-129).
+-}
+actionIdFromBech32 : String -> Maybe ActionId
+actionIdFromBech32 str =
+    case Gov.idFromBech32 str of
+        Just (GovActionId actionId) ->
+            Just actionId
+
+        _ ->
+            Nothing
 
 
 
