@@ -12,6 +12,7 @@ import Cardano.Transaction exposing (Transaction)
 import Cardano.Utxo exposing (TransactionId)
 import ConcurrentTask exposing (ConcurrentTask)
 import ConcurrentTask.Http
+import ConcurrentTask.Process
 import File exposing (File)
 import Helper
 import Http
@@ -900,23 +901,78 @@ bytesResponseToResult response =
 -- Task port requests
 
 
+{-| IPFS gateways to try when resolving ipfs:// URLs.
+The first gateway is tried immediately, and subsequent gateways are tried
+with a staggered delay (2s between each) to avoid wasting bandwidth
+while still providing fast fallback when a gateway is unresponsive.
+-}
+ipfsGateways : List String
+ipfsGateways =
+    [ "https://ipfs.io/ipfs/"
+    , "https://ipfs.blockfrost.dev/ipfs/"
+    , "https://dweb.link/ipfs/"
+    , "https://c-ipfs-gw.nmkr.io/ipfs/"
+    , "https://cloudflare-ipfs.com/ipfs/"
+    , "https://gateway.pinata.cloud/ipfs/"
+    ]
+
+
 {-| Task to retrieve a proposal metadata.
 
-If the metadata URL is pointing to an IPFS resource ("ipfs://")
-the URL is automatically converted into a call to the main IPFS gateway ("<https://ipfs.io/ipfs/">).
+If the metadata URL is pointing to an IPFS resource ("ipfs://"),
+requests are staggered across multiple IPFS gateways: the first gateway
+is tried immediately, and each subsequent gateway is tried with an additional
+2-second delay. The first successful response wins (via `race`).
 
-Some metadata URLs point to servers that do not accept cross-origin requests (CORS).
-For this reason, if a request task fails with potentially a CORS error,
-we redo the request by proxying it through this app server.
+For non-IPFS URLs, a single direct request is made.
+
+If a request fails with a NetworkError (potentially CORS), it is retried
+by proxying through this app server.
 
 -}
 taskLoadProposalMetadata : String -> ConcurrentTask String ProposalMetadata
 taskLoadProposalMetadata url =
-    let
-        adjustedUrl =
-            -- Differentiate HTTP and IPFS protocols to adjust the IPFS URL to a gateway
-            Helper.ipfsToHttpsUrl url
-    in
+    if String.startsWith "ipfs://" url then
+        let
+            cid =
+                String.dropLeft 7 url
+        in
+        fetchFromIpfsGateways cid
+
+    else
+        fetchMetadataFromUrl url
+            |> ConcurrentTask.map ProposalMetadata.fromRaw
+            |> httpErrorToString
+
+
+{-| Try fetching from multiple IPFS gateways with staggered delays.
+The first gateway fires immediately, then every 2 seconds a new gateway
+is tried. The first successful response wins via `ConcurrentTask.race`.
+-}
+fetchFromIpfsGateways : String -> ConcurrentTask String ProposalMetadata
+fetchFromIpfsGateways cid =
+    case ipfsGateways of
+        [] ->
+            ConcurrentTask.fail "No IPFS gateways configured"
+
+        first :: rest ->
+            let
+                staggeredTask : Int -> String -> ConcurrentTask ConcurrentTask.Http.Error String
+                staggeredTask index gateway =
+                    ConcurrentTask.Process.sleep (index * 2000)
+                        |> ConcurrentTask.andThenDo (fetchMetadataFromUrl (gateway ++ cid))
+            in
+            ConcurrentTask.race
+                (fetchMetadataFromUrl (first ++ cid))
+                (List.indexedMap (\i gw -> staggeredTask (i + 1) gw) rest)
+                |> ConcurrentTask.map ProposalMetadata.fromRaw
+                |> httpErrorToString
+
+
+{-| Fetch metadata from a URL, with CORS fallback via the server proxy.
+-}
+fetchMetadataFromUrl : String -> ConcurrentTask ConcurrentTask.Http.Error String
+fetchMetadataFromUrl adjustedUrl =
     ConcurrentTask.Http.get
         { url = adjustedUrl
         , headers = []
@@ -945,18 +1001,21 @@ taskLoadProposalMetadata url =
                     _ ->
                         ConcurrentTask.fromResult (Err httpError)
             )
-        |> ConcurrentTask.map ProposalMetadata.fromRaw
-        |> ConcurrentTask.onError
-            (\httpError ->
-                case httpError of
-                    ConcurrentTask.Http.NetworkError ->
-                        Err "Network error. Maybe you lost your connection, or the request was blocked by CORS on the server."
-                            |> ConcurrentTask.fromResult
 
-                    _ ->
-                        Err (Debug.toString httpError)
-                            |> ConcurrentTask.fromResult
-            )
+
+{-| Convert HTTP errors to user-friendly strings.
+-}
+httpErrorToString : ConcurrentTask ConcurrentTask.Http.Error a -> ConcurrentTask String a
+httpErrorToString =
+    ConcurrentTask.onError
+        (\httpError ->
+            case httpError of
+                ConcurrentTask.Http.NetworkError ->
+                    ConcurrentTask.fail "Network error. Maybe you lost your connection, or the request was blocked by CORS on the server."
+
+                _ ->
+                    ConcurrentTask.fail (Debug.toString httpError)
+        )
 
 
 {-| Task to retrieve the raw CBOR of a given Tx.

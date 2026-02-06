@@ -42,7 +42,6 @@ import Cardano.Witness as Witness
 import Cbor.Encode
 import Cmd.Extra
 import ConcurrentTask exposing (ConcurrentTask)
-import ConcurrentTask.Extra
 import ConcurrentTask.Http
 import Dict exposing (Dict)
 import Dict.Any
@@ -1869,7 +1868,7 @@ checkGovId ctx str =
                                             ScriptInfo.storageEncode
                                             { key = Bytes.toHex scriptHash }
                                         |> ConcurrentTask.onJsException (\{ message } -> ConcurrentTask.fail <| ConcurrentTask.Http.BadUrl <| "Uncaught JS exception: " ++ message)
-                                        |> ConcurrentTask.Extra.toResult
+                                        |> ConcurrentTask.toResult
                                         |> ConcurrentTask.map GotScriptInfoTask
                                         |> RunTask
                                         |> Just
@@ -1918,7 +1917,7 @@ checkGovId ctx str =
                                             ScriptInfo.storageEncode
                                             { key = Bytes.toHex scriptHash }
                                         |> ConcurrentTask.onJsException (\{ message } -> ConcurrentTask.fail <| ConcurrentTask.Http.BadUrl <| "Uncaught JS exception: " ++ message)
-                                        |> ConcurrentTask.Extra.toResult
+                                        |> ConcurrentTask.toResult
                                         |> ConcurrentTask.map GotScriptInfoTask
                                         |> RunTask
                                         |> Just
@@ -2114,7 +2113,7 @@ validateScriptVoter ctx form loadedRefUtxos toVoter scriptInfo govId =
                                 Bytes.jsonEncode
                                 { key = Bytes.toHex outputRef.transactionId }
                             |> ConcurrentTask.onJsException (\{ message } -> ConcurrentTask.fail <| ConcurrentTask.Http.BadUrl <| "Uncaught JS exception: " ++ message)
-                            |> ConcurrentTask.Extra.toResult
+                            |> ConcurrentTask.toResult
                             |> ConcurrentTask.map (GotRefUtxoTxBytes outputRef)
                             |> RunTask
                             |> Just

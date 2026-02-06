@@ -8,7 +8,7 @@
     "dependencies": {
         "direct": {
             "MartinSStewart/elm-uint64": "2.0.0",
-            "andrewMacmurray/elm-concurrent-task": "1.1.1",
+            "andrewMacmurray/elm-concurrent-task": "2.0.0",
             "dillonkearns/elm-markdown": "7.0.1",
             "dwayne/elm-integer": "1.0.0",
             "dwayne/elm-natural": "1.1.1",

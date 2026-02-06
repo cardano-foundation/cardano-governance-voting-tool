@@ -59,7 +59,6 @@ import Cardano.TxIntent
 import Cardano.Utxo as Utxo exposing (Output, TransactionId)
 import Cmd.Extra
 import ConcurrentTask exposing (ConcurrentTask)
-import ConcurrentTask.Extra
 import Dict exposing (Dict)
 import Footer
 import Header
@@ -189,7 +188,7 @@ type alias Model =
     , ccsInfo : Dict String CcInfo
     , poolsInfo : Dict String PoolInfo
     , jsonLdContexts : JsonLdContexts
-    , taskPool : ConcurrentTask.Pool Msg String TaskCompleted
+    , taskPool : ConcurrentTask.Pool Msg
     , db : Value
     , networkId : NetworkId
     , ipfsPreconfig : { label : String, description : String }
@@ -242,7 +241,7 @@ initHelper route config =
             Storage.read { db = config.db, storeName = "app" }
                 JD.string
                 { key = "walletId" }
-                |> ConcurrentTask.Extra.toResult
+                |> ConcurrentTask.toResult
                 |> ConcurrentTask.map GotLastConnectedWalletId
 
         loadCart =
@@ -253,7 +252,7 @@ initHelper route config =
                 |> ConcurrentTask.onError (\_ -> ConcurrentTask.succeed Ignore)
 
         ( updatedTaskPool, tasksCmds ) =
-            ConcurrentTask.Extra.attemptEach
+            ConcurrentTask.attemptEach
                 { pool = model.taskPool, send = sendTask, onComplete = OnTaskComplete }
                 [ loadLastConnectedWalletId
                 , loadCart
@@ -264,7 +263,7 @@ initHelper route config =
         [ cmd
         , Api.defaultApiProvider.loadProtocolParams model.networkId GotProtocolParams
         , Api.defaultApiProvider.queryConstitution model.networkId GotConstitution
-        , Cmd.batch tasksCmds
+        , tasksCmds
         ]
     )
 
@@ -349,7 +348,7 @@ type Msg
       -- PDF page
     | PdfPageMsg Page.Pdf.Msg
       -- Task port
-    | OnTaskProgress ( ConcurrentTask.Pool Msg String TaskCompleted, Cmd Msg )
+    | OnTaskProgress ( ConcurrentTask.Pool Msg, Cmd Msg )
     | OnTaskComplete (ConcurrentTask.Response String TaskCompleted)
 
 
@@ -862,23 +861,23 @@ update msg model =
                                     ProposalMetadata.decoder
                                     ProposalMetadata.encode
                                     { key = metadataHash }
-                                |> ConcurrentTask.Extra.toResult
+                                |> ConcurrentTask.toResult
                                 |> ConcurrentTask.map (GotProposalMetadataTask <| Gov.actionIdToString id)
 
                         ( newPool, cmds ) =
-                            ConcurrentTask.Extra.attemptEach { pool = model.taskPool, send = sendTask, onComplete = OnTaskComplete }
+                            ConcurrentTask.attemptEach { pool = model.taskPool, send = sendTask, onComplete = OnTaskComplete }
                                 (List.map completeReadProposalMetadataTask activeProposals)
                     in
                     ( { model
                         | taskPool = newPool
                         , proposals = RemoteData.Success <| Dict.fromList proposalsList
                       }
-                      -- Let’s also redo a wallet discovery,
+                      -- Let's also redo a wallet discovery,
                       -- just to make sure all wallets have had the time to load,
                       -- which should be the case by now.
                       -- This is to prevent a situation where the browser extensions
                       -- were not ready yet the first time around.
-                    , Cmd.batch (toWallet (Cip30.encodeRequest Cip30.discoverWallets) :: cmds)
+                    , Cmd.batch [ toWallet (Cip30.encodeRequest Cip30.discoverWallets), cmds ]
                     )
 
         ( OnTaskProgress ( taskPool, cmd ), _ ) ->
@@ -956,7 +955,7 @@ handleUrlChange route model =
                         |> ConcurrentTask.onError (\_ -> ConcurrentTask.succeed <| Page.Preparation.initStorageConfig model.ipfsPreconfig)
 
                 ( newTaskPool, taskCmds ) =
-                    ConcurrentTask.Extra.attemptEach { pool = model.taskPool, send = sendTask, onComplete = OnTaskComplete }
+                    ConcurrentTask.attemptEach { pool = model.taskPool, send = sendTask, onComplete = OnTaskComplete }
                         [ ConcurrentTask.map GotLastVoter reloadLatestVoterTask
                         , ConcurrentTask.map GotLastStorageConfig reloadLatestStorageConfigTask
                         ]
@@ -973,7 +972,7 @@ handleUrlChange route model =
 
             else if RemoteData.isSuccess model.proposals then
                 ( { newModel | taskPool = newTaskPool }
-                , Cmd.batch (pushUrlCmd :: taskCmds)
+                , Cmd.batch [ pushUrlCmd, taskCmds ]
                 )
 
             else
@@ -982,10 +981,10 @@ handleUrlChange route model =
                     , taskPool = newTaskPool
                   }
                 , Cmd.batch
-                    (pushUrlCmd
-                        :: Api.defaultApiProvider.queryEpoch model.networkId GotEpoch
-                        :: taskCmds
-                    )
+                    [ pushUrlCmd
+                    , Api.defaultApiProvider.queryEpoch model.networkId GotEpoch
+                    , taskCmds
+                    ]
                 )
 
         RouteSigning { networkId, expectedSigners, tx } ->
