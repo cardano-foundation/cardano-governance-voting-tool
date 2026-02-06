@@ -16,7 +16,7 @@ RUN if [ "$TARGETARCH" = "amd64" ]; then \
     echo "Unsupported architecture: $TARGETARCH"; \
     exit 1; \
     fi && \
-    wget "https://github.com/typst/typst/releases/download/v0.13.1/$ARCHIVE_NAME.tar.xz" -O "$ARCHIVE_NAME.tar.xz" && \
+    wget "https://github.com/typst/typst/releases/download/v0.14.2/$ARCHIVE_NAME.tar.xz" -O "$ARCHIVE_NAME.tar.xz" && \
     tar xf "$ARCHIVE_NAME.tar.xz" && \
     mv "${ARCHIVE_NAME}/typst" .
 
