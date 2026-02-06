@@ -589,21 +589,11 @@ uploadedIdentifierFromUri uri =
         HttpsIdentifier uri
 
 
-uploadedIdentifierToString : UploadedIdentifier -> String
-uploadedIdentifierToString identifier =
+uploadedIdentifierToUri : UploadedIdentifier -> String
+uploadedIdentifierToUri identifier =
     case identifier of
         IpfsIdentifier cid ->
             "ipfs://" ++ cid
-
-        HttpsIdentifier url ->
-            url
-
-
-uploadedIdentifierToLink : UploadedIdentifier -> String
-uploadedIdentifierToLink identifier =
-    case identifier of
-        IpfsIdentifier cid ->
-            "https://ipfs.io/ipfs/" ++ cid
 
         HttpsIdentifier url ->
             url
@@ -3150,7 +3140,7 @@ allPrepSteps m =
                         , proposalTitle = proposalTitle
                         , rationaleAnchor =
                             Just
-                                { url = uploadedIdentifierToString s.jsonFile.identifier
+                                { url = uploadedIdentifierToUri s.jsonFile.identifier
                                 , dataHash =
                                     Bytes.fromText s.jsonFile.raw
                                         |> Bytes.toU8
@@ -5041,8 +5031,8 @@ viewCompletedStorage maybeActionId { jsonFile } =
                 Nothing ->
                     "rationale.json"
 
-        link =
-            uploadedIdentifierToLink jsonFile.identifier
+        uri =
+            uploadedIdentifierToUri jsonFile.identifier
 
         infoItems =
             List.concat
@@ -5071,8 +5061,8 @@ viewCompletedStorage maybeActionId { jsonFile } =
 
                     HttpsIdentifier _ ->
                         [ text "" ]
-                , Helper.fileInfoItem "Link:"
-                    (Helper.externalLinkDisplay link link)
+                , Helper.fileInfoItem "URI:"
+                    (Helper.externalLinkDisplay (Helper.ipfsToGatewaySelectorUrl uri) uri)
                 ]
     in
     div []

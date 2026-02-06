@@ -1,5 +1,5 @@
 module Helper exposing
-    ( ipfsToHttpsUrl, shortenedHex, prettyAdaLovelace
+    ( ipfsToHttpsUrl, ipfsToGatewaySelectorUrl, shortenedHex, prettyAdaLovelace
     , textFieldInline, textInputField
     , formContainer, boxContainer, viewGrid, cardContainer, cardHeader, cardContent
     , viewButton, viewWalletButton, externalLink, externalLinkButton, trashButton
@@ -27,7 +27,7 @@ and are potentially useful in multiple places.
 
 # String formatting
 
-@docs ipfsToHttpsUrl, shortenedHex, prettyAdaLovelace
+@docs ipfsToHttpsUrl, ipfsToGatewaySelectorUrl, shortenedHex, prettyAdaLovelace
 
 
 # Form elements
@@ -142,6 +142,23 @@ ipfsToHttpsUrl url =
                 String.dropLeft 7 url
         in
         "https://ipfs.io/ipfs/" ++ cid
+
+    else
+        url
+
+
+{-| Convert IPFS URL to an IPFS gateway selector URL.
+Converts `ipfs://<cid>` to `https://ipnso-com.ipns.dweb.link/?cid=<cid>`.
+Non-IPFS URLs are returned unchanged.
+-}
+ipfsToGatewaySelectorUrl : String -> String
+ipfsToGatewaySelectorUrl url =
+    if String.startsWith "ipfs://" url then
+        let
+            cid =
+                String.dropLeft 7 url
+        in
+        "https://ipnso-com.ipns.dweb.link/?cid=" ++ cid
 
     else
         url
@@ -2250,7 +2267,7 @@ formattedReference typeToString ref =
         , if String.startsWith "ipfs://" ref.uri then
             let
                 gatewayUrl =
-                    ipfsToHttpsUrl ref.uri
+                    ipfsToGatewaySelectorUrl ref.uri
             in
             Html.a
                 [ HA.href gatewayUrl

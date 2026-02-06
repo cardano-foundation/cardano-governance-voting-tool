@@ -879,7 +879,7 @@ viewVoteRecord ctx voterIdStr ( actionIdStr, { proposalTitle, voteIntent } ) =
 
                 Just { url } ->
                     Html.a
-                        [ HA.href (Helper.ipfsToHttpsUrl url)
+                        [ HA.href (Helper.ipfsToGatewaySelectorUrl url)
                         , HA.target "_blank"
                         , HA.style "color" "#2563EB"
                         , HA.style "text-decoration" "underline"
