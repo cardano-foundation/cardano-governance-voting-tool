@@ -3855,6 +3855,7 @@ viewProposalCardHelper wrapMsg networkId currentEpoch getPastVote proposal =
         { hashIsValid = hashIsValid
         , pastVote = pastVote
         , isRatifying = proposal.ratified == currentEpoch
+        , isLastEpoch = currentEpoch == Just (proposal.epoch_validity.end - 1)
         , title = title
         , abstract = abstract
         , actionType = proposal.actionType
