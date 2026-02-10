@@ -1685,6 +1685,10 @@ governanceTools =
       , url = "https://tempo.vote"
       , description = "An alternative comprehensive platform aiming to support all aspects of Cardano governance."
       }
+    , { name = "CGOV"
+      , url = "https://app.cgov.io/"
+      , description = "A Cardano governance platform for monitoring, tracking, and participating in on-chain governance."
+      }
     , { name = "governancespace.com"
       , url = "https://governancespace.com"
       , description = "Another alternative comprehensive platform for Cardano governance, still WIP."
@@ -1700,10 +1704,6 @@ governanceTools =
     , { name = "changwatch.com"
       , url = "https://changwatch.com"
       , description = "A governance dashboard providing insights and tracking."
-      }
-    , { name = "cgov.app"
-      , url = "https://cgov.app"
-      , description = "An information and analytics platform focused on Cardano governance."
       }
     , { name = "DRep-Collective"
       , url = "https://github.com/DRep-Collective"
