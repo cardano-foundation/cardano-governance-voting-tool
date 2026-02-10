@@ -3,7 +3,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 // https://typst.app/universe/package/cmarker
-#import "@preview/cmarker:0.1.6"
+#import "@preview/cmarker:0.1.8"
 
 // JSON data
 #let data = json("metadata.json")
