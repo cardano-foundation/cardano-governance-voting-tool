@@ -1,4 +1,4 @@
-module Page.Signing exposing (Model, Msg, UpdateContext, ViewContext, addWalletSignatures, getTxInfo, initialModel, recordSubmittedTx, resetSubmission, update, view)
+module Page.Signing exposing (Model, Msg, UpdateContext, ViewContext, addWalletSignatures, getSignedTx, getTxInfo, initialModel, recordSubmittedTx, resetSubmission, update, view)
 
 {-| This module handles the signing process for Cardano transactions, particularly
 focusing on complex scenarios like Native or Plutus script multi-signatures.
@@ -65,14 +65,24 @@ initialModel : List { keyName : String, keyHash : Bytes CredentialHash } -> Mayb
 initialModel expectedSigners maybeTx =
     case maybeTx of
         Just tx ->
-            LoadedTx
-                { tx = tx
-                , txId = Transaction.computeTxId tx
-                , expectedSigners =
+            let
+                expectedSignersDict =
                     expectedSigners
                         |> List.map (\{ keyName, keyHash } -> ( Bytes.toHex keyHash, { keyName = keyName, keyHash = keyHash } ))
                         |> Dict.fromList
-                , vkeyWitnesses = Dict.empty
+
+                existingWitnesses =
+                    tx.witnessSet.vkeywitness
+                        |> Maybe.withDefault []
+                        |> List.filter (\w -> Dict.member (Bytes.toHex (Transaction.hashVKey w.vkey)) expectedSignersDict)
+                        |> List.map (\w -> ( Bytes.toHex (Transaction.hashVKey w.vkey), w ))
+                        |> Dict.fromList
+            in
+            LoadedTx
+                { tx = tx
+                , txId = Transaction.computeTxId tx
+                , expectedSigners = expectedSignersDict
+                , vkeyWitnesses = existingWitnesses
                 , txSubmitted = Nothing
                 , error = Nothing
                 }
@@ -88,6 +98,23 @@ getTxInfo model =
             Just { tx = loadedTxModel.tx, txId = loadedTxModel.txId }
 
         _ ->
+            Nothing
+
+
+{-| Returns the Tx with currently gathered vkeyWitnesses baked in.
+Returns the original Tx unchanged if no signatures have been gathered.
+-}
+getSignedTx : Model -> Maybe Transaction
+getSignedTx model =
+    case model of
+        LoadedTx { tx, vkeyWitnesses } ->
+            if Dict.isEmpty vkeyWitnesses then
+                Just tx
+
+            else
+                Just (Transaction.updateSignatures (\_ -> Just (Dict.values vkeyWitnesses)) tx)
+
+        MissingTx ->
             Nothing
 
 

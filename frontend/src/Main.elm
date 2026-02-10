@@ -717,9 +717,15 @@ update msg model =
                             , walletSignTx = walletSignTx
                             , walletSubmitTx = walletSubmitTx
                             }
+
+                        ( newModel, pageCmds ) =
+                            Page.Signing.update ctx pageMsg pageModel
+                                |> Tuple.mapFirst (\newPageModel -> { model | page = SigningPage newPageModel })
+
+                        ( finalModel, urlCmd ) =
+                            updateSigningPageUrl newModel
                     in
-                    Page.Signing.update ctx pageMsg pageModel
-                        |> Tuple.mapFirst (\newPageModel -> { model | page = SigningPage newPageModel })
+                    ( finalModel, Cmd.batch [ pageCmds, urlCmd ] )
 
                 _ ->
                     ( model, Cmd.none )
@@ -1236,9 +1242,11 @@ handleWalletResponse response model =
         Cip30.ApiResponse _ (Cip30ApiResponse (Cip30.SignedTx vkeyWitnesses)) ->
             case model.page of
                 SigningPage pageModel ->
-                    ( { model | page = SigningPage <| Page.Signing.addWalletSignatures vkeyWitnesses pageModel }
-                    , Cmd.none
-                    )
+                    let
+                        updatedModel =
+                            { model | page = SigningPage <| Page.Signing.addWalletSignatures vkeyWitnesses pageModel }
+                    in
+                    updateSigningPageUrl updatedModel
 
                 -- No other page expects to receive a Tx signature
                 _ ->
@@ -1409,6 +1417,37 @@ saveCart cart model =
     ConcurrentTask.attempt { pool = model.taskPool, send = sendTask, onComplete = OnTaskComplete } writeCartToDb
         |> Tuple.mapFirst (\newTaskPool -> { model | taskPool = newTaskPool, cart = cart })
         |> Cmd.Extra.add (broadcastCart model.networkId cart)
+
+
+{-| Update the URL fragment to include the latest gathered signatures.
+Called after wallet signing or file upload adds new signatures.
+-}
+updateSigningPageUrl : Model -> ( Model, Cmd Msg )
+updateSigningPageUrl model =
+    case model.page of
+        SigningPage pageModel ->
+            case Page.Signing.getSignedTx pageModel of
+                Just signedTx ->
+                    let
+                        newAppUrl =
+                            { path = model.appUrl.path
+                            , queryParameters = model.appUrl.queryParameters
+                            , fragment = Just (Bytes.toHex (Transaction.serialize signedTx))
+                            }
+                    in
+                    if newAppUrl == model.appUrl then
+                        ( model, Cmd.none )
+
+                    else
+                        ( { model | appUrl = newAppUrl }
+                        , pushUrl (AppUrl.toString newAppUrl)
+                        )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        _ ->
+            ( model, Cmd.none )
 
 
 {-| Helper function to reset the signing step of the Preparation.
