@@ -1,4 +1,4 @@
-module Page.Signing exposing (Model, Msg, UpdateContext, ViewContext, addWalletSignatures, getSignedTx, getTxInfo, initialModel, recordSubmittedTx, resetSubmission, update, view)
+module Page.Signing exposing (Model, Msg, UpdateContext, ViewContext, addWalletSignatures, clearError, getSignedTx, getTxInfo, initialModel, recordSubmittedTx, resetSubmission, update, view)
 
 {-| This module handles the signing process for Cardano transactions, particularly
 focusing on complex scenarios like Native or Plutus script multi-signatures.
@@ -181,14 +181,21 @@ update ctx msg model =
         ( LoadedSignedTxJson _, _ ) ->
             ( model, Cmd.none )
 
-        ( SubmitTxButtonClicked, LoadedTx { tx, vkeyWitnesses } ) ->
-            let
-                signedTx =
-                    Transaction.updateSignatures (\_ -> Just <| Dict.values vkeyWitnesses) tx
-            in
-            ( model
-            , ctx.walletSubmitTx signedTx
-            )
+        ( SubmitTxButtonClicked, LoadedTx loadedTxModel ) ->
+            case ctx.wallet of
+                Nothing ->
+                    ( LoadedTx { loadedTxModel | error = Just "Please connect a wallet to submit the transaction via the CIP-30 wallet API." }
+                    , Cmd.none
+                    )
+
+                Just _ ->
+                    let
+                        signedTx =
+                            Transaction.updateSignatures (\_ -> Just <| Dict.values loadedTxModel.vkeyWitnesses) loadedTxModel.tx
+                    in
+                    ( LoadedTx { loadedTxModel | error = Nothing }
+                    , ctx.walletSubmitTx signedTx
+                    )
 
         ( SubmitTxButtonClicked, _ ) ->
             ( model, Cmd.none )
@@ -280,6 +287,16 @@ addWalletSignatures newVkeyWitnesses model =
 
         _ ->
             model
+
+
+clearError : Model -> Model
+clearError model =
+    case model of
+        LoadedTx loadedTxModel ->
+            LoadedTx { loadedTxModel | error = Nothing }
+
+        MissingTx ->
+            MissingTx
 
 
 recordSubmittedTx : Bytes TransactionId -> Model -> Model

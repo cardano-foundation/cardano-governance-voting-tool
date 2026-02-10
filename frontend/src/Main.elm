@@ -1183,6 +1183,13 @@ handleWalletResponse response model =
                 , walletUtxos = Nothing
                 , lastConnectedWalletId = Just (Cip30.walletDescriptor wallet).id
                 , taskPool = updatedTaskPool
+                , page =
+                    case model.page of
+                        SigningPage pageModel ->
+                            SigningPage (Page.Signing.clearError pageModel)
+
+                        other ->
+                            other
               }
             , Cmd.batch
                 -- Retrieve UTXOs from the main wallet
