@@ -1,4 +1,5 @@
-// Compiled with esbuild from file runner/index.ts in @andrewMacmurray/elm-concurrent-task at commit e7bbca3 (2024-03-15)
+// Compiled with esbuild from file runner/index.ts in @andrewMacmurray/elm-concurrent-task at commit ae4668f2 (2026-02-06)
+// esbuild --bundle --platform=neutral index.ts --outdir=dist
 //
 // http/fetch.ts
 function http(request) {
@@ -25,7 +26,7 @@ function http(request) {
             headers,
             statusCode: res.status,
             statusText: res.statusText,
-            body: x || null,
+            body: x || "",
           }));
         }
         case "JSON": {
@@ -47,7 +48,7 @@ function http(request) {
                 headers,
                 statusCode: res.status,
                 statusText: res.statusText,
-                body: x || null,
+                body: x || "",
               };
             });
         }
@@ -72,63 +73,13 @@ function http(request) {
     });
 }
 function toHttpError(err) {
-  switch (err.cause?.code) {
-    case "ENOTFOUND":
-      return "NETWORK_ERROR";
-    case "ECONNREFUSED":
-      return "NETWORK_ERROR";
-    case "ECONNRESET":
-      return "NETWORK_ERROR";
-    case "EAGAIN":
-      return "NETWORK_ERROR";
-    case "ERR_INVALID_URL":
-      return "BAD_URL";
-    case "UND_ERR":
-      return "NETWORK_ERROR";
-    case "UND_ERR_CONNECT_TIMEOUT":
-      return "NETWORK_ERROR";
-    case "UND_ERR_HEADERS_TIMEOUT":
-      return "NETWORK_ERROR";
-    case "UND_ERR_HEADERS_OVERFLOW":
-      return "NETWORK_ERROR";
-    case "UND_ERR_BODY_TIMEOUT":
-      return "NETWORK_ERROR";
-    case "UND_ERR_RESPONSE_STATUS_CODE":
-      return "NETWORK_ERROR";
-    case "UND_ERR_INVALID_ARG":
-      return "NETWORK_ERROR";
-    case "UND_ERR_INVALID_RETURN_VALUE":
-      return "NETWORK_ERROR";
-    case "UND_ERR_ABORTED":
-      return "NETWORK_ERROR";
-    case "UND_ERR_DESTROYED":
-      return "NETWORK_ERROR";
-    case "UND_ERR_CLOSED":
-      return "NETWORK_ERROR";
-    case "UND_ERR_SOCKET":
-      return "NETWORK_ERROR";
-    case "UND_ERR_NOT_SUPPORTED":
-      return "NETWORK_ERROR";
-    case "UND_ERR_REQ_CONTENT_LENGTH_MISMATCH":
-      return "NETWORK_ERROR";
-    case "UND_ERR_RES_CONTENT_LENGTH_MISMATCH":
-      return "NETWORK_ERROR";
-    case "UND_ERR_INFO":
-      return "NETWORK_ERROR";
-    case "UND_ERR_RES_EXCEEDED_MAX_SIZE":
-      return "NETWORK_ERROR";
+  if (err.name === "AbortError") {
+    return "TIMEOUT";
+  } else if (err.cause?.code === "ERR_INVALID_URL") {
+    return "BAD_URL";
+  } else {
+    return "NETWORK_ERROR";
   }
-  switch (err.name) {
-    case "AbortError":
-      return "TIMEOUT";
-  }
-  console.warn(
-    `Unknown Http fetch error, consider submitting a PR adding an explicit case for this
-    https://github.com/andrewMacmurray/elm-concurrent-task/blob/main/runner/http/fetch.ts#L60
-    `,
-    err,
-  );
-  return "NETWORK_ERROR";
 }
 
 // browser/dom.ts
@@ -243,7 +194,7 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 function getTimezoneOffset() {
-  return -/* @__PURE__ */ new Date().getTimezoneOffset();
+  return -(/* @__PURE__ */ new Date().getTimezoneOffset());
 }
 function getTimeZoneName() {
   try {
@@ -256,64 +207,46 @@ function register(options) {
   const tasks = createTasks(options);
   const subscribe = options.ports.send.subscribe;
   const send = options.ports.receive.send;
-  let poolId = 0;
-  function nextPoolId() {
-    poolId = cycleInt({ max: 1e3 }, poolId);
-  }
   subscribe(async (payload) => {
-    if ("command" in payload) {
-      switch (payload.command) {
-        case "identify-pool": {
-          return Promise.resolve().then(() => {
-            send({ poolId });
-            nextPoolId();
-          });
-        }
-        default: {
-          throw new Error(`Unrecognised internal command: ${payload}`);
-        }
-      }
-    } else {
-      const debouncedSend = debounce(send, debounceThreshold(payload));
-      for (const def of payload) {
-        if (!tasks[def.function]) {
-          return debouncedSend({
-            attemptId: def.attemptId,
-            taskId: def.taskId,
-            result: {
-              error: {
-                reason: "missing_function",
-                message: `${def.function} is not registered`,
-              },
+    const debouncedSend = debounce(send, debounceThreshold(payload));
+    for (const def of payload) {
+      if (!tasks[def.function]) {
+        return debouncedSend({
+          attemptId: def.attemptId,
+          taskId: def.taskId,
+          result: {
+            error: {
+              reason: "missing_function",
+              message: `${def.function} is not registered`,
             },
-          });
-        }
+          },
+        });
       }
-      payload.map(async (def) => {
-        try {
-          logTaskStart(def, options);
-          const result = await tasks[def.function]?.(def.args);
-          logTaskFinish(def, options);
-          debouncedSend({
-            attemptId: def.attemptId,
-            taskId: def.taskId,
-            result: { value: result },
-          });
-        } catch (e) {
-          debouncedSend({
-            attemptId: def.attemptId,
-            taskId: def.taskId,
-            result: {
-              error: {
-                reason: "js_exception",
-                message: `${e.name}: ${e.message}`,
-                raw: e,
-              },
-            },
-          });
-        }
-      });
     }
+    payload.map(async (def) => {
+      try {
+        logTaskStart(def, options);
+        const result = await tasks[def.function]?.(def.args);
+        logTaskFinish(def, options);
+        debouncedSend({
+          attemptId: def.attemptId,
+          taskId: def.taskId,
+          result: { value: result },
+        });
+      } catch (e) {
+        debouncedSend({
+          attemptId: def.attemptId,
+          taskId: def.taskId,
+          result: {
+            error: {
+              reason: "js_exception",
+              message: `${e.name}: ${e.message}`,
+              raw: e,
+            },
+          },
+        });
+      }
+    });
   });
 }
 function logTaskStart(def, options) {
@@ -369,8 +302,5 @@ function prefixWith(prefix, tasks) {
   return Object.fromEntries(
     Object.entries(tasks).map(([key, fn]) => [`${prefix}${key}`, fn]),
   );
-}
-function cycleInt(options, i) {
-  return i >= options.max ? 0 : i + 1;
 }
 export { register };

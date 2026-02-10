@@ -42,7 +42,6 @@ import Cardano.Witness as Witness
 import Cbor.Encode
 import Cmd.Extra
 import ConcurrentTask exposing (ConcurrentTask)
-import ConcurrentTask.Extra
 import ConcurrentTask.Http
 import Dict exposing (Dict)
 import Dict.Any
@@ -596,21 +595,11 @@ uploadedIdentifierFromUri uri =
         HttpsIdentifier uri
 
 
-uploadedIdentifierToString : UploadedIdentifier -> String
-uploadedIdentifierToString identifier =
+uploadedIdentifierToUri : UploadedIdentifier -> String
+uploadedIdentifierToUri identifier =
     case identifier of
         IpfsIdentifier cid ->
             "ipfs://" ++ cid
-
-        HttpsIdentifier url ->
-            url
-
-
-uploadedIdentifierToLink : UploadedIdentifier -> String
-uploadedIdentifierToLink identifier =
-    case identifier of
-        IpfsIdentifier cid ->
-            "https://ipfs.io/ipfs/" ++ cid
 
         HttpsIdentifier url ->
             url
@@ -1891,7 +1880,7 @@ checkGovId ctx str =
                                             ScriptInfo.storageEncode
                                             { key = Bytes.toHex scriptHash }
                                         |> ConcurrentTask.onJsException (\{ message } -> ConcurrentTask.fail <| ConcurrentTask.Http.BadUrl <| "Uncaught JS exception: " ++ message)
-                                        |> ConcurrentTask.Extra.toResult
+                                        |> ConcurrentTask.toResult
                                         |> ConcurrentTask.map GotScriptInfoTask
                                         |> RunTask
                                         |> Just
@@ -1940,7 +1929,7 @@ checkGovId ctx str =
                                             ScriptInfo.storageEncode
                                             { key = Bytes.toHex scriptHash }
                                         |> ConcurrentTask.onJsException (\{ message } -> ConcurrentTask.fail <| ConcurrentTask.Http.BadUrl <| "Uncaught JS exception: " ++ message)
-                                        |> ConcurrentTask.Extra.toResult
+                                        |> ConcurrentTask.toResult
                                         |> ConcurrentTask.map GotScriptInfoTask
                                         |> RunTask
                                         |> Just
@@ -2136,7 +2125,7 @@ validateScriptVoter ctx form loadedRefUtxos toVoter scriptInfo govId =
                                 Bytes.jsonEncode
                                 { key = Bytes.toHex outputRef.transactionId }
                             |> ConcurrentTask.onJsException (\{ message } -> ConcurrentTask.fail <| ConcurrentTask.Http.BadUrl <| "Uncaught JS exception: " ++ message)
-                            |> ConcurrentTask.Extra.toResult
+                            |> ConcurrentTask.toResult
                             |> ConcurrentTask.map (GotRefUtxoTxBytes outputRef)
                             |> RunTask
                             |> Just
@@ -3225,7 +3214,7 @@ allPrepSteps m =
                         , proposalTitle = proposalTitle
                         , rationaleAnchor =
                             Just
-                                { url = uploadedIdentifierToString s.jsonFile.identifier
+                                { url = uploadedIdentifierToUri s.jsonFile.identifier
                                 , dataHash =
                                     Bytes.fromText s.jsonFile.raw
                                         |> Bytes.toU8
@@ -5135,8 +5124,8 @@ viewCompletedStorage maybeActionId { jsonFile } =
                 Nothing ->
                     "rationale.json"
 
-        link =
-            uploadedIdentifierToLink jsonFile.identifier
+        uri =
+            uploadedIdentifierToUri jsonFile.identifier
 
         infoItems =
             List.concat
@@ -5165,8 +5154,8 @@ viewCompletedStorage maybeActionId { jsonFile } =
 
                     HttpsIdentifier _ ->
                         [ text "" ]
-                , Helper.fileInfoItem "Link:"
-                    (Helper.externalLinkDisplay link link)
+                , Helper.fileInfoItem "URI:"
+                    (Helper.externalLinkDisplay (Helper.ipfsToGatewaySelectorUrl uri) uri)
                 ]
     in
     div []

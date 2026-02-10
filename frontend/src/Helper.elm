@@ -1,6 +1,6 @@
 module Helper exposing
     ( actionIdToBech32, actionIdFromBech32
-    , ipfsToHttpsUrl, shortenedHex, prettyAdaLovelace
+    , ipfsToHttpsUrl, ipfsToGatewaySelectorUrl, shortenedHex, prettyAdaLovelace
     , textFieldInline, textInputField
     , formContainer, boxContainer, viewGrid, cardContainer, cardHeader, cardContent
     , viewButton, viewWalletButton, externalLink, externalLinkButton, trashButton
@@ -33,7 +33,7 @@ and are potentially useful in multiple places.
 
 # String formatting
 
-@docs ipfsToHttpsUrl, shortenedHex, prettyAdaLovelace
+@docs ipfsToHttpsUrl, ipfsToGatewaySelectorUrl, shortenedHex, prettyAdaLovelace
 
 
 # Form elements
@@ -116,7 +116,7 @@ and are potentially useful in multiple places.
 
 -}
 
-import Cardano.Gov as Gov exposing (ActionId, Id(..))
+import Cardano.Gov as Gov exposing (ActionId)
 import Cardano.TxIntent exposing (VoteIntent)
 import Html exposing (Html, div, text)
 import Html.Attributes as HA
@@ -140,7 +140,7 @@ import Url
 -}
 actionIdToBech32 : ActionId -> String
 actionIdToBech32 actionId =
-    Gov.idToBech32 (GovActionId actionId)
+    Gov.idToBech32 (Gov.GovActionId actionId)
 
 
 {-| Parse an ActionId from its Bech32 representation (CIP-129).
@@ -148,7 +148,7 @@ actionIdToBech32 actionId =
 actionIdFromBech32 : String -> Maybe ActionId
 actionIdFromBech32 str =
     case Gov.idFromBech32 str of
-        Just (GovActionId actionId) ->
+        Just (Gov.GovActionId actionId) ->
             Just actionId
 
         _ ->
@@ -171,6 +171,23 @@ ipfsToHttpsUrl url =
                 String.dropLeft 7 url
         in
         "https://ipfs.io/ipfs/" ++ cid
+
+    else
+        url
+
+
+{-| Convert IPFS URL to an IPFS gateway selector URL.
+Converts `ipfs://<cid>` to `https://ipnso-com.ipns.dweb.link/?cid=<cid>`.
+Non-IPFS URLs are returned unchanged.
+-}
+ipfsToGatewaySelectorUrl : String -> String
+ipfsToGatewaySelectorUrl url =
+    if String.startsWith "ipfs://" url then
+        let
+            cid =
+                String.dropLeft 7 url
+        in
+        "https://ipnso-com.ipns.dweb.link/?cid=" ++ cid
 
     else
         url
@@ -2300,7 +2317,7 @@ formattedReference typeToString ref =
         , if String.startsWith "ipfs://" ref.uri then
             let
                 gatewayUrl =
-                    ipfsToHttpsUrl ref.uri
+                    ipfsToGatewaySelectorUrl ref.uri
             in
             Html.a
                 [ HA.href gatewayUrl
