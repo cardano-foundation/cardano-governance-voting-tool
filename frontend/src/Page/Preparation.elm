@@ -331,8 +331,8 @@ type alias RationaleSignature =
 
 initAuthorForm : AuthorWitness
 initAuthorForm =
-    { name = "John Doe"
-    , witnessAlgorithm = "ed25519"
+    { name = ""
+    , witnessAlgorithm = ""
     , publicKey = ""
     , signature = Nothing
     }
@@ -738,9 +738,9 @@ type Msg
     | AddAuthorButtonClicked
     | DeleteAuthorButtonClicked Int
     | AuthorNameChange Int String
-    | LoadJsonSignatureButtonClicked Int String
-    | FileSelectedForJsonSignature Int String File
-    | LoadedAuthorSignatureJsonRationale Int String String
+    | ImportSignedRationaleButtonClicked
+    | FileSelectedForSignedRationale File
+    | LoadedSignedRationale String
     | SkipRationaleSignaturesButtonClicked
     | ValidateRationaleSignaturesButtonClicked
     | ChangeAuthorsButtonClicked
@@ -1383,31 +1383,35 @@ innerUpdate ctx msg model =
             , Nothing
             )
 
-        LoadJsonSignatureButtonClicked n authorName ->
+        ImportSignedRationaleButtonClicked ->
             ( model
             , Cmd.map ctx.wrapMsg <|
-                File.Select.file [ "application/json" ] <|
-                    FileSelectedForJsonSignature n authorName
+                File.Select.file [ "application/json" ] FileSelectedForSignedRationale
             , Nothing
             )
 
-        FileSelectedForJsonSignature n authorName file ->
+        FileSelectedForSignedRationale file ->
             ( model
-            , Task.attempt (handleJsonSignatureFileRead n authorName) (File.toString file)
+            , Task.attempt handleSignedRationaleFileRead (File.toString file)
                 |> Cmd.map ctx.wrapMsg
             , Nothing
             )
 
-        LoadedAuthorSignatureJsonRationale n authorName jsonStr ->
-            ( case authorWitnessExtractResult authorName jsonStr of
-                Err loadError ->
-                    { model
-                        | rationaleSignatureStep =
-                            handleSignatureLoadError loadError model.rationaleSignatureStep
-                    }
+        LoadedSignedRationale jsonStr ->
+            ( case ( model.pickProposalStep, model.rationaleSignatureStep ) of
+                ( Done _ { id }, Preparing form ) ->
+                    case extractSigningAuthors id form.rationale jsonStr of
+                        Err loadError ->
+                            { model
+                                | rationaleSignatureStep =
+                                    handleSignatureLoadError loadError model.rationaleSignatureStep
+                            }
 
-                Ok authorWitness ->
-                    updateAuthorsForm (\authors -> List.Extra.updateAt n (\_ -> authorWitness) authors) model
+                        Ok signingAuthors ->
+                            updateAuthorsForm (\authors -> mergeSigningAuthors signingAuthors authors) model
+
+                _ ->
+                    model
             , Cmd.none
             , Nothing
             )
@@ -2704,44 +2708,107 @@ updateAuthorsForm f ({ rationaleSignatureStep } as model) =
             model
 
 
-handleJsonSignatureFileRead : Int -> String -> Result x String -> Msg
-handleJsonSignatureFileRead n authorName result =
+handleSignedRationaleFileRead : Result x String -> Msg
+handleSignedRationaleFileRead result =
     case result of
         Err _ ->
             NoMsg
 
         Ok json ->
-            LoadedAuthorSignatureJsonRationale n authorName json
+            LoadedSignedRationale json
 
 
 type SignatureLoadError
-    = AuthorNotFoundInFile String
+    = NoSigningAuthorsFound
     | InvalidSignatureFileFormat
+    | RationaleBodyMismatch
 
 
-authorWitnessExtractResult : String -> String -> Result SignatureLoadError AuthorWitness
-authorWitnessExtractResult authorName jsonStr =
+extractSigningAuthors : ActionId -> Rationale -> String -> Result SignatureLoadError (List AuthorWitness)
+extractSigningAuthors actionId rationale jsonStr =
     case JD.decodeString (JD.field "authors" (JD.list ProposalMetadata.authorWitnessDecoder)) jsonStr of
         Err _ ->
             Err InvalidSignatureFileFormat
 
         Ok authors ->
-            case List.head <| List.filter (\a -> a.name == authorName) authors of
-                Just author ->
-                    Ok author
+            let
+                signed =
+                    List.filter (\a -> a.signature /= Nothing) authors
+            in
+            if List.isEmpty signed then
+                Err NoSigningAuthorsFound
 
-                Nothing ->
-                    Err (AuthorNotFoundInFile authorName)
+            else if not (rationaleBodyMatches actionId rationale jsonStr) then
+                Err RationaleBodyMismatch
+
+            else
+                Ok signed
+
+
+rationaleBodyMatches : ActionId -> Rationale -> String -> Bool
+rationaleBodyMatches actionId rationale jsonStr =
+    let
+        importedGovActionId =
+            JD.decodeString (JD.at [ "body", "govActionId" ] JD.string) jsonStr
+                |> Result.toMaybe
+
+        localGovActionId =
+            Gov.idToBech32 (GovActionId actionId)
+    in
+    case importedGovActionId of
+        Just importedId ->
+            importedId == localGovActionId
+
+        Nothing ->
+            -- No govActionId in imported file, fall back to full body comparison
+            case JD.decodeString (JD.field "body" JD.value) jsonStr of
+                Err _ ->
+                    False
+
+                Ok importedBody ->
+                    JE.encode 0 importedBody
+                        == JE.encode 0 (encodeJsonLdRationale actionId rationale)
 
 
 signatureLoadErrorToString : SignatureLoadError -> String
 signatureLoadErrorToString error =
     case error of
-        AuthorNotFoundInFile authorName ->
-            "No witness found for author \"" ++ authorName ++ "\" in the uploaded signature file. Please ensure the signature file matches the author name."
+        NoSigningAuthorsFound ->
+            "No signed authors found in the uploaded file."
 
         InvalidSignatureFileFormat ->
             "Invalid signature file format. Please upload a valid JSON signature file."
+
+        RationaleBodyMismatch ->
+            "The rationale body in the uploaded file does not match the current rationale in the application."
+
+
+mergeSigningAuthors : List AuthorWitness -> List AuthorWitness -> List AuthorWitness
+mergeSigningAuthors newSigned existing =
+    let
+        existingNames =
+            Set.fromList (List.map .name existing)
+
+        ( preExisting, brandNew ) =
+            List.partition (\s -> Set.member s.name existingNames) newSigned
+
+        updatedExisting =
+            List.map
+                (\author ->
+                    if author.signature /= Nothing then
+                        author
+
+                    else
+                        case List.Extra.find (\s -> s.name == author.name) preExisting of
+                            Just signed ->
+                                signed
+
+                            Nothing ->
+                                author
+                )
+                existing
+    in
+    updatedExisting ++ brandNew
 
 
 handleSignatureLoadError : SignatureLoadError -> Step RationaleSignatureForm {} RationaleSignature -> Step RationaleSignatureForm {} RationaleSignature
@@ -4754,8 +4821,8 @@ viewRationaleSignatureStep ctx pickProposalStep storageConfigStep rationaleCreat
                     ( _, Validating _ _, _ ) ->
                         Helper.stepNotAvailableCard [ text "Please wait for the rationale creation to complete." ]
 
-                    ( Done _ _, Done _ _, Preparing form ) ->
-                        Html.map ctx.wrapMsg <| viewRationaleSignatureForm form
+                    ( Done _ { id }, Done _ _, Preparing form ) ->
+                        Html.map ctx.wrapMsg <| viewRationaleSignatureForm ctx.jsonLdContexts id form
 
                     ( _, Done _ _, Preparing _ ) ->
                         Helper.stepNotAvailableCard [ text "Please select a proposal first." ]
@@ -4820,8 +4887,8 @@ viewSignerCard { name, witnessAlgorithm, publicKey, signature } =
     Helper.signerCard name signature witnessAlgorithm publicKey (Maybe.withDefault "" signature)
 
 
-viewRationaleSignatureForm : RationaleSignatureForm -> Html Msg
-viewRationaleSignatureForm { authors, error } =
+viewRationaleSignatureForm : JsonLdContexts -> ActionId -> RationaleSignatureForm -> Html Msg
+viewRationaleSignatureForm jsonLdContexts actionId { authors, rationale, error } =
     let
         cardanoSignerExample =
             "cardano-signer.js sign --cip100 \\\n"
@@ -4829,6 +4896,13 @@ viewRationaleSignatureForm { authors, error } =
                 ++ "   --secret-key dummy.skey \\\n"
                 ++ "   --author-name \"The great Name\" \\\n"
                 ++ "   --out-file rationale-signed.json"
+
+        fileName =
+            "rationale-" ++ Gov.idToBech32 (GovActionId actionId) ++ "-not-signed.json"
+
+        rawJson =
+            createJsonRationale jsonLdContexts actionId rationale []
+                |> JE.encode 0
     in
     div []
         [ Helper.authorsCard
@@ -4844,17 +4918,27 @@ viewRationaleSignatureForm { authors, error } =
                     [ HA.style "font-size" "0.875rem"
                     , HA.style "color" "#4A5568"
                     ]
-                    [ text "Add individual authors that contributed to this rationale" ]
+                    [ text "Add non-signing authors or import signatures from a signed rationale file" ]
                 ]
-            , Helper.addAuthorButton AddAuthorButtonClicked
             ]
             (div []
                 [ Html.p
                     [ HA.style "margin-bottom" "1.5rem"
                     , HA.style "color" "#4A5568"
                     ]
-                    [ text "Each author needs to sign the rationale document. You can download the JSON file, sign it with cardano-signer, and then upload the signature." ]
+                    [ text "You can add non-signing authors manually, or download the JSON file, sign it with cardano-signer, and then import the signed rationale JSON file to automatically add signing authors." ]
+                , Html.p [ HA.style "margin-bottom" "1rem" ]
+                    [ Helper.downloadJSONButton "Download not-signed JSON rationale" { filename = fileName, rawJson = rawJson } ]
                 , Helper.codeSnippetBox cardanoSignerExample
+                , div
+                    [ HA.style "display" "flex"
+                    , HA.style "gap" "0.5rem"
+                    , HA.style "margin-top" "1rem"
+                    , HA.style "margin-bottom" "1rem"
+                    ]
+                    [ Helper.addAuthorButton AddAuthorButtonClicked
+                    , Helper.importSignedRationaleButton ImportSignedRationaleButtonClicked
+                    ]
                 , if List.isEmpty authors then
                     Helper.noAuthorsPlaceholder
 
@@ -4879,33 +4963,34 @@ viewOneAuthorForm : Int -> AuthorWitness -> Html Msg
 viewOneAuthorForm n author =
     Helper.authorForm n
         (DeleteAuthorButtonClicked n)
-        [ Helper.labeledField "Author name"
-            (Html.input
-                [ HA.type_ "text"
-                , HA.value author.name
-                , Html.Events.onInput (AuthorNameChange n)
-                , HA.style "width" "100%"
-                , HA.style "padding" "0.75rem"
-                , HA.style "border" "1px solid #E2E8F0"
-                , HA.style "border-radius" "0.375rem"
-                , HA.style "background-color" "white"
-                ]
-                []
-            )
-        , case author.signature of
+        (case author.signature of
             Nothing ->
-                Helper.labeledField "Signature"
-                    (Helper.loadSignatureButton (LoadJsonSignatureButtonClicked n author.name))
+                [ Helper.labeledField "Author name"
+                    (Html.input
+                        [ HA.type_ "text"
+                        , HA.value author.name
+                        , Html.Events.onInput (AuthorNameChange n)
+                        , HA.style "width" "100%"
+                        , HA.style "padding" "0.75rem"
+                        , HA.style "border" "1px solid #E2E8F0"
+                        , HA.style "border-radius" "0.375rem"
+                        , HA.style "background-color" "white"
+                        ]
+                        []
+                    )
+                ]
 
             Just sig ->
-                div [ HA.style "display" "grid", HA.style "gap" "1rem" ]
-                    [ Helper.labeledField "Signature algorithm"
-                        (Helper.readOnlyField author.witnessAlgorithm)
-                    , Helper.labeledField "Public key"
-                        (Helper.readOnlyField author.publicKey)
-                    , Helper.signatureField sig (LoadJsonSignatureButtonClicked n author.name)
-                    ]
-        ]
+                [ Helper.labeledField "Author name"
+                    (Helper.readOnlyField author.name)
+                , Helper.labeledField "Signature algorithm"
+                    (Helper.readOnlyField author.witnessAlgorithm)
+                , Helper.labeledField "Public key"
+                    (Helper.readOnlyField author.publicKey)
+                , Helper.labeledField "Signature"
+                    (Helper.readOnlyField sig)
+                ]
+        )
 
 
 {-| Creates a JSON-LD document for the rationale that follows CIP-0136.
