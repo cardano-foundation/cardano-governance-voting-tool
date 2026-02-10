@@ -5,9 +5,10 @@ import Cardano.Address as Address exposing (Address, CredentialHash)
 import Cardano.Cip30 as Cip30
 import Cardano.CoinSelection as CoinSelection
 import Cardano.Gov as Gov exposing (ActionId, Anchor, CostModels, Id(..))
+import Cardano.Metadatum as Metadatum
 import Cardano.Script as Script
 import Cardano.Transaction as Transaction exposing (Transaction)
-import Cardano.TxIntent as TxIntent exposing (Fee(..), TxFinalized, TxIntent, VoteIntent)
+import Cardano.TxIntent as TxIntent exposing (Fee(..), TxFinalizationError(..), TxFinalized, TxIntent, VoteIntent)
 import Cardano.Uplc as Uplc
 import Cardano.Utils as Utils
 import Cardano.Utxo as Utxo exposing (Output)
@@ -706,6 +707,14 @@ buildTx costModels localStateUtxos walletAddress votersIntents =
 
         keyNames =
             Dict.fromList (feePayer ++ voterKeys)
+
+        message =
+            case List.length allVoteIntents of
+                1 ->
+                    "cfvt: 1 vote"
+
+                n ->
+                    "cfvt: " ++ String.fromInt n ++ " votes"
     in
     allVoteIntents
         |> TxIntent.finalizeAdvanced
@@ -716,9 +725,26 @@ buildTx costModels localStateUtxos walletAddress votersIntents =
             , costModels = costModels
             }
             (AutoFee { paymentSource = feeSource })
-            []
+            [ TxIntent.TxMetadata
+                { tag = N.fromSafeInt 674
+                , metadata = Metadatum.Map [ ( Metadatum.String "msg", Metadatum.List [ Metadatum.String message ] ) ]
+                }
+            ]
         |> Result.map (\txFinalized -> { keyNames = keyNames, txFinalized = txFinalized })
-        |> Result.mapError TxIntent.errorToString
+        |> Result.mapError customTxBuildingError
+
+
+customTxBuildingError : TxFinalizationError -> String
+customTxBuildingError error =
+    case error of
+        FailedToPerformCoinSelection CoinSelection.MaximumInputCountExceeded ->
+            "Your wallet has too many small inputs. An easy fix is doing a transfer to yourself of at least 2 ADA. This will create a new UTxO with at least 2 ADA in it."
+
+        FailedToPerformCoinSelection (CoinSelection.UTxOBalanceInsufficient _) ->
+            "You don’t have enough ada in your wallet to pay for the Tx fees. We have two solutions here!\n\n1. Simply send some ada to your wallet, then refresh the page.\n\n2. Or you can change the connected wallet to another one with enough ada to pay for the Tx fees. No worry, your votes will not change. In the signing page, you’ll simply need to connect and sign with both the DRep wallet and the wallet paying the fees."
+
+        _ ->
+            TxIntent.errorToString error
 
 
 

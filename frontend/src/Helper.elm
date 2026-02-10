@@ -1,5 +1,6 @@
 module Helper exposing
-    ( ipfsToHttpsUrl, ipfsToGatewaySelectorUrl, shortenedHex, prettyAdaLovelace
+    ( actionIdToBech32, actionIdFromBech32
+    , ipfsToHttpsUrl, ipfsToGatewaySelectorUrl, shortenedHex, prettyAdaLovelace
     , textFieldInline, textInputField
     , formContainer, boxContainer, viewGrid, cardContainer, cardHeader, cardContent
     , viewButton, viewWalletButton, externalLink, externalLinkButton, trashButton
@@ -16,13 +17,18 @@ module Helper exposing
     , rationaleCard, checkbox, rationaleMarkdownInput, rationaleTextArea, pdfAutogenCheckbox, voteNumberInput, referenceCard, referenceForm
     , rationaleCompletedCard, optionalSection, formattedInternalVote, formattedReferences
     , stepNotAvailableCard, downloadJSONButton, authorsCard, addAuthorButton, codeSnippetBox, noAuthorsPlaceholder
-    , signerCard, authorForm, labeledField, readOnlyField, signatureField, formButtonsRow, secondaryButton, primaryButton, loadSignatureButton
+    , signerCard, authorForm, labeledField, readOnlyField, formButtonsRow, secondaryButton, primaryButton, importSignedRationaleButton
     , stepCard, missingStepsList, missingStepItem, loadingSpinner
     , signingButton
     )
 
 {-| Helper module for miscellaneous functions that didn't fit elsewhere,
 and are potentially useful in multiple places.
+
+
+# Gov ActionId helpers
+
+@docs actionIdToBech32, actionIdFromBech32
 
 
 # String formatting
@@ -96,7 +102,7 @@ and are potentially useful in multiple places.
 # Document Creation Components
 
 @docs stepNotAvailableCard, downloadJSONButton, authorsCard, addAuthorButton, codeSnippetBox, noAuthorsPlaceholder
-@docs signerCard, authorForm, labeledField, readOnlyField, signatureField, formButtonsRow, secondaryButton, primaryButton, loadSignatureButton
+@docs signerCard, authorForm, labeledField, readOnlyField, formButtonsRow, secondaryButton, primaryButton, importSignedRationaleButton
 
 
 # Transaction Components
@@ -110,7 +116,7 @@ and are potentially useful in multiple places.
 
 -}
 
-import Cardano.Gov as Gov
+import Cardano.Gov as Gov exposing (ActionId)
 import Cardano.TxIntent exposing (VoteIntent)
 import Html exposing (Html, div, text)
 import Html.Attributes as HA
@@ -124,6 +130,29 @@ import RemoteData
 import Svg
 import Svg.Attributes as SA
 import Url
+
+
+
+-- GOV ACTION ID HELPERS #######################################################
+
+
+{-| Convert an ActionId into its Bech32 representation (CIP-129).
+-}
+actionIdToBech32 : ActionId -> String
+actionIdToBech32 actionId =
+    Gov.idToBech32 (Gov.GovActionId actionId)
+
+
+{-| Parse an ActionId from its Bech32 representation (CIP-129).
+-}
+actionIdFromBech32 : String -> Maybe ActionId
+actionIdFromBech32 str =
+    case Gov.idFromBech32 str of
+        Just (Gov.GovActionId actionId) ->
+            Just actionId
+
+        _ ->
+            Nothing
 
 
 
@@ -1282,8 +1311,8 @@ showMoreButton hasMore visibleCount totalCount clickMsg =
 
 {-| Card for an individual proposal
 -}
-proposalCard : { title : String, hashIsValid : Bool, pastVote : Maybe Gov.Vote, isRatifying : Bool, abstract : String, actionType : String, linkUrl : String, linkHex : String, index : Int } -> msg -> Html msg -> Html msg
-proposalCard { title, hashIsValid, pastVote, isRatifying, abstract, actionType, linkUrl, linkHex, index } selectMsg actionIcon =
+proposalCard : { title : String, hashIsValid : Bool, pastVote : Maybe Gov.Vote, isRatifying : Bool, isLastEpoch : Bool, abstract : String, actionType : String, linkUrl : String, linkHex : String, index : Int } -> msg -> Html msg -> Html msg
+proposalCard { title, hashIsValid, pastVote, isRatifying, isLastEpoch, abstract, actionType, linkUrl, linkHex, index } selectMsg actionIcon =
     div
         [ HA.style "border" "1px solid #E2E8F0"
         , HA.style "border-radius" "0.75rem"
@@ -1338,6 +1367,21 @@ proposalCard { title, hashIsValid, pastVote, isRatifying, abstract, actionType, 
                         ]
                         [ text "✓ in ratification" ]
 
+                lastEpochBadge : Html msg
+                lastEpochBadge =
+                    Html.span
+                        [ HA.style "display" "inline-flex"
+                        , HA.style "align-items" "center"
+                        , HA.style "background-color" "#FEF3C7"
+                        , HA.style "color" "#D97706"
+                        , HA.style "font-weight" "bold"
+                        , HA.style "padding" "0.25rem 0.5rem"
+                        , HA.style "border-radius" "0.375rem"
+                        , HA.style "font-size" "0.875rem"
+                        , HA.style "gap" "0.25rem"
+                        ]
+                        [ text "⏳ last epoch" ]
+
                 badges : List (Html msg)
                 badges =
                     (if hashIsValid then
@@ -1348,6 +1392,12 @@ proposalCard { title, hashIsValid, pastVote, isRatifying, abstract, actionType, 
                     )
                         ++ (if isRatifying then
                                 [ ratifyingBadge ]
+
+                            else
+                                []
+                           )
+                        ++ (if isLastEpoch then
+                                [ lastEpochBadge ]
 
                             else
                                 []
@@ -2362,7 +2412,7 @@ authorsCard headerContent content =
 -}
 addAuthorButton : msg -> Html msg
 addAuthorButton clickMsg =
-    blackSquareButton [] "+ Add Author" clickMsg
+    blackSquareButton [] "+ Add non-signing author" clickMsg
 
 
 {-| Code snippet box
@@ -2538,38 +2588,6 @@ readOnlyField value =
         [ text value ]
 
 
-{-| Signature field with replace button
--}
-signatureField : String -> msg -> Html msg
-signatureField signature replaceMsg =
-    div []
-        [ Html.div
-            [ HA.style "display" "flex"
-            , HA.style "justify-content" "space-between"
-            , HA.style "align-items" "center"
-            , HA.style "margin-bottom" "0.5rem"
-            ]
-            [ Html.label
-                [ HA.style "font-weight" "500"
-                , HA.style "font-size" "0.875rem"
-                , HA.style "color" "#4B5563"
-                ]
-                [ text "Signature" ]
-            , Html.button
-                [ HA.style "font-size" "0.75rem"
-                , HA.style "color" "#4B5563"
-                , HA.style "background" "none"
-                , HA.style "border" "none"
-                , HA.style "cursor" "pointer"
-                , HA.style "text-decoration" "underline"
-                , onClick replaceMsg
-                ]
-                [ text "Replace" ]
-            ]
-        , readOnlyField signature
-        ]
-
-
 {-| Form buttons row
 -}
 formButtonsRow : List (Html msg) -> Html msg
@@ -2602,29 +2620,11 @@ primaryButton label clickMsg =
     blackSquareButton [] label clickMsg
 
 
-{-| Load signature file button
+{-| Import signed rationale button for the header
 -}
-loadSignatureButton : msg -> Html msg
-loadSignatureButton msg =
-    Html.button
-        [ HA.style "background-color" "#F9FAFB"
-        , HA.style "color" "#272727"
-        , HA.style "font-weight" "500"
-        , HA.style "font-size" "0.875rem"
-        , HA.style "padding" "0.75rem"
-        , HA.style "border" "1px dashed #CBD5E0"
-        , HA.style "border-radius" "0.375rem"
-        , HA.style "width" "100%"
-        , HA.style "cursor" "pointer"
-        , HA.style "display" "flex"
-        , HA.style "align-items" "center"
-        , HA.style "justify-content" "center"
-        , HA.style "gap" "0.5rem"
-        , onClick msg
-        ]
-        [ Html.span [] [ text "📄" ]
-        , text "Load signature file"
-        ]
+importSignedRationaleButton : msg -> Html msg
+importSignedRationaleButton msg =
+    blackSquareButton [] "+ Import signed rationale" msg
 
 
 
