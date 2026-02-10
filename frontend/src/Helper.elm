@@ -1294,8 +1294,8 @@ showMoreButton hasMore visibleCount totalCount clickMsg =
 
 {-| Card for an individual proposal
 -}
-proposalCard : { title : String, hashIsValid : Bool, pastVote : Maybe Gov.Vote, isRatifying : Bool, abstract : String, actionType : String, linkUrl : String, linkHex : String, index : Int } -> msg -> Html msg -> Html msg
-proposalCard { title, hashIsValid, pastVote, isRatifying, abstract, actionType, linkUrl, linkHex, index } selectMsg actionIcon =
+proposalCard : { title : String, hashIsValid : Bool, pastVote : Maybe Gov.Vote, isRatifying : Bool, isLastEpoch : Bool, abstract : String, actionType : String, linkUrl : String, linkHex : String, index : Int } -> msg -> Html msg -> Html msg
+proposalCard { title, hashIsValid, pastVote, isRatifying, isLastEpoch, abstract, actionType, linkUrl, linkHex, index } selectMsg actionIcon =
     div
         [ HA.style "border" "1px solid #E2E8F0"
         , HA.style "border-radius" "0.75rem"
@@ -1350,6 +1350,21 @@ proposalCard { title, hashIsValid, pastVote, isRatifying, abstract, actionType, 
                         ]
                         [ text "✓ in ratification" ]
 
+                lastEpochBadge : Html msg
+                lastEpochBadge =
+                    Html.span
+                        [ HA.style "display" "inline-flex"
+                        , HA.style "align-items" "center"
+                        , HA.style "background-color" "#FEF3C7"
+                        , HA.style "color" "#D97706"
+                        , HA.style "font-weight" "bold"
+                        , HA.style "padding" "0.25rem 0.5rem"
+                        , HA.style "border-radius" "0.375rem"
+                        , HA.style "font-size" "0.875rem"
+                        , HA.style "gap" "0.25rem"
+                        ]
+                        [ text "⏳ last epoch" ]
+
                 badges : List (Html msg)
                 badges =
                     (if hashIsValid then
@@ -1360,6 +1375,12 @@ proposalCard { title, hashIsValid, pastVote, isRatifying, abstract, actionType, 
                     )
                         ++ (if isRatifying then
                                 [ ratifyingBadge ]
+
+                            else
+                                []
+                           )
+                        ++ (if isLastEpoch then
+                                [ lastEpochBadge ]
 
                             else
                                 []
