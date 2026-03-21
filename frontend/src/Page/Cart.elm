@@ -1,4 +1,4 @@
-module Page.Cart exposing (Model, Msg, UpdateContext, ViewContext, VoteRecord, addVote, cartCount, contains, deleteVote, deserialize, get, getVoter, init, serialize, update, view)
+module Page.Cart exposing (Model, Msg, UpdateContext, ViewContext, VoteRecord, addVote, cartCount, contains, deleteVote, deserialize, get, getVoter, init, serialize, surveyAdditionError, update, view)
 
 import Bytes.Comparable as Bytes exposing (Bytes)
 import Cardano.Address as Address exposing (Address, CredentialHash)
@@ -24,6 +24,7 @@ import Html.Attributes as HA
 import Json.Decode as JD
 import Json.Encode as JE
 import Natural as N
+import Survey
 import Task
 import Url
 
@@ -62,6 +63,7 @@ type alias CartVoter =
 type alias VoteRecord =
     { proposalTitle : String
     , voteIntent : VoteIntent
+    , surveyResponse : Maybe Survey.SurveyResponse
     }
 
 
@@ -397,10 +399,23 @@ serializeVoter voter =
 
 
 serializeVoteRecord : VoteRecord -> JE.Value
-serializeVoteRecord { proposalTitle, voteIntent } =
+serializeVoteRecord { proposalTitle, voteIntent, surveyResponse } =
     JE.object
         [ ( "proposalTitle", JE.string proposalTitle )
         , ( "voteIntent", serializeVoteIntent voteIntent )
+        , ( "surveyResponse"
+          , case surveyResponse of
+                Just response ->
+                    JE.object
+                        [ ( "specVersion", JE.string response.specVersion )
+                        , ( "surveyTxId", JE.string response.surveyTxId )
+                        , ( "responderRole", JE.string response.responderRole )
+                        , ( "answers", JE.list Survey.encodeAnswer response.answers )
+                        ]
+
+                Nothing ->
+                    JE.null
+          )
         ]
 
 
@@ -567,9 +582,31 @@ deserializeCredentialWitness =
 
 deserializeVoteRecord : JD.Decoder VoteRecord
 deserializeVoteRecord =
-    JD.map2 VoteRecord
+    JD.map3 VoteRecord
         (JD.field "proposalTitle" JD.string)
         (JD.field "voteIntent" deserializeVoteIntent)
+        (JD.oneOf
+            [ JD.field "surveyResponse" (JD.nullable surveyResponseDecoder)
+            , JD.succeed Nothing
+            ]
+        )
+
+
+surveyResponseDecoder : JD.Decoder Survey.SurveyResponse
+surveyResponseDecoder =
+    JD.map4 Survey.SurveyResponse
+        (JD.field "specVersion" JD.string)
+        (JD.field "surveyTxId" JD.string)
+        (JD.field "responderRole" JD.string)
+        (JD.field "answers" (JD.list surveyAnswerDecoder))
+
+
+surveyAnswerDecoder : JD.Decoder Survey.SurveyAnswer
+surveyAnswerDecoder =
+    JD.map3 Survey.SurveyAnswer
+        (JD.field "questionId" JD.string)
+        (JD.maybe (JD.field "selection" (JD.list JD.int)))
+        (JD.maybe (JD.field "numericValue" JD.int))
 
 
 deserializeVoteIntent : JD.Decoder VoteIntent
@@ -661,6 +698,11 @@ buildTx costModels localStateUtxos walletAddress votersIntents =
                 |> List.head
                 |> Maybe.withDefault walletAddress
 
+        allVoteRecords : List VoteRecord
+        allVoteRecords =
+            Dict.values votersIntents
+                |> List.concatMap (\{ voteRecords } -> Dict.values voteRecords)
+
         allVoteIntents : List TxIntent
         allVoteIntents =
             Dict.values votersIntents
@@ -668,6 +710,15 @@ buildTx costModels localStateUtxos walletAddress votersIntents =
                     (\{ voter, voteRecords } ->
                         TxIntent.Vote voter <| List.map .voteIntent <| Dict.values voteRecords
                     )
+
+        voteCount : Int
+        voteCount =
+            List.length allVoteRecords
+
+        surveyResponses : List Survey.SurveyResponse
+        surveyResponses =
+            allVoteRecords
+                |> List.filterMap .surveyResponse
 
         -- Give names to all potential expected keys
         feePayer =
@@ -709,29 +760,59 @@ buildTx costModels localStateUtxos walletAddress votersIntents =
             Dict.fromList (feePayer ++ voterKeys)
 
         message =
-            case List.length allVoteIntents of
+            case voteCount of
                 1 ->
                     "cfvt: 1 vote"
 
                 n ->
                     "cfvt: " ++ String.fromInt n ++ " votes"
+
+        txMetadata =
+            case surveyResponses of
+                [] ->
+                    Ok
+                        [ TxIntent.TxMetadata
+                            { tag = N.fromSafeInt 674
+                            , metadata = Metadatum.Map [ ( Metadatum.String "msg", Metadatum.List [ Metadatum.String message ] ) ]
+                            }
+                        ]
+
+                [ surveyResponse ] ->
+                    if voteCount /= 1 then
+                        Err "A linked survey response can only be attached when the cart contains exactly one vote."
+
+                    else
+                        Ok
+                            [ TxIntent.TxMetadata
+                                { tag = N.fromSafeInt 674
+                                , metadata = Metadatum.Map [ ( Metadatum.String "msg", Metadatum.List [ Metadatum.String message ] ) ]
+                                }
+                            , TxIntent.TxMetadata
+                                { tag = N.fromSafeInt 17
+                                , metadata = Survey.surveyResponseMetadata surveyResponse
+                                }
+                            ]
+
+                _ ->
+                    Err "Only one linked survey response can be attached to a transaction."
     in
-    allVoteIntents
-        |> TxIntent.finalizeAdvanced
-            { govState = TxIntent.emptyGovernanceState
-            , localStateUtxos = localStateUtxos
-            , coinSelectionAlgo = CoinSelection.largestFirst
-            , evalScriptsCosts = Uplc.evalScriptsCosts Uplc.defaultVmConfig
-            , costModels = costModels
-            }
-            (AutoFee { paymentSource = feeSource })
-            [ TxIntent.TxMetadata
-                { tag = N.fromSafeInt 674
-                , metadata = Metadatum.Map [ ( Metadatum.String "msg", Metadatum.List [ Metadatum.String message ] ) ]
-                }
-            ]
-        |> Result.map (\txFinalized -> { keyNames = keyNames, txFinalized = txFinalized })
-        |> Result.mapError customTxBuildingError
+    case txMetadata of
+        Err error ->
+            Err error
+
+        Ok metadata ->
+            allVoteIntents
+                |> TxIntent.finalizeAdvanced
+                    { govState = TxIntent.emptyGovernanceState
+                    , localStateUtxos = localStateUtxos
+                    , coinSelectionAlgo = CoinSelection.largestFirst
+                    , evalScriptsCosts = Uplc.evalScriptsCosts Uplc.defaultVmConfig
+                    , costModels = costModels
+                    }
+                    (AutoFee { paymentSource = feeSource })
+                    metadata
+                |> Result.map (\txFinalized -> { keyNames = keyNames, txFinalized = txFinalized })
+                |> Result.mapError customTxBuildingError
 
 
 customTxBuildingError : TxFinalizationError -> String
@@ -891,7 +972,7 @@ viewVoterIntents ctx ( voterIdStr, { voteRecords } ) =
 
 
 viewVoteRecord : ViewContext a msg -> String -> ( String, VoteRecord ) -> Html msg
-viewVoteRecord ctx voterIdStr ( actionIdStr, { proposalTitle, voteIntent } ) =
+viewVoteRecord ctx voterIdStr ( actionIdStr, { proposalTitle, voteIntent, surveyResponse } ) =
     let
         { vote, rationale } =
             voteIntent
@@ -945,11 +1026,66 @@ viewVoteRecord ctx voterIdStr ( actionIdStr, { proposalTitle, voteIntent } ) =
                 , Html.span [] [ text "·" ]
                 , Html.span [ HA.style "color" "#64748B" ] [ text "Vote:" ]
                 , viewDecisionBadge vote
+                , if surveyResponse /= Nothing then
+                    Html.span
+                        [ HA.style "display" "inline-flex"
+                        , HA.style "align-items" "center"
+                        , HA.style "height" "1.5rem"
+                        , HA.style "padding" "0 0.5rem"
+                        , HA.style "border-radius" "9999px"
+                        , HA.style "background-color" "#DBEAFE"
+                        , HA.style "color" "#1D4ED8"
+                        , HA.style "font-weight" "600"
+                        , HA.style "font-size" "0.75rem"
+                        ]
+                        [ text "Survey attached" ]
+
+                  else
+                    text ""
                 ]
             ]
         , div [ HA.style "align-self" "center", HA.style "margin-left" "auto", HA.style "flex-shrink" "0" ]
             [ Helper.trashButton (ctx.deleteVote { voterIdStr = voterIdStr, actionIdStr = actionIdStr }) ]
         ]
+
+surveyAdditionError : VoteRecord -> Model -> Maybe String
+surveyAdditionError voteRecord model =
+    let
+        surveyResponses =
+            getSurveyResponses model
+
+        currentVoteCount =
+            cartCount model
+    in
+    case ( voteRecord.surveyResponse, surveyResponses ) of
+        ( Just _, _ ) ->
+            if currentVoteCount /= 0 then
+                Just "A linked survey response requires an otherwise empty cart because the transaction can contain exactly one vote."
+
+            else
+                Nothing
+
+        ( Nothing, _ :: _ ) ->
+            Just "This cart already contains a linked survey response. Submit or clear it before adding another vote."
+
+        _ ->
+            Nothing
+
+
+getSurveyResponses : Model -> List Survey.SurveyResponse
+getSurveyResponses model =
+    let
+        allVotersIntents =
+            case model of
+                Preparing { votersIntents } ->
+                    votersIntents
+
+                Ready { votersIntents } ->
+                    votersIntents
+    in
+    Dict.values allVotersIntents
+        |> List.concatMap (\{ voteRecords } -> Dict.values voteRecords)
+        |> List.filterMap .surveyResponse
 
 
 viewReadyCart : ViewContext a msg -> CartReady -> Html msg

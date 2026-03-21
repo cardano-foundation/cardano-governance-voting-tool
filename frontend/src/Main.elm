@@ -542,7 +542,6 @@ networkIdFromString str =
         _ ->
             Nothing
 
-
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case ( msg, model ) of
@@ -650,6 +649,7 @@ update msg model =
                         ctx =
                             { wrapMsg = PreparationPageMsg
                             , db = model.db
+                            , cart = model.cart
                             , proposals = model.proposals
                             , scriptsInfo = model.scriptsInfo
                             , drepsInfo = model.drepsInfo
@@ -1533,15 +1533,32 @@ handleCompletedTask response model =
 
                 updatedModel =
                     { model | proposals = RemoteData.map (\ps -> Dict.update id updateMetadata ps) model.proposals }
+
+                refreshSelectedProposalCmd =
+                    case ( model.page, updatedModel.proposals ) of
+                        ( PreparationPage _, RemoteData.Success proposals ) ->
+                            case Dict.get id proposals of
+                                Just proposal ->
+                                    Cmd.Extra.perform <|
+                                        PreparationPageMsg (Page.Preparation.refreshSelectedProposalMsg proposal)
+
+                                Nothing ->
+                                    Cmd.none
+
+                        _ ->
+                            Cmd.none
             in
             -- If this is the pending proposal, auto-select it now that metadata is loaded
             if model.pendingProposalId == Just id then
                 ( { updatedModel | pendingProposalId = Nothing }
-                , Cmd.Extra.perform <| PreparationPageMsg (Page.Preparation.pickProposalMsg id)
+                , Cmd.batch
+                    [ Cmd.Extra.perform <| PreparationPageMsg (Page.Preparation.pickProposalMsg id)
+                    , refreshSelectedProposalCmd
+                    ]
                 )
 
             else
-                ( updatedModel, Cmd.none )
+                ( updatedModel, refreshSelectedProposalCmd )
 
         ( ConcurrentTask.Success (GotCart cart), _ ) ->
             ( { model | cart = cart }, Cmd.none )
