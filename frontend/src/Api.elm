@@ -24,6 +24,7 @@ import Platform exposing (Task)
 import ProposalMetadata exposing (ProposalMetadata)
 import RemoteData exposing (RemoteData)
 import ScriptInfo exposing (ScriptInfo)
+import Survey exposing (BuildLinkedResponseResult, LinkedActionId, ProposalSurveyPayload, SurveyAnswer)
 import Task
 import Url
 
@@ -67,6 +68,29 @@ type alias ApiProvider msg =
     , convertToPdf : String -> (Result Http.Error ElmBytes.Bytes -> msg) -> Cmd msg
     , getFromIpfsGateway : (Result Http.Error String -> msg) -> String -> String -> Cmd msg
     , verifyCip100Metadata : String -> (Result Http.Error Cip100VerificationResponse -> msg) -> Cmd msg
+    , resolveLinkedSurvey :
+        NetworkId
+        ->
+            { proposalType : String
+            , linkedActionId : LinkedActionId
+            , actionEndEpoch : Int
+            , anchorJson : String
+            }
+        -> (Result Http.Error ProposalSurveyPayload -> msg)
+        -> Cmd msg
+    , buildLinkedSurveyResponse :
+        NetworkId
+        ->
+            { proposalType : String
+            , linkedActionId : LinkedActionId
+            , actionEndEpoch : Int
+            , responderRole : String
+            , surveyTxId : String
+            , answers : List SurveyAnswer
+            , anchorJson : String
+            }
+        -> (Result Http.Error BuildLinkedResponseResult -> msg)
+        -> Cmd msg
     }
 
 
@@ -875,7 +899,50 @@ defaultApiProvider =
                 , body = Http.jsonBody proxyRequestBody
                 , expect = Http.expectJson toMsg cip100VerificationDecoder
                 }
+    , resolveLinkedSurvey =
+        \networkId { proposalType, linkedActionId, actionEndEpoch, anchorJson } toMsg ->
+            Http.post
+                { url = "/survey/resolve-linked-proposal"
+                , body =
+                    Http.jsonBody <|
+                        JE.object
+                            [ ( "networkId", JE.string (networkIdToString networkId) )
+                            , ( "proposalType", JE.string proposalType )
+                            , ( "linkedActionId", Survey.encodeLinkedActionId linkedActionId )
+                            , ( "actionEndEpoch", JE.int actionEndEpoch )
+                            , ( "anchorJson", JE.string anchorJson )
+                            ]
+                , expect = Http.expectJson toMsg Survey.proposalSurveyPayloadDecoder
+                }
+    , buildLinkedSurveyResponse =
+        \networkId { proposalType, linkedActionId, actionEndEpoch, responderRole, surveyTxId, answers, anchorJson } toMsg ->
+            Http.post
+                { url = "/survey/build-linked-response"
+                , body =
+                    Http.jsonBody <|
+                        JE.object
+                            [ ( "networkId", JE.string (networkIdToString networkId) )
+                            , ( "proposalType", JE.string proposalType )
+                            , ( "linkedActionId", Survey.encodeLinkedActionId linkedActionId )
+                            , ( "actionEndEpoch", JE.int actionEndEpoch )
+                            , ( "responderRole", JE.string responderRole )
+                            , ( "surveyTxId", JE.string surveyTxId )
+                            , ( "answers", JE.list Survey.encodeAnswer answers )
+                            , ( "anchorJson", JE.string anchorJson )
+                            ]
+                , expect = Http.expectJson toMsg Survey.buildLinkedResponseResultDecoder
+                }
     }
+
+
+networkIdToString : NetworkId -> String
+networkIdToString networkId =
+    case networkId of
+        Mainnet ->
+            "Mainnet"
+
+        Testnet ->
+            "Testnet"
 
 
 bytesResponseToResult : Http.Response ElmBytes.Bytes -> Result Http.Error ElmBytes.Bytes

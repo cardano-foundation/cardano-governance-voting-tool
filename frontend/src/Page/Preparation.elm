@@ -1,4 +1,4 @@
-module Page.Preparation exposing (InternalVote, JsonLdContexts, LoadedWallet, Model, Msg, MsgToParent(..), Rationale, Reference, ReferenceType(..), StorageConfig, TaskCompleted, UpdateContext, ViewContext, encodeStorageConfig, handleTaskCompleted, init, initStorageConfig, noInternalVote, pickProposalMsg, pinPdfFile, pinRationaleFile, setLastStorageConfig, setLastVoter, storageConfigDecoder, update, view)
+module Page.Preparation exposing (InternalVote, JsonLdContexts, LoadedWallet, Model, Msg, MsgToParent(..), Rationale, Reference, ReferenceType(..), StorageConfig, TaskCompleted, UpdateContext, ViewContext, encodeStorageConfig, handleTaskCompleted, init, initStorageConfig, noInternalVote, pickProposalMsg, pinPdfFile, pinRationaleFile, refreshSelectedProposalMsg, setLastStorageConfig, setLastVoter, storageConfigDecoder, update, view)
 
 {-| This module handles the complete vote preparation workflow, from identifying
 the voter to signing the transaction, which is handled by another page.
@@ -69,6 +69,7 @@ import RemoteData exposing (RemoteData, WebData)
 import ScriptInfo exposing (ScriptInfo)
 import Set exposing (Set)
 import Storage
+import Survey
 import Task
 import Url
 
@@ -91,11 +92,12 @@ type alias InnerModel =
     , reloadedLastVoter : Bool
     , voterStep : Step VoterPreparationForm Witness.Voter Witness.Voter
     , pickProposalStep : Step {} {} ActiveProposal
+    , surveyState : SurveyState
     , storageConfigStep : Step StorageConfigForm {} StorageConfig
     , rationaleCreationStep : Step RationaleForm Rationale Rationale
     , rationaleSignatureStep : Step RationaleSignatureForm {} RationaleSignature
     , permanentStorageStep : Step StorageForm {} Storage
-    , buildTxStep : Step BuildTxPrep {} {}
+    , buildTxStep : Step BuildTxPrep PendingVote {}
     , visibleProposalCount : Int
     , showCartToast : Bool
     , flyToCart : Maybe { x : Float, y : Float, opacity : String, color : String }
@@ -135,6 +137,7 @@ init ipfsPreconfig =
         , reloadedLastVoter = False
         , voterStep = Preparing initVoterForm
         , pickProposalStep = Preparing {}
+        , surveyState = initSurveyState
         , storageConfigStep = Done (initStorageConfigForm ipfsPreconfig) (UsePreconfigIpfs ipfsPreconfig)
         , rationaleCreationStep = Preparing initRationaleForm
         , rationaleSignatureStep = Preparing initRationaleSignatureForm
@@ -152,6 +155,11 @@ init ipfsPreconfig =
 pickProposalMsg : String -> Msg
 pickProposalMsg actionId =
     PickProposalButtonClicked actionId
+
+
+refreshSelectedProposalMsg : ActiveProposal -> Msg
+refreshSelectedProposalMsg proposal =
+    SelectedProposalRefreshed proposal
 
 
 
@@ -635,6 +643,31 @@ type alias BuildTxPrep =
     }
 
 
+type alias PendingVote =
+    { vote : Vote
+    , clientX : Float
+    , clientY : Float
+    }
+
+
+type alias SurveyState =
+    { resolution : WebData Survey.ProposalSurveyPayload
+    , answers : Dict String SurveyAnswerDraft
+    }
+
+
+type SurveyAnswerDraft
+    = SelectionDraft (Set Int)
+    | NumericDraft String
+
+
+initSurveyState : SurveyState
+initSurveyState =
+    { resolution = RemoteData.NotAsked
+    , answers = Dict.empty
+    }
+
+
 
 -- ###################################################################
 -- UPDATE
@@ -686,9 +719,11 @@ type Msg
     | ChangeVoterButtonClicked
       -- Pick Proposal Step
     | PickProposalButtonClicked String
+    | SelectedProposalRefreshed ActiveProposal
     | ChangeProposalButtonClicked
     | ShowMoreProposals Int
     | GotCip100Verification String (Result Http.Error Api.Cip100VerificationResponse)
+    | GotLinkedSurveyResolution (Result Http.Error Survey.ProposalSurveyPayload)
       -- Storage Config Step
     | StorageMethodSelected StorageMethod
     | BlockfrostProjectIdChange String
@@ -744,7 +779,11 @@ type Msg
     | PickAnotherProposalButtonClicked
     | GoToCartButtonClicked
     | HideCartToast
+    | SurveySingleChoiceSelected String Int
+    | SurveyMultiSelectToggled String Int Bool
+    | SurveyNumericValueChanged String String
     | VoteButtonPressed Vote Float Float
+    | GotBuiltLinkedSurveyResponse PendingVote (Result Http.Error Survey.BuildLinkedResponseResult)
     | StartFlyAnim (Result Dom.Error Dom.Element)
     | EndFlyAnim
 
@@ -762,6 +801,7 @@ Provides access to:
 type alias UpdateContext msg =
     { wrapMsg : Msg -> msg
     , db : JD.Value
+    , cart : Cart.Model
     , proposals : WebData (Dict String ActiveProposal)
     , scriptsInfo : Dict String ScriptInfo
     , drepsInfo : Dict String DrepInfo
@@ -1000,14 +1040,24 @@ innerUpdate ctx msg model =
                                 updatedModel =
                                     { resetRationaleModel
                                         | pickProposalStep = Done form prop
+                                        , surveyState =
+                                            case prop.metadata of
+                                                RemoteData.Success _ ->
+                                                    { initSurveyState | resolution = RemoteData.Loading }
+
+                                                _ ->
+                                                    initSurveyState
                                         , cip100Verification = verificationDict
 
                                         -- reset Tx building steps
                                         , buildTxStep = Preparing { error = Nothing }
                                     }
+
+                                surveyCmd =
+                                    resolveLinkedSurveyCmd ctx prop
                             in
                             ( updatedModel
-                            , verificationCmd
+                            , Cmd.batch [ verificationCmd, surveyCmd ]
                             , Just (ProposalChanged (Just actionId))
                             )
 
@@ -1017,8 +1067,58 @@ innerUpdate ctx msg model =
                 _ ->
                     ( model, Cmd.none, Nothing )
 
+        SelectedProposalRefreshed refreshedProposal ->
+            case model.pickProposalStep of
+                Done form selectedProposal ->
+                    if selectedProposal.id == refreshedProposal.id then
+                        let
+                            shouldResolveSurvey =
+                                case ( selectedProposal.metadata, refreshedProposal.metadata, model.surveyState.resolution ) of
+                                    ( RemoteData.Success _, _, _ ) ->
+                                        False
+
+                                    ( _, RemoteData.Success _, RemoteData.Success _ ) ->
+                                        False
+
+                                    ( _, RemoteData.Success _, RemoteData.Loading ) ->
+                                        False
+
+                                    ( _, RemoteData.Success _, _ ) ->
+                                        True
+
+                                    _ ->
+                                        False
+
+                            updatedModel =
+                                { model | pickProposalStep = Done form refreshedProposal }
+
+                            currentSurveyState =
+                                model.surveyState
+
+                            loadingSurveyState =
+                                { currentSurveyState | resolution = RemoteData.Loading }
+                        in
+                        ( if shouldResolveSurvey then
+                            { updatedModel | surveyState = loadingSurveyState }
+
+                          else
+                            updatedModel
+                        , if shouldResolveSurvey then
+                            resolveLinkedSurveyCmd ctx refreshedProposal
+
+                          else
+                            Cmd.none
+                        , Nothing
+                        )
+
+                    else
+                        ( model, Cmd.none, Nothing )
+
+                _ ->
+                    ( model, Cmd.none, Nothing )
+
         ChangeProposalButtonClicked ->
-            ( { model | pickProposalStep = Preparing {} }
+            ( { model | pickProposalStep = Preparing {}, surveyState = initSurveyState }
             , Cmd.none
             , Just (ProposalChanged Nothing)
             )
@@ -1044,6 +1144,24 @@ innerUpdate ctx msg model =
                     , Cmd.none
                     , Nothing
                     )
+
+        GotLinkedSurveyResolution result ->
+            let
+                currentSurveyState =
+                    model.surveyState
+
+                newResolution =
+                    case result of
+                        Ok payload ->
+                            RemoteData.Success payload
+
+                        Err httpError ->
+                            RemoteData.Failure httpError
+            in
+            ( { model | surveyState = { currentSurveyState | resolution = newResolution } }
+            , Cmd.none
+            , Nothing
+            )
 
         --
         -- Storage Configuration Step
@@ -1567,6 +1685,7 @@ innerUpdate ctx msg model =
             ( { model
                 | buildTxStep = Preparing { error = Nothing }
                 , pickProposalStep = Preparing {}
+                , surveyState = initSurveyState
               }
             , Task.perform (always <| ctx.wrapMsg NoMsg) (Dom.setViewport 0 1000000)
             , Nothing
@@ -1584,6 +1703,69 @@ innerUpdate ctx msg model =
             , Nothing
             )
 
+        SurveySingleChoiceSelected questionId index ->
+            let
+                currentSurveyState =
+                    model.surveyState
+            in
+            ( { model
+                | surveyState =
+                    { currentSurveyState
+                        | answers = Dict.insert questionId (SelectionDraft (Set.singleton index)) currentSurveyState.answers
+                    }
+              }
+            , Cmd.none
+            , Nothing
+            )
+
+        SurveyMultiSelectToggled questionId index isChecked ->
+            let
+                currentSurveyState =
+                    model.surveyState
+
+                updatedAnswers =
+                    Dict.update questionId
+                        (\maybeDraft ->
+                            let
+                                currentSelections =
+                                    case maybeDraft of
+                                        Just (SelectionDraft selections) ->
+                                            selections
+
+                                        _ ->
+                                            Set.empty
+
+                                nextSelections =
+                                    if isChecked then
+                                        Set.insert index currentSelections
+
+                                    else
+                                        Set.remove index currentSelections
+                            in
+                            Just (SelectionDraft nextSelections)
+                        )
+                        model.surveyState.answers
+            in
+            ( { model | surveyState = { currentSurveyState | answers = updatedAnswers } }
+            , Cmd.none
+            , Nothing
+            )
+
+        SurveyNumericValueChanged questionId value ->
+            let
+                currentSurveyState =
+                    model.surveyState
+            in
+            ( { model
+                | surveyState =
+                    { currentSurveyState
+                        | answers = Dict.insert questionId (NumericDraft value) currentSurveyState.answers
+                    }
+              }
+            , Cmd.none
+            , Nothing
+            )
+
         VoteButtonPressed vote clientX clientY ->
             -- Handle add-to-cart plus start fly animation from click position
             case allPrepSteps model of
@@ -1594,38 +1776,147 @@ innerUpdate ctx msg model =
                     )
 
                 Ok { voter, actionId, proposalTitle, rationaleAnchor } ->
+                    case prepareSurveyAnswers model of
+                        Err error ->
+                            ( { model | buildTxStep = Preparing { error = Just error } }
+                            , Cmd.none
+                            , Nothing
+                            )
+
+                        Ok maybeAnswers ->
+                            let
+                                pendingVote =
+                                    { vote = vote
+                                    , clientX = clientX
+                                    , clientY = clientY
+                                    }
+
+                                voteIntent =
+                                    { actionId = actionId
+                                    , vote = vote
+                                    , rationale = rationaleAnchor
+                                    }
+
+                                baseVoteRecord =
+                                    { proposalTitle = proposalTitle
+                                    , voteIntent = voteIntent
+                                    , surveyResponse = Nothing
+                                    }
+                            in
+                            case maybeAnswers of
+                                Nothing ->
+                                    finalizeVoteToCart ctx pendingVote voter baseVoteRecord model
+
+                                Just answers ->
+                                    if Cart.cartCount ctx.cart /= 0 then
+                                        ( { model
+                                            | buildTxStep =
+                                                Preparing
+                                                    { error =
+                                                        Just "Clear or submit the cart before attaching a linked survey response. The transaction must contain exactly one vote."
+                                                    }
+                                          }
+                                        , Cmd.none
+                                        , Nothing
+                                        )
+
+                                    else
+                                        case linkedSurveyRoleVerificationError model of
+                                            Just error ->
+                                                ( { model | buildTxStep = Preparing { error = Just error } }
+                                                , Cmd.none
+                                                , Nothing
+                                                )
+
+                                            Nothing ->
+                                                case activeLinkedSurvey model of
+                                                    Nothing ->
+                                                        ( { model | buildTxStep = Preparing { error = Just "Linked survey details are not available for this proposal." } }
+                                                        , Cmd.none
+                                                        , Nothing
+                                                        )
+
+                                                    Just surveyPayload ->
+                                                        case surveyPayload.surveyTxId of
+                                                            Nothing ->
+                                                                ( { model | buildTxStep = Preparing { error = Just "Linked survey details are missing a surveyTxId." } }
+                                                                , Cmd.none
+                                                                , Nothing
+                                                                )
+
+                                                            Just surveyTxId ->
+                                                                ( { model | buildTxStep = Validating { error = Nothing } pendingVote }
+                                                                , Api.defaultApiProvider.buildLinkedSurveyResponse
+                                                                    ctx.networkId
+                                                                    { proposalType = getSelectedProposalType model
+                                                                    , linkedActionId =
+                                                                        { txId = Bytes.toHex actionId.transactionId
+                                                                        , govActionIx = actionId.govActionIndex
+                                                                        }
+                                                                    , actionEndEpoch = getSelectedProposalEndEpoch model
+                                                                    , responderRole = responderRoleFromVoter voter
+                                                                    , surveyTxId = surveyTxId
+                                                                    , answers = answers
+                                                                    , anchorJson = getSelectedProposalAnchorJson model
+                                                                    }
+                                                                    (GotBuiltLinkedSurveyResponse pendingVote)
+                                                                    |> Cmd.map ctx.wrapMsg
+                                                                , Nothing
+                                                                )
+
+        GotBuiltLinkedSurveyResponse pendingVote result ->
+            case ( model.buildTxStep, allPrepSteps model ) of
+                ( Validating _ _, Ok { voter, actionId, proposalTitle, rationaleAnchor } ) ->
                     let
                         voteIntent =
                             { actionId = actionId
-                            , vote = vote
+                            , vote = pendingVote.vote
                             , rationale = rationaleAnchor
                             }
-
-                        color =
-                            case vote of
-                                Gov.VoteYes ->
-                                    "#10B981"
-
-                                Gov.VoteNo ->
-                                    "#EF4444"
-
-                                Gov.VoteAbstain ->
-                                    "#6B7280"
-
-                        getCartPos =
-                            Dom.getElement "cart-button"
                     in
-                    ( { model
-                        | buildTxStep = Done { error = Nothing } {}
-                        , flyToCart = Just { x = clientX, y = clientY, opacity = "1", color = color }
-                      }
-                      -- Force sleep 0 to change the css value later, and trigger the css animation
-                    , Cmd.map ctx.wrapMsg <|
-                        (Process.sleep 0
-                            |> Task.andThen (\_ -> getCartPos)
-                            |> Task.attempt StartFlyAnim
-                        )
-                    , Just <| AddVoteToCart voter <| Cart.VoteRecord proposalTitle voteIntent
+                    case result of
+                        Err httpError ->
+                            ( { model | buildTxStep = Preparing { error = Just (httpErrorToString httpError) } }
+                            , Cmd.none
+                            , Nothing
+                            )
+
+                        Ok payload ->
+                            if not payload.valid then
+                                ( { model
+                                    | buildTxStep =
+                                        Preparing
+                                            { error =
+                                                Just (String.join "\n" payload.errors)
+                                            }
+                                  }
+                                , Cmd.none
+                                , Nothing
+                                )
+
+                            else
+                                case payload.surveyResponse of
+                                    Nothing ->
+                                        ( { model | buildTxStep = Preparing { error = Just "The backend did not return a normalized surveyResponse payload." } }
+                                        , Cmd.none
+                                        , Nothing
+                                        )
+
+                                    Just surveyResponse ->
+                                        finalizeVoteToCart
+                                            ctx
+                                            pendingVote
+                                            voter
+                                            { proposalTitle = proposalTitle
+                                            , voteIntent = voteIntent
+                                            , surveyResponse = Just surveyResponse
+                                            }
+                                            model
+
+                _ ->
+                    ( { model | buildTxStep = Preparing { error = Just "The vote could not be completed because the preparation flow changed while the linked survey response was being built." } }
+                    , Cmd.none
+                    , Nothing
                     )
 
         StartFlyAnim (Ok { element, viewport }) ->
@@ -3230,6 +3521,282 @@ allPrepSteps m =
             Err "Incomplete steps before Tx building"
 
 
+resolveLinkedSurveyCmd : UpdateContext msg -> ActiveProposal -> Cmd msg
+resolveLinkedSurveyCmd ctx proposal =
+    case proposal.metadata of
+        RemoteData.Success metadata ->
+            Api.defaultApiProvider.resolveLinkedSurvey
+                ctx.networkId
+                { proposalType = proposal.actionType
+                , linkedActionId =
+                    { txId = Bytes.toHex proposal.id.transactionId
+                    , govActionIx = proposal.id.govActionIndex
+                    }
+                , actionEndEpoch = proposal.epoch_validity.end
+                , anchorJson = metadata.raw
+                }
+                GotLinkedSurveyResolution
+                |> Cmd.map ctx.wrapMsg
+
+        _ ->
+            Cmd.none
+
+
+activeLinkedSurvey : InnerModel -> Maybe Survey.ProposalSurveyPayload
+activeLinkedSurvey model =
+    case model.surveyState.resolution of
+        RemoteData.Success payload ->
+            if payload.linkValidation.valid && payload.surveyDetailsValidation.valid then
+                Just payload
+
+            else
+                Nothing
+
+        _ ->
+            Nothing
+
+
+prepareSurveyAnswers : InnerModel -> Result String (Maybe (List Survey.SurveyAnswer))
+prepareSurveyAnswers model =
+    case activeLinkedSurvey model of
+        Nothing ->
+            if hasAnySurveyDraftAnswer model then
+                Err "Linked survey answers are present, but the linked survey is not valid for this proposal."
+
+            else
+                Ok Nothing
+
+        Just payload ->
+            case payload.surveyDetails of
+                Nothing ->
+                    if hasAnySurveyDraftAnswer model then
+                        Err "Linked survey answers are present, but surveyDetails are unavailable."
+
+                    else
+                        Ok Nothing
+
+                Just surveyDetails ->
+                    surveyDetails.questions
+                        |> List.foldl
+                            (\question acc ->
+                                case acc of
+                                    Err errors ->
+                                        Err errors
+
+                                    Ok answers ->
+                                        case Dict.get question.questionId model.surveyState.answers of
+                                            Nothing ->
+                                                Ok answers
+
+                                            Just draft ->
+                                                case surveyAnswerFromDraft question draft of
+                                                    Ok Nothing ->
+                                                        Ok answers
+
+                                                    Ok (Just answer) ->
+                                                        Ok (answer :: answers)
+
+                                                    Err error ->
+                                                        Err error
+                            )
+                            (Ok [])
+                        |> Result.map List.reverse
+                        |> Result.map
+                            (\answers ->
+                                if List.isEmpty answers then
+                                    Nothing
+
+                                else
+                                    Just answers
+                            )
+
+
+surveyAnswerFromDraft : Survey.SurveyQuestion -> SurveyAnswerDraft -> Result String (Maybe Survey.SurveyAnswer)
+surveyAnswerFromDraft question draft =
+    case draft of
+        SelectionDraft selections ->
+            if Set.isEmpty selections then
+                Ok Nothing
+
+            else
+                Ok
+                    (Just
+                        { questionId = question.questionId
+                        , selection = Just (Set.toList selections)
+                        , numericValue = Nothing
+                        }
+                    )
+
+        NumericDraft rawValue ->
+            let
+                trimmed =
+                    String.trim rawValue
+            in
+            if trimmed == "" then
+                Ok Nothing
+
+            else
+                case String.toInt trimmed of
+                    Just numericValue ->
+                        Ok
+                            (Just
+                                { questionId = question.questionId
+                                , selection = Nothing
+                                , numericValue = Just numericValue
+                                }
+                            )
+
+                    Nothing ->
+                        Err ("Question \"" ++ question.question ++ "\" requires an integer answer.")
+
+
+hasAnySurveyDraftAnswer : InnerModel -> Bool
+hasAnySurveyDraftAnswer model =
+    Dict.values model.surveyState.answers
+        |> List.any
+            (\draft ->
+                case draft of
+                    SelectionDraft selections ->
+                        not (Set.isEmpty selections)
+
+                    NumericDraft rawValue ->
+                        String.trim rawValue /= ""
+            )
+
+
+responderRoleFromVoter : Witness.Voter -> String
+responderRoleFromVoter voter =
+    case voter of
+        Witness.WithDrepCred _ ->
+            "DRep"
+
+        Witness.WithPoolCred _ ->
+            "SPO"
+
+        Witness.WithCommitteeHotCred _ ->
+            "CC"
+
+
+linkedSurveyRoleVerificationError : InnerModel -> Maybe String
+linkedSurveyRoleVerificationError model =
+    case model.voterStep of
+        Preparing form ->
+            case form.govId of
+                Just _ ->
+                    Just "Confirm the selected voter before attaching a linked survey response."
+
+                Nothing ->
+                    Just "Confirm a voter before attaching a linked survey response."
+
+        Validating _ _ ->
+            Just "Wait for voter validation to finish before attaching a linked survey response."
+
+        Done form voter ->
+            case voter of
+                Witness.WithDrepCred _ ->
+                    roleLookupVerificationError "DRep" form.drepInfo
+
+                Witness.WithPoolCred _ ->
+                    roleLookupVerificationError "SPO" form.poolInfo
+
+                Witness.WithCommitteeHotCred _ ->
+                    roleLookupVerificationError "CC" form.ccInfo
+
+
+roleLookupVerificationError : String -> WebData a -> Maybe String
+roleLookupVerificationError role remoteData =
+    case remoteData of
+        RemoteData.Success _ ->
+            Nothing
+
+        RemoteData.Loading ->
+            Just ("Wait for " ++ role ++ " voter information to finish loading before attaching a linked survey response.")
+
+        RemoteData.Failure error ->
+            Just ("The app could not verify the selected " ++ role ++ " voter from chain-backed data (" ++ httpErrorToString error ++ "), so linked survey responses are blocked.")
+
+        RemoteData.NotAsked ->
+            Just ("The app has not verified the selected " ++ role ++ " voter yet, so linked survey responses are blocked.")
+
+getSelectedProposalType : InnerModel -> String
+getSelectedProposalType model =
+    case model.pickProposalStep of
+        Done _ proposal ->
+            proposal.actionType
+
+        _ ->
+            ""
+
+
+getSelectedProposalEndEpoch : InnerModel -> Int
+getSelectedProposalEndEpoch model =
+    case model.pickProposalStep of
+        Done _ proposal ->
+            proposal.epoch_validity.end
+
+        _ ->
+            0
+
+
+getSelectedProposalAnchorJson : InnerModel -> String
+getSelectedProposalAnchorJson model =
+    case model.pickProposalStep of
+        Done _ proposal ->
+            case proposal.metadata of
+                RemoteData.Success metadata ->
+                    metadata.raw
+
+                _ ->
+                    "{}"
+
+        _ ->
+            "{}"
+
+
+finalizeVoteToCart :
+    UpdateContext msg
+    -> PendingVote
+    -> Witness.Voter
+    -> Cart.VoteRecord
+    -> InnerModel
+    -> ( InnerModel, Cmd msg, Maybe MsgToParent )
+finalizeVoteToCart ctx pendingVote voter voteRecord model =
+    case Cart.surveyAdditionError voteRecord ctx.cart of
+        Just error ->
+            ( { model | buildTxStep = Preparing { error = Just error } }
+            , Cmd.none
+            , Nothing
+            )
+
+        Nothing ->
+            let
+                color =
+                    case pendingVote.vote of
+                        Gov.VoteYes ->
+                            "#10B981"
+
+                        Gov.VoteNo ->
+                            "#EF4444"
+
+                        Gov.VoteAbstain ->
+                            "#6B7280"
+
+                getCartPos =
+                    Dom.getElement "cart-button"
+            in
+            ( { model
+                | buildTxStep = Done { error = Nothing } {}
+                , flyToCart = Just { x = pendingVote.clientX, y = pendingVote.clientY, opacity = "1", color = color }
+              }
+            , Cmd.map ctx.wrapMsg <|
+                (Process.sleep 0
+                    |> Task.andThen (\_ -> getCartPos)
+                    |> Task.attempt StartFlyAnim
+                )
+            , Just <| AddVoteToCart voter voteRecord
+            )
+
+
 
 -- ###################################################################
 -- VIEW
@@ -3715,7 +4282,7 @@ viewProposalSelectionStep ctx model =
                 ]
 
         Done _ proposal ->
-            viewSelectedProposal ctx model.cip100Verification proposal
+            viewSelectedProposal ctx model proposal
 
 
 viewProposalSelectionForm : ViewContext msg -> InnerModel -> Html msg
@@ -3854,6 +4421,7 @@ viewProposalList ctx form maybeVoter proposalsDict visibleCount =
                     Just voterIdStr ->
                         Cart.getVoter voterIdStr ctx.cart
                             |> Dict.values
+                            |> List.map (\{ proposalTitle, voteIntent } -> { proposalTitle = proposalTitle, voteIntent = voteIntent })
         in
         div []
             [ Helper.proposalListContainer
@@ -3931,8 +4499,8 @@ viewProposalCardHelper wrapMsg networkId currentEpoch getPastVote proposal =
         (Helper.viewActionTypeIcon proposal.actionType)
 
 
-viewSelectedProposal : ViewContext msg -> Dict String Cip100VerificationState -> ActiveProposal -> Html msg
-viewSelectedProposal ctx cip100Verification { id, actionType, metadata, metadataUrl, metadataHash } =
+viewSelectedProposal : ViewContext msg -> InnerModel -> ActiveProposal -> Html msg
+viewSelectedProposal ctx model { id, actionType, metadata, metadataUrl, metadataHash } =
     let
         actionIdStr =
             Helper.actionIdToBech32 id
@@ -3954,7 +4522,7 @@ viewSelectedProposal ctx cip100Verification { id, actionType, metadata, metadata
                 ]
 
         verificationState =
-            Dict.get actionIdStr cip100Verification
+            Dict.get actionIdStr model.cip100Verification
                 |> Maybe.withDefault VerificationNotStarted
 
         ( hashIsValid, abstractContent, authorsDetails ) =
@@ -4203,6 +4771,7 @@ viewSelectedProposal ctx cip100Verification { id, actionType, metadata, metadata
             , abstractContent
             , authorsDetails
             ]
+        , Html.map ctx.wrapMsg <| viewSurveySection ctx model
         , Html.p
             [ HA.style "margin-top" "1rem" ]
             [ Html.map ctx.wrapMsg <|
@@ -5195,6 +5764,7 @@ viewBuildTxStep ctx model =
                         , HA.style "margin-bottom" "1.5rem"
                         ]
                         [ text "Select how you want to vote on this proposal:" ]
+                    , viewSurveySection ctx model
                     , div
                         [ HA.style "display" "flex"
                         , HA.style "flex-wrap" "wrap"
@@ -5229,6 +5799,376 @@ viewBuildTxStep ctx model =
                     , viewFlyToCart model.flyToCart
                     ]
         ]
+
+
+viewSurveySection : ViewContext msg -> InnerModel -> Html Msg
+viewSurveySection ctx model =
+    case model.surveyState.resolution of
+        RemoteData.NotAsked ->
+            text ""
+
+        RemoteData.Loading ->
+            div
+                [ HA.style "margin-bottom" "1.5rem"
+                , HA.style "padding" "1rem"
+                , HA.style "border" "1px solid #E5E7EB"
+                , HA.style "border-radius" "0.75rem"
+                , HA.style "background-color" "#F8FAFC"
+                ]
+                [ Html.p [ HA.style "color" "#475569" ] [ text "Checking whether this proposal links to a CIP-0179 survey..." ] ]
+
+        RemoteData.Failure error ->
+            div
+                [ HA.style "margin-bottom" "1.5rem"
+                , HA.style "padding" "1rem"
+                , HA.style "border" "1px solid #FECACA"
+                , HA.style "border-radius" "0.75rem"
+                , HA.style "background-color" "#FEF2F2"
+                ]
+                [ Html.p [ HA.style "color" "#991B1B", HA.style "font-weight" "600" ] [ text "Linked survey resolution failed" ]
+                , Html.p [ HA.style "color" "#7F1D1D", HA.style "margin-top" "0.5rem" ] [ text (httpErrorToString error) ]
+                ]
+
+        RemoteData.Success payload ->
+            if not payload.linked then
+                text ""
+
+            else
+                viewResolvedSurveySection ctx model payload
+
+
+viewResolvedSurveySection : ViewContext msg -> InnerModel -> Survey.ProposalSurveyPayload -> Html Msg
+viewResolvedSurveySection ctx model payload =
+    let
+        surveyDisabled =
+            Cart.cartCount ctx.cart /= 0
+
+        roleVerificationError =
+            linkedSurveyRoleVerificationError model
+
+        errorLines =
+            payload.linkValidation.errors ++ payload.surveyDetailsValidation.errors
+
+        detailCard children =
+            div
+                [ HA.style "margin-bottom" "1.5rem"
+                , HA.style "padding" "1rem"
+                , HA.style "border" "1px solid #E5E7EB"
+                , HA.style "border-radius" "0.75rem"
+                , HA.style "background-color" "#F8FAFC"
+                ]
+                children
+    in
+    case payload.surveyDetails of
+        Nothing ->
+            detailCard
+                [ Html.p [ HA.style "color" "#991B1B", HA.style "font-weight" "600" ] [ text "This proposal references a survey, but the survey details could not be resolved." ]
+                , viewStringErrors errorLines
+                ]
+
+        Just surveyDetails ->
+            detailCard <|
+                [ Html.h4
+                    [ HA.style "font-size" "1rem"
+                    , HA.style "font-weight" "700"
+                    , HA.style "color" "#0F172A"
+                    ]
+                    [ text surveyDetails.title ]
+                , Html.p
+                    [ HA.style "color" "#475569"
+                    , HA.style "margin-top" "0.5rem"
+                    , HA.style "line-height" "1.6"
+                    ]
+                    [ text surveyDetails.description ]
+                , Html.p
+                    [ HA.style "color" "#334155"
+                    , HA.style "margin-top" "0.75rem"
+                    , HA.style "font-size" "0.875rem"
+                    ]
+                    [ text ("Survey closes at epoch " ++ String.fromInt surveyDetails.endEpoch ++ ".") ]
+                ]
+                    ++ (if not payload.linkValidation.valid || not payload.surveyDetailsValidation.valid then
+                            [ Html.p
+                                [ HA.style "color" "#991B1B"
+                                , HA.style "font-weight" "600"
+                                , HA.style "margin-top" "1rem"
+                                ]
+                                [ text "This linked survey is not currently valid for response attachment." ]
+                            , viewStringErrors errorLines
+                            ]
+
+                        else
+                            (if surveyDisabled then
+                                Html.p
+                                    [ HA.style "color" "#92400E"
+                                    , HA.style "background-color" "#FEF3C7"
+                                    , HA.style "padding" "0.75rem"
+                                    , HA.style "border-radius" "0.5rem"
+                                    , HA.style "margin-top" "1rem"
+                                    ]
+                                    [ text "Survey responses can only be attached when the cart is empty. Clear or submit the cart to answer this linked survey." ]
+
+                             else
+                                Html.p
+                                    [ HA.style "color" "#334155"
+                                    , HA.style "margin-top" "1rem"
+                                    ]
+                                    [ text "Answering the linked survey is optional. If you answer at least one question, this transaction will be restricted to a single governance vote." ]
+                            )
+                                :: (case roleVerificationError of
+                                        Just error ->
+                                            [ Html.p
+                                                [ HA.style "color" "#92400E"
+                                                , HA.style "background-color" "#FEF3C7"
+                                                , HA.style "padding" "0.75rem"
+                                                , HA.style "border-radius" "0.5rem"
+                                                , HA.style "margin-top" "1rem"
+                                                ]
+                                                [ text error ]
+                                            ]
+
+                                        Nothing ->
+                                            []
+                                   )
+                                ++ List.map (viewSurveyQuestion model.surveyState surveyDisabled) surveyDetails.questions
+                        )
+
+
+viewSurveyQuestion : SurveyState -> Bool -> Survey.SurveyQuestion -> Html Msg
+viewSurveyQuestion surveyState surveyDisabled question =
+    let
+        cardAttrs =
+            [ HA.style "margin-top" "1rem"
+            , HA.style "padding" "1rem"
+            , HA.style "border" "1px solid #CBD5E1"
+            , HA.style "border-radius" "0.75rem"
+            , HA.style "background-color" "white"
+            ]
+    in
+    div cardAttrs <|
+        [ Html.h5
+            [ HA.style "font-size" "0.95rem"
+            , HA.style "font-weight" "700"
+            , HA.style "color" "#0F172A"
+            ]
+            [ text question.question ]
+        , Html.p
+            [ HA.style "color" "#64748B"
+            , HA.style "font-size" "0.8rem"
+            , HA.style "margin-top" "0.35rem"
+            ]
+            [ text question.questionId ]
+        ]
+            ++ viewQuestionInput surveyState surveyDisabled question
+
+
+viewQuestionInput : SurveyState -> Bool -> Survey.SurveyQuestion -> List (Html Msg)
+viewQuestionInput surveyState surveyDisabled question =
+    if question.methodType == "urn:cardano:poll-method:single-choice:v1" then
+        viewSingleChoiceQuestion surveyState surveyDisabled question
+
+    else if question.methodType == "urn:cardano:poll-method:multi-select:v1" then
+        viewMultiSelectQuestion surveyState surveyDisabled question
+
+    else if question.methodType == "urn:cardano:poll-method:numeric-range:v1" then
+        viewNumericRangeQuestion surveyState surveyDisabled question
+
+    else
+        viewCustomQuestion question
+
+
+viewSingleChoiceQuestion : SurveyState -> Bool -> Survey.SurveyQuestion -> List (Html Msg)
+viewSingleChoiceQuestion surveyState surveyDisabled question =
+    let
+        selected =
+            getSelectionDraft question.questionId surveyState
+                |> Set.toList
+                |> List.head
+    in
+    question.options
+        |> Maybe.withDefault []
+        |> List.indexedMap
+            (\index optionLabel ->
+                Html.label
+                    [ HA.style "display" "flex"
+                    , HA.style "align-items" "center"
+                    , HA.style "gap" "0.5rem"
+                    , HA.style "margin-top" "0.75rem"
+                    , HA.style "color" "#334155"
+                    ]
+                    [ Html.input
+                        [ HA.type_ "radio"
+                        , HA.name question.questionId
+                        , HA.checked (selected == Just index)
+                        , HA.disabled surveyDisabled
+                        , Html.Events.onClick (SurveySingleChoiceSelected question.questionId index)
+                        ]
+                        []
+                    , text optionLabel
+                    ]
+            )
+
+
+viewMultiSelectQuestion : SurveyState -> Bool -> Survey.SurveyQuestion -> List (Html Msg)
+viewMultiSelectQuestion surveyState surveyDisabled question =
+    let
+        selected =
+            getSelectionDraft question.questionId surveyState
+
+        maxSelections =
+            question.maxSelections |> Maybe.withDefault 0
+    in
+    (question.options
+        |> Maybe.withDefault []
+        |> List.indexedMap
+            (\index optionLabel ->
+                let
+                    isChecked =
+                        Set.member index selected
+
+                    maxReached =
+                        maxSelections > 0 && Set.size selected >= maxSelections && not isChecked
+                in
+                Html.label
+                    [ HA.style "display" "flex"
+                    , HA.style "align-items" "center"
+                    , HA.style "gap" "0.5rem"
+                    , HA.style "margin-top" "0.75rem"
+                    , HA.style "color" "#334155"
+                    ]
+                    [ Html.input
+                        [ HA.type_ "checkbox"
+                        , HA.checked isChecked
+                        , HA.disabled (surveyDisabled || maxReached)
+                        , Html.Events.onCheck (SurveyMultiSelectToggled question.questionId index)
+                        ]
+                        []
+                    , text optionLabel
+                    ]
+            )
+    )
+        ++ [ Html.p
+                [ HA.style "color" "#64748B"
+                , HA.style "font-size" "0.8rem"
+                , HA.style "margin-top" "0.75rem"
+                ]
+                [ text ("Max selections: " ++ String.fromInt maxSelections) ]
+           ]
+
+
+viewNumericRangeQuestion : SurveyState -> Bool -> Survey.SurveyQuestion -> List (Html Msg)
+viewNumericRangeQuestion surveyState surveyDisabled question =
+    let
+        currentValue =
+            getNumericDraft question.questionId surveyState
+
+        placeholderText =
+            case question.numericConstraints of
+                Just constraints ->
+                    "Enter a value from "
+                        ++ String.fromInt constraints.minValue
+                        ++ " to "
+                        ++ String.fromInt constraints.maxValue
+
+                Nothing ->
+                    "Enter a numeric value"
+
+        inputAttrs =
+            [ HA.type_ "number"
+            , HA.value currentValue
+            , HA.placeholder placeholderText
+            , HA.disabled surveyDisabled
+            , Html.Events.onInput (SurveyNumericValueChanged question.questionId)
+            , HA.style "margin-top" "0.75rem"
+            , HA.style "width" "100%"
+            , HA.style "padding" "0.75rem"
+            , HA.style "border" "1px solid #CBD5E1"
+            , HA.style "border-radius" "0.5rem"
+            ]
+                ++ (case question.numericConstraints of
+                        Just constraints ->
+                            [ HA.min (String.fromInt constraints.minValue)
+                            , HA.max (String.fromInt constraints.maxValue)
+                            ]
+                                ++ (case constraints.step of
+                                        Just step ->
+                                            [ HA.step (String.fromInt step) ]
+
+                                        Nothing ->
+                                            []
+                                   )
+
+                        Nothing ->
+                            []
+                   )
+    in
+    [ Html.input inputAttrs []
+    ]
+
+
+viewCustomQuestion : Survey.SurveyQuestion -> List (Html Msg)
+viewCustomQuestion question =
+    [ Html.p
+        [ HA.style "margin-top" "0.75rem"
+        , HA.style "color" "#92400E"
+        , HA.style "background-color" "#FEF3C7"
+        , HA.style "padding" "0.75rem"
+        , HA.style "border-radius" "0.5rem"
+        ]
+        [ text "This survey question uses a custom method. The Cardano Foundation voting tool currently shows it read-only and will not attach an answer for it." ]
+    , Html.p
+        [ HA.style "margin-top" "0.75rem"
+        , HA.style "color" "#475569"
+        , HA.style "font-size" "0.85rem"
+        ]
+        [ text ("Method type: " ++ question.methodType) ]
+    ]
+        ++ (case question.methodSchemaUri of
+                Just methodSchemaUri ->
+                    [ Html.p
+                        [ HA.style "margin-top" "0.35rem"
+                        , HA.style "font-size" "0.85rem"
+                        ]
+                        [ Helper.externalLink { url = methodSchemaUri, label = "Open method schema" } ]
+                    ]
+
+                Nothing ->
+                    []
+           )
+
+
+getSelectionDraft : String -> SurveyState -> Set Int
+getSelectionDraft questionId surveyState =
+    case Dict.get questionId surveyState.answers of
+        Just (SelectionDraft selections) ->
+            selections
+
+        _ ->
+            Set.empty
+
+
+getNumericDraft : String -> SurveyState -> String
+getNumericDraft questionId surveyState =
+    case Dict.get questionId surveyState.answers of
+        Just (NumericDraft value) ->
+            value
+
+        _ ->
+            ""
+
+
+viewStringErrors : List String -> Html msg
+viewStringErrors errors =
+    if List.isEmpty errors then
+        text ""
+
+    else
+        Html.ul
+            [ HA.style "margin-top" "0.75rem"
+            , HA.style "padding-left" "1.25rem"
+            , HA.style "color" "#991B1B"
+            ]
+            (List.map (\error -> Html.li [] [ text error ]) errors)
 
 
 viewVoteButtonWithCoords : String -> String -> Gov.Vote -> Html Msg
@@ -5379,22 +6319,42 @@ viewMissingStepsMessage model =
 
                 _ ->
                     True
+
+        linkedSurveyNote =
+            case model.surveyState.resolution of
+                RemoteData.Success payload ->
+                    if payload.linked then
+                        [ Html.p
+                            [ HA.style "color" "#475569"
+                            , HA.style "font-size" "0.9375rem"
+                            , HA.style "margin-top" "1rem"
+                            ]
+                            [ text "The linked survey can already be reviewed and filled out in the selected proposal section above. This step is only required to attach the response to the final vote transaction." ]
+                        ]
+
+                    else
+                        []
+
+                _ ->
+                    []
     in
     Helper.stepNotAvailableCard
-        [ Html.p
+        ([ Html.p
             [ HA.style "color" "#4A5568"
             , HA.style "font-size" "0.9375rem"
             , HA.style "margin-bottom" "1rem"
             ]
             [ text "Please complete the following steps before building the transaction:" ]
-        , Helper.missingStepsList
+         , Helper.missingStepsList
             [ Helper.missingStepItem "Voter identification" (isStepIncomplete model.voterStep) (Just "voter-step")
             , Helper.missingStepItem "Proposal selection" (isStepIncomplete model.pickProposalStep) (Just "proposal-step")
             , Helper.missingStepItem "Storage configuration" (isStepIncomplete model.storageConfigStep) (Just "storage-config-step")
             , Helper.missingStepItem "Rationale creation" (isRationaleAppCreated && isStepIncomplete model.rationaleCreationStep) (Just "rationale-step")
             , Helper.missingStepItem "Rationale storage" (hasRationale && isStepIncomplete model.permanentStorageStep) (Just "storage-step")
             ]
-        ]
+         ]
+            ++ linkedSurveyNote
+        )
 
 
 isStepIncomplete : Step a b c -> Bool

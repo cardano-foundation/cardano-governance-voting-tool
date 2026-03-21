@@ -18,6 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from contextlib import asynccontextmanager
 from brotli_asgi import BrotliMiddleware
+from survey_metadata import build_survey_response, resolve_linked_proposal
 
 TIMEOUT_SECONDS = 10
 MAX_CONCURRENT_REQUESTS = 100
@@ -107,7 +108,6 @@ try:
     json.loads(PRECONFIGURED_AUTHORS_JSON)
 except Exception as e:
     raise Exception(f"Invalid JSON for PRECONFIGURED_AUTHORS_JSON: {e}")
-
 
 # Define an async HTTP client (using httpx) and attach it to the FastAPI app
 @asynccontextmanager
@@ -446,6 +446,104 @@ async def proxy_request(request: ProxyRequest):
     except Exception as e:
         logger.error(f"Unexpected error: {str(e)}")
         raise HTTPException(status_code=500, detail="An unexpected error occurred")
+
+
+class LinkedActionIdRequest(BaseModel):
+    txId: str
+    govActionIx: int
+
+
+class ResolveLinkedProposalRequest(BaseModel):
+    networkId: str | int
+    proposalType: str
+    linkedActionId: LinkedActionIdRequest
+    actionEndEpoch: int | None = None
+    anchorJson: dict | str | None = None
+
+
+class BuildLinkedResponseRequest(BaseModel):
+    networkId: str | int
+    proposalType: str
+    linkedActionId: LinkedActionIdRequest
+    actionEndEpoch: int | None = None
+    responderRole: str
+    surveyTxId: str | None = None
+    answers: List[dict]
+    anchorJson: dict | str | None = None
+
+
+@app.post("/survey/resolve-linked-proposal")
+async def resolve_survey_link(request: ResolveLinkedProposalRequest):
+    try:
+        return await resolve_linked_proposal(
+            app.async_client,  # pyright: ignore
+            network_id=request.networkId,
+            proposal_type=request.proposalType,
+            linked_action_id=request.linkedActionId.model_dump(),
+            action_end_epoch=request.actionEndEpoch,
+            anchor_json=request.anchorJson,
+        )
+    except httpx.HTTPError as error:
+        logger.error(f"Linked survey resolution failed: {error}")
+        raise HTTPException(
+            status_code=502, detail="Failed to resolve linked survey details from Koios."
+        )
+    except Exception as error:
+        logger.error(f"Linked survey resolution failed unexpectedly: {error}")
+        raise HTTPException(status_code=500, detail="Failed to resolve linked survey.")
+
+
+@app.post("/survey/build-linked-response")
+async def build_survey_linked_response(request: BuildLinkedResponseRequest):
+    try:
+        context = await resolve_linked_proposal(
+            app.async_client,  # pyright: ignore
+            network_id=request.networkId,
+            proposal_type=request.proposalType,
+            linked_action_id=request.linkedActionId.model_dump(),
+            action_end_epoch=request.actionEndEpoch,
+            anchor_json=request.anchorJson,
+        )
+        requested_survey_tx_id = (
+            request.surveyTxId.lower() if isinstance(request.surveyTxId, str) else None
+        )
+        resolved_survey_tx_id = context.get("surveyTxId")
+        context_errors: List[str] = []
+
+        if requested_survey_tx_id and resolved_survey_tx_id != requested_survey_tx_id:
+            context_errors.append(
+                "surveyResponse.surveyTxId does not match the linked survey."
+            )
+
+        if not context["linkValidation"]["valid"]:
+            context_errors.extend(context["linkValidation"]["errors"])
+
+        if not context["surveyDetailsValidation"]["valid"]:
+            context_errors.extend(context["surveyDetailsValidation"]["errors"])
+
+        if context_errors:
+            return {
+                "valid": False,
+                "errors": context_errors,
+                "surveyResponse": None,
+            }
+
+        response = build_survey_response(
+            survey_details=context.get("surveyDetails"),
+            linked_role_weighting=context["linkValidation"].get("linkedRoleWeighting"),
+            survey_tx_id=resolved_survey_tx_id,
+            responder_role=request.responderRole,
+            answers=request.answers,
+        )
+        return response
+    except httpx.HTTPError as error:
+        logger.error(f"Linked survey response build failed: {error}")
+        raise HTTPException(
+            status_code=502, detail="Failed to resolve linked survey details from Koios."
+        )
+    except Exception as error:
+        logger.error(f"Linked survey response build failed unexpectedly: {error}")
+        raise HTTPException(status_code=500, detail="Failed to build linked survey response.")
 
 
 class CompressedStaticFiles(StaticFiles):
