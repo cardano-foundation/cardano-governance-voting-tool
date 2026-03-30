@@ -345,6 +345,7 @@ type Msg
     | CartPageMsg Page.Cart.Msg
     | DeleteVote { voterIdStr : String, actionIdStr : String }
     | ClearCart
+    | RemoveFeePayer
     | SaveImportedCart
     | CartBroadcastReceived Value
       -- Multisig DRep registration page
@@ -767,6 +768,9 @@ update msg model =
 
         ( ClearCart, _ ) ->
             saveCart Page.Cart.init model
+
+        ( RemoveFeePayer, { cart } ) ->
+            saveCart (Page.Cart.removeFeePayer cart) model
 
         ( SaveImportedCart, _ ) ->
             saveCart model.cart model
@@ -1743,6 +1747,7 @@ viewContent model =
                 { wrapMsg = CartPageMsg
                 , deleteVote = DeleteVote
                 , clearCart = ClearCart
+                , removeFeePayer = RemoveFeePayer
                 , signingLink =
                     \tx expectedSigners ->
                         link (RouteSigning { networkId = model.networkId, tx = Just tx, expectedSigners = expectedSigners }) []

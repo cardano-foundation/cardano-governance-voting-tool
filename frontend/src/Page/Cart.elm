@@ -1,4 +1,4 @@
-module Page.Cart exposing (Model, Msg, UpdateContext, ViewContext, VoteRecord, addVote, cartCount, contains, deleteVote, deserialize, get, getVoter, init, serialize, update, view)
+module Page.Cart exposing (Model, Msg, UpdateContext, ViewContext, VoteRecord, addVote, cartCount, contains, deleteVote, deserialize, get, getVoter, init, removeFeePayer, serialize, update, view)
 
 import Bytes.Comparable as Bytes exposing (Bytes)
 import Cardano.Address as Address exposing (Address, CredentialHash)
@@ -75,6 +75,7 @@ type alias CartReady =
     , currentResources : Resources
     , txFinalized : TxFinalized
     , keyNames : Dict String String
+    , feePayerAddress : Address
     }
 
 
@@ -161,7 +162,7 @@ update ctx msg model =
                     Cip30.walletChangeAddress wallet
             in
             case buildTx costModels utxos walletAddress votersIntents of
-                Ok { keyNames, txFinalized } ->
+                Ok { keyNames, txFinalized, feePayerAddress } ->
                     let
                         tx =
                             txFinalized.tx
@@ -190,6 +191,7 @@ update ctx msg model =
                         , currentResources = txResources
                         , txFinalized = txFinalized
                         , keyNames = keyNames
+                        , feePayerAddress = feePayerAddress
                         }
                     , Cmd.none
                     )
@@ -310,6 +312,18 @@ deleteVote voterIdStr actionIdStr model =
 
         Ready { votersIntents } ->
             Preparing { votersIntents = removeVoteFromCart votersIntents, error = Nothing }
+
+
+{-| Remove the fee payer, resetting the cart back to Preparing state.
+-}
+removeFeePayer : Model -> Model
+removeFeePayer model =
+    case model of
+        Ready { votersIntents } ->
+            Preparing { votersIntents = votersIntents, error = Nothing }
+
+        Preparing _ ->
+            model
 
 
 
@@ -618,7 +632,7 @@ deserializeAnchor =
 -- Tx Building
 
 
-buildTx : CostModels -> Utxo.RefDict Output -> Address -> Dict String CartVoter -> Result String { keyNames : Dict String String, txFinalized : TxFinalized }
+buildTx : CostModels -> Utxo.RefDict Output -> Address -> Dict String CartVoter -> Result String { keyNames : Dict String String, txFinalized : TxFinalized, feePayerAddress : Address }
 buildTx costModels localStateUtxos walletAddress votersIntents =
     let
         -- Use any address (enterprise / full) with the same payment cred
@@ -730,7 +744,7 @@ buildTx costModels localStateUtxos walletAddress votersIntents =
                 , metadata = Metadatum.Map [ ( Metadatum.String "msg", Metadatum.List [ Metadatum.String message ] ) ]
                 }
             ]
-        |> Result.map (\txFinalized -> { keyNames = keyNames, txFinalized = txFinalized })
+        |> Result.map (\txFinalized -> { keyNames = keyNames, txFinalized = txFinalized, feePayerAddress = feeSource })
         |> Result.mapError customTxBuildingError
 
 
@@ -756,6 +770,7 @@ type alias ViewContext a msg =
         | wrapMsg : Msg -> msg
         , deleteVote : { voterIdStr : String, actionIdStr : String } -> msg
         , clearCart : msg
+        , removeFeePayer : msg
         , signingLink : Transaction -> List { keyName : String, keyHash : Bytes CredentialHash } -> List (Html msg) -> Html msg
     }
 
@@ -953,7 +968,7 @@ viewVoteRecord ctx voterIdStr ( actionIdStr, { proposalTitle, voteIntent } ) =
 
 
 viewReadyCart : ViewContext a msg -> CartReady -> Html msg
-viewReadyCart ctx { votersIntents, maxResources, currentResources, txFinalized, keyNames } =
+viewReadyCart ctx { votersIntents, maxResources, currentResources, txFinalized, keyNames, feePayerAddress } =
     let
         countedVotesCount : Int
         countedVotesCount =
@@ -1011,6 +1026,7 @@ viewReadyCart ctx { votersIntents, maxResources, currentResources, txFinalized, 
         , summaryBar
         , votesSection
         , viewResourcesCard maxResources currentResources
+        , viewFeePayerCard ctx feePayerAddress
         , viewSigningButton ctx keyNames txFinalized
         ]
 
@@ -1279,6 +1295,32 @@ viewDecisionStat v count =
         , HA.style "font-size" "0.75rem"
         ]
         [ text <| label ++ " " ++ String.fromInt count ]
+
+
+viewFeePayerCard : ViewContext a msg -> Address -> Html msg
+viewFeePayerCard ctx feePayerAddress =
+    cardContainer []
+        [ cardHeader [] "Transaction fee payer address" "" []
+        , cardContent []
+            [ div
+                [ HA.style "display" "flex"
+                , HA.style "align-items" "center"
+                , HA.style "justify-content" "space-between"
+                , HA.style "gap" "0.75rem"
+                ]
+                [ Html.span
+                    [ HA.style "font-family" "monospace"
+                    , HA.style "font-size" "0.875rem"
+                    , HA.style "color" "#374151"
+                    , HA.style "overflow-wrap" "anywhere"
+                    , HA.style "word-break" "break-all"
+                    ]
+                    [ text (Address.toBech32 feePayerAddress) ]
+                , div [ HA.style "flex-shrink" "0" ]
+                    [ Helper.trashButton ctx.removeFeePayer ]
+                ]
+            ]
+        ]
 
 
 viewSigningButton : ViewContext a msg -> Dict String String -> TxFinalized -> Html msg

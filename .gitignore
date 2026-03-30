@@ -16,3 +16,7 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Claude
+.claude/
+CLAUDE.md
