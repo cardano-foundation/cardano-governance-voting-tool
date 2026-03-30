@@ -770,7 +770,8 @@ update msg model =
             saveCart Page.Cart.init model
 
         ( RemoveFeePayer, { cart } ) ->
-            saveCart (Page.Cart.removeFeePayer cart) model
+            -- No need to save cart here, we are just resetting the Tx builder
+            ( { model | cart = Page.Cart.removeFeePayer cart }, Cmd.none )
 
         ( SaveImportedCart, _ ) ->
             saveCart model.cart model
