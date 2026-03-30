@@ -1,4 +1,4 @@
-module Api exposing (ActiveProposal, ApiProvider, AuthorVerification, CcInfo, Cip100VerificationResponse, DrepInfo, IpfsAnswer(..), IpfsFile, OnchainVote, PoolInfo, ProtocolParams, defaultApiProvider)
+module Api exposing (ActiveProposal, ApiProvider, AuthorVerification, CcInfo, Cip100VerificationResponse, DrepInfo, IpfsAnswer(..), IpfsFile, OnchainVote, PoolInfo, ProtocolParams, defaultApiProvider, taskGetDatumInfo, taskGetUtxoInfo)
 
 {-| Module gathering all the remote HTTP calls made by the app.
 -}
@@ -1088,5 +1088,89 @@ taskGetScriptInfo networkId scriptHash =
                     ]
                 )
         , expect = ConcurrentTask.Http.expectJson ScriptInfo.koiosFirstScriptInfoDecoder
+        , timeout = Nothing
+        }
+
+
+{-| Task to retrieve datum info by datum hash from Koios.
+Returns the creation transaction hash if the datum exists on-chain.
+-}
+taskGetDatumInfo : NetworkId -> Bytes a -> ConcurrentTask ConcurrentTask.Http.Error { creationTxHash : Bytes TransactionId }
+taskGetDatumInfo networkId datumHash =
+    let
+        koiosUrl =
+            case networkId of
+                Testnet ->
+                    "https://preview.koios.rest/api/v1"
+
+                Mainnet ->
+                    "https://api.koios.rest/api/v1"
+
+        decoder =
+            JD.index 0
+                (JD.field "creation_tx_hash" JD.string
+                    |> JD.andThen
+                        (\hex ->
+                            case Bytes.fromHex hex of
+                                Just txId ->
+                                    JD.succeed { creationTxHash = txId }
+
+                                Nothing ->
+                                    JD.fail "Invalid tx hash hex"
+                        )
+                )
+    in
+    ConcurrentTask.Http.post
+        { url = "/proxy/json"
+        , headers = []
+        , body =
+            ConcurrentTask.Http.jsonBody
+                (JE.object
+                    [ ( "url", JE.string <| koiosUrl ++ "/datum_info" )
+                    , ( "method", JE.string "POST" )
+                    , ( "body", JE.object [ ( "_datum_hashes", JE.list (JE.string << Bytes.toHex) [ datumHash ] ) ] )
+                    ]
+                )
+        , expect = ConcurrentTask.Http.expectJson decoder
+        , timeout = Nothing
+        }
+
+
+{-| Task to check if a UTxO is unspent via Koios utxo\_info endpoint.
+Returns the UTxO info if it exists and is unspent (non-empty response).
+-}
+taskGetUtxoInfo : NetworkId -> Bytes TransactionId -> Int -> ConcurrentTask ConcurrentTask.Http.Error Bool
+taskGetUtxoInfo networkId txHash outputIndex =
+    let
+        koiosUrl =
+            case networkId of
+                Testnet ->
+                    "https://preview.koios.rest/api/v1"
+
+                Mainnet ->
+                    "https://api.koios.rest/api/v1"
+
+        decoder =
+            JD.list JD.value
+                |> JD.map (\items -> not (List.isEmpty items))
+    in
+    ConcurrentTask.Http.post
+        { url = "/proxy/json"
+        , headers = []
+        , body =
+            ConcurrentTask.Http.jsonBody
+                (JE.object
+                    [ ( "url", JE.string <| koiosUrl ++ "/utxo_info" )
+                    , ( "method", JE.string "POST" )
+                    , ( "body"
+                      , JE.object
+                            [ ( "_utxo_refs"
+                              , JE.list JE.string [ Bytes.toHex txHash ++ "#" ++ String.fromInt outputIndex ]
+                              )
+                            ]
+                      )
+                    ]
+                )
+        , expect = ConcurrentTask.Http.expectJson decoder
         , timeout = Nothing
         }
