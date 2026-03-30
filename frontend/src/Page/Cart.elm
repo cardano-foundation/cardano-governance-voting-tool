@@ -29,6 +29,7 @@ import Task
 import Url
 
 
+
 -- Hlabs incentive pilot constants
 
 
@@ -114,7 +115,6 @@ setHlabsIncentive incentive model =
 
         Ready ready ->
             Ready { ready | hlabsIncentive = incentive }
-
 
 
 {-| The Cart model has two states, preparing and ready.
