@@ -1490,48 +1490,19 @@ resetSigningStep error page =
             page
 
 
-{-| Build a ConcurrentTask that looks up the Hlabs incentive UTxO for a given datum hash.
+{-| Build a ConcurrentTask that looks up the HLabs incentive UTxO for a given datum hash.
 Chain: datum\_info -> tx\_cbor -> find output -> utxo\_info -> result.
 -}
 hlabsIncentiveLookup : NetworkId -> Bytes a -> ConcurrentTask String TaskCompleted
 hlabsIncentiveLookup networkId datumHash =
     let
-        scriptAddress =
-            Address.script Mainnet (Bytes.fromHexUnchecked "e1239265c8fcc09339b404ccb3c73958244dceddf70785cec2718251")
-
-        refScriptTxId =
-            Bytes.fromHexUnchecked "3a9cd3cec83bb58d912f30ccf315b8850dae56ba95a687eedf7193e9d898fd89"
-
-        findOutputByIndex : Int -> Transaction -> Maybe Output
-        findOutputByIndex idx tx =
-            List.Extra.getAt idx tx.body.outputs
-
-        outputMatchesDatum : Output -> Bool
-        outputMatchesDatum output =
-            case output.datumOption of
-                Just (Utxo.DatumValue { rawBytes }) ->
-                    Bytes.toHex (Data.rawDatumHash rawBytes) == Bytes.toHex datumHash
-
-                _ ->
-                    False
-
-        findIncentiveOutput : Bytes TransactionId -> Transaction -> Maybe ( Utxo.OutputReference, Output )
-        findIncentiveOutput txId tx =
-            tx.body.outputs
-                |> List.indexedMap
-                    (\i output ->
-                        if output.address == scriptAddress && outputMatchesDatum output then
-                            Just ( { transactionId = txId, outputIndex = i }, output )
-
-                        else
-                            Nothing
-                    )
-                |> List.filterMap identity
-                |> List.head
+        -- TODO: make it more detailed
+        httpErrToString =
+            ConcurrentTask.mapError (\_ -> "HTTP request failed")
 
         fetchRefScriptOutput =
-            Api.defaultApiProvider.retrieveTx networkId refScriptTxId
-                |> ConcurrentTask.mapError Debug.toString
+            Api.defaultApiProvider.retrieveTx networkId Page.Cart.hlabsReferenceScriptRef.transactionId
+                |> httpErrToString
                 |> ConcurrentTask.andThen
                     (\txBytes ->
                         case Transaction.deserialize txBytes of
@@ -1539,7 +1510,7 @@ hlabsIncentiveLookup networkId datumHash =
                                 ConcurrentTask.fail "Failed to deserialize reference script transaction"
 
                             Just tx ->
-                                case findOutputByIndex 0 tx of
+                                case List.Extra.getAt Page.Cart.hlabsReferenceScriptRef.outputIndex tx.body.outputs of
                                     Nothing ->
                                         ConcurrentTask.fail "Reference script output not found"
 
@@ -1548,11 +1519,11 @@ hlabsIncentiveLookup networkId datumHash =
                     )
     in
     Api.taskGetDatumInfo networkId datumHash
-        |> ConcurrentTask.mapError Debug.toString
+        |> httpErrToString
         |> ConcurrentTask.andThen
             (\{ creationTxHash } ->
                 Api.defaultApiProvider.retrieveTx networkId creationTxHash
-                    |> ConcurrentTask.mapError Debug.toString
+                    |> httpErrToString
                     |> ConcurrentTask.andThen
                         (\txBytes ->
                             case Transaction.deserialize txBytes of
@@ -1560,28 +1531,23 @@ hlabsIncentiveLookup networkId datumHash =
                                     ConcurrentTask.fail "Failed to deserialize transaction"
 
                                 Just tx ->
-                                    case findIncentiveOutput creationTxHash tx of
+                                    case findHlabsIncentiveOutput datumHash creationTxHash 0 tx.body.outputs of
                                         Nothing ->
                                             ConcurrentTask.fail "No matching output found at script address"
 
                                         Just ( outputRef, output ) ->
                                             Api.taskGetUtxoInfo networkId creationTxHash outputRef.outputIndex
-                                                |> ConcurrentTask.mapError Debug.toString
+                                                |> httpErrToString
                                                 |> ConcurrentTask.andThen
                                                     (\isUnspent ->
                                                         if isUnspent then
                                                             fetchRefScriptOutput
                                                                 |> ConcurrentTask.map
                                                                     (\refScriptOutput ->
-                                                                        let
-                                                                            lovelace =
-                                                                                output.amount.lovelace
-                                                                                    |> N.toInt
-                                                                        in
                                                                         Page.Cart.Found
                                                                             { outputRef = outputRef
                                                                             , output = output
-                                                                            , lovelace = lovelace
+                                                                            , lovelace = output.amount.lovelace
                                                                             , refScriptOutput = refScriptOutput
                                                                             }
                                                                     )
@@ -1601,6 +1567,33 @@ hlabsIncentiveLookup networkId datumHash =
                     Err _ ->
                         GotHlabsIncentive Page.Cart.NotFound
             )
+
+
+{-| Recursively search transaction outputs for the HLabs incentive UTxO.
+Matches outputs at the HLabs script address whose inline datum hashes to the expected hash.
+-}
+findHlabsIncentiveOutput : Bytes a -> Bytes TransactionId -> Int -> List Output -> Maybe ( Utxo.OutputReference, Output )
+findHlabsIncentiveOutput datumHash txId index outputs =
+    case outputs of
+        [] ->
+            Nothing
+
+        output :: rest ->
+            if output.address == Page.Cart.hlabsIncentiveScriptAddress && outputMatchesHlabsDatum datumHash output then
+                Just ( { transactionId = txId, outputIndex = index }, output )
+
+            else
+                findHlabsIncentiveOutput datumHash txId (index + 1) rest
+
+
+outputMatchesHlabsDatum : Bytes a -> Output -> Bool
+outputMatchesHlabsDatum datumHash output =
+    case output.datumOption of
+        Just (Utxo.DatumValue { rawBytes }) ->
+            Bytes.toHex (Data.rawDatumHash rawBytes) == Bytes.toHex datumHash
+
+        _ ->
+            False
 
 
 handleCompletedTask : ConcurrentTask.Response String TaskCompleted -> Model -> ( Model, Cmd Msg )

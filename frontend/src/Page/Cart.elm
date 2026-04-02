@@ -1,7 +1,7 @@
-module Page.Cart exposing (HlabsIncentive(..), Model, Msg, UpdateContext, ViewContext, VoteRecord, addVote, cartCount, contains, deleteVote, deserialize, findHlabsIncentiveDatumHash, get, getVoter, init, serialize, setHlabsIncentive, update, view)
+module Page.Cart exposing (HlabsIncentive(..), Model, Msg, UpdateContext, ViewContext, VoteRecord, addVote, cartCount, contains, deleteVote, deserialize, findHlabsIncentiveDatumHash, get, getVoter, hlabsIncentiveScriptAddress, hlabsReferenceScriptRef, init, serialize, setHlabsIncentive, update, view)
 
 import Bytes.Comparable as Bytes exposing (Bytes)
-import Cardano.Address as Address exposing (Address, CredentialHash)
+import Cardano.Address as Address exposing (Address, CredentialHash, NetworkId(..))
 import Cardano.Cip30 as Cip30
 import Cardano.CoinSelection as CoinSelection
 import Cardano.Data as Data
@@ -24,7 +24,7 @@ import Html exposing (Html, div, text)
 import Html.Attributes as HA
 import Json.Decode as JD
 import Json.Encode as JE
-import Natural as N
+import Natural as N exposing (Natural)
 import Task
 import Url
 
@@ -38,6 +38,16 @@ hlabsGovActionBech32 =
     "gov_action1ky2j077de82par6f0hny5q56rpnn5hh0csfhrpzeq3hsk7s6vetqquz3scv"
 
 
+hlabsIncentiveScriptAddress : Address
+hlabsIncentiveScriptAddress =
+    Address.script Mainnet hlabsScriptHash
+
+
+hlabsScriptHash : Bytes a
+hlabsScriptHash =
+    Bytes.fromHexUnchecked "e1239265c8fcc09339b404ccb3c73958244dceddf70785cec2718251"
+
+
 hlabsReferenceScriptRef : OutputReference
 hlabsReferenceScriptRef =
     { transactionId = Bytes.fromHexUnchecked "3a9cd3cec83bb58d912f30ccf315b8850dae56ba95a687eedf7193e9d898fd89"
@@ -45,12 +55,12 @@ hlabsReferenceScriptRef =
     }
 
 
-{-| The state of the Hlabs incentive UTxO lookup.
+{-| The state of the HLabs incentive UTxO lookup.
 -}
 type HlabsIncentive
     = NotChecked
     | Checking
-    | Found { outputRef : OutputReference, output : Output, lovelace : Int, refScriptOutput : Output }
+    | Found { outputRef : OutputReference, output : Output, lovelace : Natural, refScriptOutput : Output }
     | AlreadySpent
     | NotFound
 
@@ -317,15 +327,15 @@ update ctx msg model =
 
                 Err error ->
                     let
-                        reportError votersIntents errorStr =
-                            ( Preparing { votersIntents = votersIntents, error = Just errorStr, hlabsIncentive = NotChecked }, Cmd.none )
+                        reportError votersIntents hlabsIncentive errorStr =
+                            ( Preparing { votersIntents = votersIntents, error = Just errorStr, hlabsIncentive = hlabsIncentive }, Cmd.none )
                     in
                     case model of
-                        Preparing { votersIntents } ->
-                            reportError votersIntents (JD.errorToString error)
+                        Preparing { votersIntents, hlabsIncentive } ->
+                            reportError votersIntents hlabsIncentive (JD.errorToString error)
 
-                        Ready { votersIntents } ->
-                            reportError votersIntents (JD.errorToString error)
+                        Ready { votersIntents, hlabsIncentive } ->
+                            reportError votersIntents hlabsIncentive (JD.errorToString error)
 
 
 handleCartFileRead : Result x String -> Msg
@@ -369,15 +379,17 @@ addVote voter voteRecord model =
                 )
     in
     case model of
-        Preparing { votersIntents } ->
-            Preparing { votersIntents = updateVotersIntents votersIntents, error = Nothing, hlabsIncentive = NotChecked }
+        Preparing { votersIntents, hlabsIncentive } ->
+            Preparing { votersIntents = updateVotersIntents votersIntents, error = Nothing, hlabsIncentive = hlabsIncentive }
 
-        Ready { votersIntents } ->
-            Preparing { votersIntents = updateVotersIntents votersIntents, error = Nothing, hlabsIncentive = NotChecked }
+        Ready { votersIntents, hlabsIncentive } ->
+            Preparing { votersIntents = updateVotersIntents votersIntents, error = Nothing, hlabsIncentive = hlabsIncentive }
 
 
 {-| Delete a vote from the cart.
 Reset the state to Preparing.
+Reset hlabsIncentive only when the deleted vote is the HLabs action
+or when the cart becomes empty.
 -}
 deleteVote : String -> String -> Model -> Model
 deleteVote voterIdStr actionIdStr model =
@@ -395,13 +407,31 @@ deleteVote voterIdStr actionIdStr model =
                         else
                             Just { voter = voter, voteRecords = newDict }
                    )
+
+        isHlabsVote =
+            actionIdStr == hlabsGovActionBech32
+
+        updateIncentive intents hlabsIncentive =
+            if isHlabsVote || Dict.isEmpty intents then
+                NotChecked
+
+            else
+                hlabsIncentive
     in
     case model of
-        Preparing { votersIntents } ->
-            Preparing { votersIntents = removeVoteFromCart votersIntents, error = Nothing, hlabsIncentive = NotChecked }
+        Preparing { votersIntents, hlabsIncentive } ->
+            let
+                newIntents =
+                    removeVoteFromCart votersIntents
+            in
+            Preparing { votersIntents = newIntents, error = Nothing, hlabsIncentive = updateIncentive newIntents hlabsIncentive }
 
-        Ready { votersIntents } ->
-            Preparing { votersIntents = removeVoteFromCart votersIntents, error = Nothing, hlabsIncentive = NotChecked }
+        Ready { votersIntents, hlabsIncentive } ->
+            let
+                newIntents =
+                    removeVoteFromCart votersIntents
+            in
+            Preparing { votersIntents = newIntents, error = Nothing, hlabsIncentive = updateIncentive newIntents hlabsIncentive }
 
 
 
@@ -1413,39 +1443,24 @@ viewHlabsIncentive incentive =
         Found { lovelace } ->
             let
                 adaAmount =
-                    String.fromFloat (toFloat lovelace / 1000000)
+                    String.fromFloat (toFloat (N.toInt lovelace) / 1000000)
             in
-            div
-                [ HA.style "padding" "0.75rem 1rem"
-                , HA.style "background-color" "#F0FDF4"
-                , HA.style "border" "1px solid #BBF7D0"
-                , HA.style "border-radius" "0.5rem"
-                , HA.style "color" "#166534"
-                , HA.style "font-size" "0.9375rem"
-                , HA.style "margin-bottom" "0.75rem"
+            cardContainer [ HA.style "background-color" "#F0FDF4", HA.style "border-color" "#BBF7D0" ]
+                [ cardContent [ HA.style "color" "#166534" ]
+                    [ text <| adaAmount ++ " ada sponsored by HLabs, for voting on its proposal" ]
                 ]
-                [ text <| adaAmount ++ " ada sponsored by Hlabs, for voting on its proposal" ]
 
         AlreadySpent ->
-            div
-                [ HA.style "padding" "0.75rem 1rem"
-                , HA.style "background-color" "#FEF9C3"
-                , HA.style "border" "1px solid #FDE68A"
-                , HA.style "border-radius" "0.5rem"
-                , HA.style "color" "#854D0E"
-                , HA.style "font-size" "0.9375rem"
-                , HA.style "margin-bottom" "0.75rem"
+            cardContainer [ HA.style "background-color" "#FEF9C3", HA.style "border-color" "#FDE68A" ]
+                [ cardContent [ HA.style "color" "#854D0E" ]
+                    [ text "HLabs sponsoring already spent" ]
                 ]
-                [ text "Hlab sponsoring already spent" ]
 
         Checking ->
-            div
-                [ HA.style "padding" "0.75rem 1rem"
-                , HA.style "color" "#64748B"
-                , HA.style "font-size" "0.9375rem"
-                , HA.style "margin-bottom" "0.75rem"
+            cardContainer []
+                [ cardContent [ HA.style "color" "#64748B" ]
+                    [ text "Checking for HLabs vote incentive..." ]
                 ]
-                [ text "Checking for Hlabs vote incentive..." ]
 
         _ ->
             text ""
