@@ -1672,7 +1672,23 @@ handleCompletedTask response model =
                 ( updatedModel, Cmd.none )
 
         ( ConcurrentTask.Success (GotCart cart), _ ) ->
-            ( { model | cart = cart }, Cmd.none )
+            let
+                updatedModel =
+                    { model | cart = cart }
+            in
+            case ( model.page, Page.Cart.findHlabsIncentiveDatumHash cart ) of
+                ( CartPage, Just datumHash ) ->
+                    ConcurrentTask.attempt { pool = updatedModel.taskPool, send = sendTask, onComplete = OnTaskComplete } (hlabsIncentiveLookup model.networkId datumHash)
+                        |> Tuple.mapFirst
+                            (\newTaskPool ->
+                                { updatedModel
+                                    | taskPool = newTaskPool
+                                    , cart = Page.Cart.setHlabsIncentive Page.Cart.Checking cart
+                                }
+                            )
+
+                _ ->
+                    ( updatedModel, Cmd.none )
 
         ( ConcurrentTask.Success (GotHlabsIncentive incentive), _ ) ->
             ( { model | cart = Page.Cart.setHlabsIncentive incentive model.cart }, Cmd.none )
