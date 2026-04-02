@@ -19,7 +19,7 @@ import Dict exposing (Dict)
 import Dict.Any
 import File exposing (File)
 import File.Select
-import Helper exposing (cardContainer, cardContent, cardHeader, sectionTitle, viewButton, viewError)
+import Helper exposing (cardContainer, cardContent, cardHeader, checkbox, sectionTitle, viewButton, viewError)
 import Html exposing (Html, div, text)
 import Html.Attributes as HA
 import Json.Decode as JD
@@ -60,7 +60,7 @@ hlabsReferenceScriptRef =
 type HlabsIncentive
     = NotChecked
     | Checking
-    | Found { outputRef : OutputReference, output : Output, lovelace : Natural, refScriptOutput : Output }
+    | Found { outputRef : OutputReference, output : Output, lovelace : Natural, refScriptOutput : Output, enabled : Bool }
     | AlreadySpent
     | NotFound
 
@@ -125,6 +125,25 @@ setHlabsIncentive incentive model =
 
         Ready ready ->
             Ready { ready | hlabsIncentive = incentive }
+
+
+toggleHlabsIncentive : Bool -> Model -> Model
+toggleHlabsIncentive enabled model =
+    let
+        toggle incentive =
+            case incentive of
+                Found info ->
+                    Found { info | enabled = enabled }
+
+                other ->
+                    other
+    in
+    case model of
+        Preparing prep ->
+            Preparing { prep | hlabsIncentive = toggle prep.hlabsIncentive }
+
+        Ready ready ->
+            Ready { ready | hlabsIncentive = toggle ready.hlabsIncentive }
 
 
 {-| The Cart model has two states, preparing and ready.
@@ -236,6 +255,7 @@ getVoter voterId model =
 type Msg
     = NoMsg
     | BuildTx
+    | ToggleHlabsIncentive Bool
     | ImportCartButtonClicked
     | CartFileSelected File
     | LoadedCart String
@@ -255,6 +275,9 @@ update ctx msg model =
     case ( ( ctx.loadedWallet, ctx.costModels ), msg, model ) of
         ( _, NoMsg, _ ) ->
             ( model, Cmd.none )
+
+        ( _, ToggleHlabsIncentive checked, _ ) ->
+            ( toggleHlabsIncentive checked model, Cmd.none )
 
         ( ( Just { wallet, utxos }, Just costModels ), BuildTx, Preparing ({ votersIntents } as cartPrep) ) ->
             let
@@ -746,10 +769,14 @@ buildTx costModels localStateUtxos walletAddress votersIntents hlabsIncentive =
         -- Add incentive UTxOs to the local state so the Tx builder can reference them
         allLocalUtxos =
             case hlabsIncentive of
-                Found { outputRef, output, refScriptOutput } ->
-                    localStateUtxos
-                        |> Dict.Any.insert outputRef output
-                        |> Dict.Any.insert hlabsReferenceScriptRef refScriptOutput
+                Found { outputRef, output, refScriptOutput, enabled } ->
+                    if enabled then
+                        localStateUtxos
+                            |> Dict.Any.insert outputRef output
+                            |> Dict.Any.insert hlabsReferenceScriptRef refScriptOutput
+
+                    else
+                        localStateUtxos
 
                 _ ->
                     localStateUtxos
@@ -806,20 +833,24 @@ buildTx costModels localStateUtxos walletAddress votersIntents hlabsIncentive =
         incentiveIntents : List TxIntent
         incentiveIntents =
             case hlabsIncentive of
-                Found { outputRef, output } ->
-                    [ TxIntent.Spend
-                        (TxIntent.FromPlutusScript
-                            { spentInput = outputRef
-                            , datumWitness = Nothing
-                            , plutusScriptWitness =
-                                { script = ( Script.PlutusV3, Witness.ByReference hlabsReferenceScriptRef )
-                                , redeemerData = \_ -> Data.Constr (N.fromSafeInt 0) []
-                                , requiredSigners = []
+                Found { outputRef, output, enabled } ->
+                    if not enabled then
+                        []
+
+                    else
+                        [ TxIntent.Spend
+                            (TxIntent.FromPlutusScript
+                                { spentInput = outputRef
+                                , datumWitness = Nothing
+                                , plutusScriptWitness =
+                                    { script = ( Script.PlutusV3, Witness.ByReference hlabsReferenceScriptRef )
+                                    , redeemerData = \_ -> Data.Constr (N.fromSafeInt 0) []
+                                    , requiredSigners = []
+                                    }
                                 }
-                            }
-                        )
-                    , TxIntent.SendTo feeSource output.amount
-                    ]
+                            )
+                        , TxIntent.SendTo feeSource output.amount
+                        ]
 
                 _ ->
                     []
@@ -1000,7 +1031,7 @@ viewPreparingCart ctx { votersIntents, error, hlabsIncentive } =
             List.concat
                 [ [ viewCartHeader, summaryBar ]
                 , List.map (viewVoterIntents ctx) (Dict.toList votersIntents)
-                , [ actionsBar, viewHlabsIncentive hlabsIncentive, viewError error ]
+                , [ actionsBar, viewHlabsIncentive ctx.wrapMsg hlabsIncentive, viewError error ]
                 ]
 
     else
@@ -1166,7 +1197,7 @@ viewReadyCart ctx { votersIntents, maxResources, currentResources, txFinalized, 
         , summaryBar
         , votesSection
         , viewResourcesCard maxResources currentResources
-        , viewHlabsIncentive hlabsIncentive
+        , viewHlabsIncentive ctx.wrapMsg hlabsIncentive
         , viewSigningButton ctx keyNames txFinalized
         ]
 
@@ -1437,17 +1468,23 @@ viewDecisionStat v count =
         [ text <| label ++ " " ++ String.fromInt count ]
 
 
-viewHlabsIncentive : HlabsIncentive -> Html msg
-viewHlabsIncentive incentive =
+viewHlabsIncentive : (Msg -> msg) -> HlabsIncentive -> Html msg
+viewHlabsIncentive wrapMsg incentive =
     case incentive of
-        Found { lovelace } ->
+        Found { lovelace, enabled } ->
             let
                 adaAmount =
                     String.fromFloat (toFloat (N.toInt lovelace) / 1000000)
             in
             cardContainer [ HA.style "background-color" "#F0FDF4", HA.style "border-color" "#BBF7D0" ]
                 [ cardContent [ HA.style "color" "#166534" ]
-                    [ text <| adaAmount ++ " ada sponsored by HLabs, for voting on its proposal" ]
+                    [ checkbox
+                        { id = "hlabs-incentive"
+                        , label = " " ++ adaAmount ++ " ada sponsored by HLabs, for voting on its proposal"
+                        }
+                        enabled
+                        (wrapMsg << ToggleHlabsIncentive)
+                    ]
                 ]
 
         AlreadySpent ->

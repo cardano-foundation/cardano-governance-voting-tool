@@ -1549,6 +1549,7 @@ hlabsIncentiveLookup networkId datumHash =
                                                                             , output = output
                                                                             , lovelace = output.amount.lovelace
                                                                             , refScriptOutput = refScriptOutput
+                                                                            , enabled = True
                                                                             }
                                                                     )
 
