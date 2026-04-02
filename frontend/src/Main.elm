@@ -60,6 +60,7 @@ import Cardano.TxIntent
 import Cardano.Utxo as Utxo exposing (Output, TransactionId)
 import Cmd.Extra
 import ConcurrentTask exposing (ConcurrentTask)
+import ConcurrentTask.Http
 import Dict exposing (Dict)
 import Dict.Any
 import Footer
@@ -1496,71 +1497,42 @@ resetSigningStep error page =
 
 
 {-| Build a ConcurrentTask that looks up the HLabs incentive UTxO for a given datum hash.
-Chain: datum\_info -> tx\_cbor -> find output -> utxo\_info -> result.
+Chain: datum\_info -> retrieve tx -> find output -> utxo\_info -> result.
 -}
 hlabsIncentiveLookup : NetworkId -> Bytes a -> ConcurrentTask String TaskCompleted
 hlabsIncentiveLookup networkId datumHash =
-    let
-        -- TODO: make it more detailed
-        httpErrToString =
-            ConcurrentTask.mapError (\_ -> "HTTP request failed")
-
-        fetchRefScriptOutput =
-            Api.defaultApiProvider.retrieveTx networkId Page.Cart.hlabsReferenceScriptRef.transactionId
-                |> httpErrToString
-                |> ConcurrentTask.andThen
-                    (\txBytes ->
-                        case Transaction.deserialize txBytes of
-                            Nothing ->
-                                ConcurrentTask.fail "Failed to deserialize reference script transaction"
-
-                            Just tx ->
-                                case List.Extra.getAt Page.Cart.hlabsReferenceScriptRef.outputIndex tx.body.outputs of
-                                    Nothing ->
-                                        ConcurrentTask.fail "Reference script output not found"
-
-                                    Just output ->
-                                        ConcurrentTask.succeed output
-                    )
-    in
     Api.taskGetDatumInfo networkId datumHash
         |> httpErrToString
         |> ConcurrentTask.andThen
             (\{ creationTxHash } ->
-                Api.defaultApiProvider.retrieveTx networkId creationTxHash
-                    |> httpErrToString
+                retrieveTx networkId creationTxHash
                     |> ConcurrentTask.andThen
-                        (\txBytes ->
-                            case Transaction.deserialize txBytes of
+                        (\tx ->
+                            case findHlabsIncentiveOutput datumHash creationTxHash 0 tx.body.outputs of
                                 Nothing ->
-                                    ConcurrentTask.fail "Failed to deserialize transaction"
+                                    ConcurrentTask.fail "No matching output found at script address"
 
-                                Just tx ->
-                                    case findHlabsIncentiveOutput datumHash creationTxHash 0 tx.body.outputs of
-                                        Nothing ->
-                                            ConcurrentTask.fail "No matching output found at script address"
+                                Just ( outputRef, output ) ->
+                                    Api.taskGetUtxoInfo networkId creationTxHash outputRef.outputIndex
+                                        |> httpErrToString
+                                        |> ConcurrentTask.andThen
+                                            (\isUnspent ->
+                                                if not isUnspent then
+                                                    ConcurrentTask.succeed Page.Cart.AlreadySpent
 
-                                        Just ( outputRef, output ) ->
-                                            Api.taskGetUtxoInfo networkId creationTxHash outputRef.outputIndex
-                                                |> httpErrToString
-                                                |> ConcurrentTask.andThen
-                                                    (\isUnspent ->
-                                                        if isUnspent then
-                                                            fetchRefScriptOutput
-                                                                |> ConcurrentTask.map
-                                                                    (\refScriptOutput ->
-                                                                        Page.Cart.Found
-                                                                            { outputRef = outputRef
-                                                                            , output = output
-                                                                            , lovelace = output.amount.lovelace
-                                                                            , refScriptOutput = refScriptOutput
-                                                                            , enabled = True
-                                                                            }
-                                                                    )
-
-                                                        else
-                                                            ConcurrentTask.succeed Page.Cart.AlreadySpent
-                                                    )
+                                                else
+                                                    retrieveRefScriptOutput networkId
+                                                        |> ConcurrentTask.map
+                                                            (\refScriptOutput ->
+                                                                Page.Cart.Found
+                                                                    { outputRef = outputRef
+                                                                    , output = output
+                                                                    , lovelace = output.amount.lovelace
+                                                                    , refScriptOutput = refScriptOutput
+                                                                    , enabled = True
+                                                                    }
+                                                            )
+                                            )
                         )
             )
         |> ConcurrentTask.toResult
@@ -1572,6 +1544,40 @@ hlabsIncentiveLookup networkId datumHash =
 
                     Err _ ->
                         GotHlabsIncentive Page.Cart.NotFound
+            )
+
+
+httpErrToString : ConcurrentTask ConcurrentTask.Http.Error a -> ConcurrentTask String a
+httpErrToString =
+    ConcurrentTask.mapError (\_ -> "HTTP request failed")
+
+
+retrieveTx : NetworkId -> Bytes TransactionId -> ConcurrentTask String Transaction
+retrieveTx networkId txId =
+    Api.defaultApiProvider.retrieveTx networkId txId
+        |> httpErrToString
+        |> ConcurrentTask.andThen
+            (\txBytes ->
+                case Transaction.deserialize txBytes of
+                    Nothing ->
+                        ConcurrentTask.fail "Failed to deserialize transaction"
+
+                    Just tx ->
+                        ConcurrentTask.succeed tx
+            )
+
+
+retrieveRefScriptOutput : NetworkId -> ConcurrentTask String Output
+retrieveRefScriptOutput networkId =
+    retrieveTx networkId Page.Cart.hlabsReferenceScriptRef.transactionId
+        |> ConcurrentTask.andThen
+            (\tx ->
+                case List.Extra.getAt Page.Cart.hlabsReferenceScriptRef.outputIndex tx.body.outputs of
+                    Nothing ->
+                        ConcurrentTask.fail "Reference script output not found"
+
+                    Just output ->
+                        ConcurrentTask.succeed output
             )
 
 
