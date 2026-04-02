@@ -1212,7 +1212,7 @@ viewReadyCart ctx { votersIntents, maxResources, currentResources, txFinalized, 
         , summaryBar
         , votesSection
         , viewResourcesCard maxResources currentResources
-        , viewHlabsIncentive ctx.wrapMsg hlabsIncentive
+        , viewHlabsIncentiveReadOnly hlabsIncentive
         , viewFeePayerCard ctx feePayerAddress
         , viewSigningButton ctx keyNames txFinalized
         ]
@@ -1514,6 +1514,27 @@ viewHlabsIncentive wrapMsg incentive =
                 [ cardContent [ HA.style "color" "#64748B" ]
                     [ text "Checking for HLabs vote incentive..." ]
                 ]
+
+        _ ->
+            text ""
+
+
+viewHlabsIncentiveReadOnly : HlabsIncentive -> Html msg
+viewHlabsIncentiveReadOnly incentive =
+    case incentive of
+        Found { lovelace, enabled } ->
+            if not enabled then
+                text ""
+
+            else
+                let
+                    adaAmount =
+                        String.fromFloat (toFloat (N.toInt lovelace) / 1000000)
+                in
+                cardContainer [ HA.style "background-color" "#F0FDF4", HA.style "border-color" "#BBF7D0" ]
+                    [ cardContent [ HA.style "color" "#166534" ]
+                        [ text <| adaAmount ++ " ada sponsored by HLabs, for voting on its proposal" ]
+                    ]
 
         _ ->
             text ""
