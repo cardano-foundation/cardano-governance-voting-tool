@@ -55,97 +55,6 @@ hlabsReferenceScriptRef =
     }
 
 
-{-| The state of the HLabs incentive UTxO lookup.
--}
-type HlabsIncentive
-    = NotChecked
-    | Checking
-    | Found { outputRef : OutputReference, output : Output, lovelace : Natural, refScriptOutput : Output, enabled : Bool }
-    | AlreadySpent
-    | NotFound
-
-
-{-| Build the datum for a DRep voter credential.
-On-chain, the outer constructor differentiates voter types:
-0 = CC member, 1 = DRep, 2 = SPO.
-The inner constructor differentiates credential types:
-0 = VKeyHash, 1 = ScriptHash.
--}
-voterToDatum : Witness.Voter -> Maybe Data.Data
-voterToDatum voter =
-    case voter of
-        WithDrepCred (Witness.WithKey keyHash) ->
-            Just <|
-                Data.Constr (N.fromSafeInt 1)
-                    [ Data.Constr (N.fromSafeInt 0) [ Data.Bytes (Bytes.toAny keyHash) ] ]
-
-        WithDrepCred (Witness.WithScript scriptHash _) ->
-            Just <|
-                Data.Constr (N.fromSafeInt 1)
-                    [ Data.Constr (N.fromSafeInt 1) [ Data.Bytes (Bytes.toAny scriptHash) ] ]
-
-        _ ->
-            Nothing
-
-
-{-| Find the first DRep voter in the cart that has a vote on the Hlabs gov action,
-and return its datum hash for the incentive UTxO lookup.
--}
-findHlabsIncentiveDatumHash : Model -> Maybe (Bytes a)
-findHlabsIncentiveDatumHash model =
-    let
-        allVotersIntents =
-            case model of
-                Preparing { votersIntents } ->
-                    votersIntents
-
-                Ready { votersIntents } ->
-                    votersIntents
-    in
-    Dict.values allVotersIntents
-        |> List.filterMap
-            (\{ voter, voteRecords } ->
-                if Dict.member hlabsGovActionBech32 voteRecords then
-                    voterToDatum voter
-                        |> Maybe.map Data.hash
-
-                else
-                    Nothing
-            )
-        |> List.head
-
-
-{-| Set the Hlabs incentive result on the cart model.
--}
-setHlabsIncentive : HlabsIncentive -> Model -> Model
-setHlabsIncentive incentive model =
-    case model of
-        Preparing prep ->
-            Preparing { prep | hlabsIncentive = incentive }
-
-        Ready ready ->
-            Ready { ready | hlabsIncentive = incentive }
-
-
-toggleHlabsIncentive : Bool -> Model -> Model
-toggleHlabsIncentive enabled model =
-    let
-        toggle incentive =
-            case incentive of
-                Found info ->
-                    Found { info | enabled = enabled }
-
-                other ->
-                    other
-    in
-    case model of
-        Preparing prep ->
-            Preparing { prep | hlabsIncentive = toggle prep.hlabsIncentive }
-
-        Ready ready ->
-            Ready { ready | hlabsIncentive = toggle ready.hlabsIncentive }
-
-
 {-| The Cart model has two states, preparing and ready.
 By default, when adding votes to the cart, we will try to prepare
 a transaction and estimate resources usage.
@@ -182,6 +91,16 @@ type alias VoteRecord =
     { proposalTitle : String
     , voteIntent : VoteIntent
     }
+
+
+{-| The state of the HLabs incentive UTxO lookup.
+-}
+type HlabsIncentive
+    = NotChecked
+    | Checking
+    | Found { outputRef : OutputReference, output : Output, lovelace : Natural, refScriptOutput : Output, enabled : Bool }
+    | AlreadySpent
+    | NotFound
 
 
 
@@ -371,6 +290,91 @@ handleCartFileRead result =
 
         Ok cartJsonStr ->
             LoadedCart cartJsonStr
+
+
+
+-- HLabs incentives
+
+
+{-| Find the first DRep voter in the cart that has a vote on the Hlabs gov action,
+and return its datum hash for the incentive UTxO lookup.
+-}
+findHlabsIncentiveDatumHash : Model -> Maybe (Bytes a)
+findHlabsIncentiveDatumHash model =
+    let
+        allVotersIntents =
+            case model of
+                Preparing { votersIntents } ->
+                    votersIntents
+
+                Ready { votersIntents } ->
+                    votersIntents
+    in
+    Dict.values allVotersIntents
+        |> List.filterMap
+            (\{ voter, voteRecords } ->
+                if Dict.member hlabsGovActionBech32 voteRecords then
+                    voterToDatum voter
+                        |> Maybe.map Data.hash
+
+                else
+                    Nothing
+            )
+        |> List.head
+
+
+{-| Build the datum for a DRep voter credential.
+On-chain, the outer constructor differentiates voter types:
+0 = CC member, 1 = DRep, 2 = SPO.
+The inner constructor differentiates credential types:
+0 = VKeyHash, 1 = ScriptHash.
+-}
+voterToDatum : Witness.Voter -> Maybe Data.Data
+voterToDatum voter =
+    case voter of
+        WithDrepCred (Witness.WithKey keyHash) ->
+            Just <|
+                Data.Constr (N.fromSafeInt 1)
+                    [ Data.Constr (N.fromSafeInt 0) [ Data.Bytes (Bytes.toAny keyHash) ] ]
+
+        WithDrepCred (Witness.WithScript scriptHash _) ->
+            Just <|
+                Data.Constr (N.fromSafeInt 1)
+                    [ Data.Constr (N.fromSafeInt 1) [ Data.Bytes (Bytes.toAny scriptHash) ] ]
+
+        _ ->
+            Nothing
+
+
+{-| Set the Hlabs incentive result on the cart model.
+-}
+setHlabsIncentive : HlabsIncentive -> Model -> Model
+setHlabsIncentive incentive model =
+    case model of
+        Preparing prep ->
+            Preparing { prep | hlabsIncentive = incentive }
+
+        Ready ready ->
+            Ready { ready | hlabsIncentive = incentive }
+
+
+toggleHlabsIncentive : Bool -> Model -> Model
+toggleHlabsIncentive enabled model =
+    let
+        toggle incentive =
+            case incentive of
+                Found info ->
+                    Found { info | enabled = enabled }
+
+                other ->
+                    other
+    in
+    case model of
+        Preparing prep ->
+            Preparing { prep | hlabsIncentive = toggle prep.hlabsIncentive }
+
+        Ready ready ->
+            Ready { ready | hlabsIncentive = toggle ready.hlabsIncentive }
 
 
 
