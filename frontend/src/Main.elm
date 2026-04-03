@@ -53,12 +53,14 @@ import Bytes.Comparable as Bytes exposing (Bytes)
 import Cardano.Address as Address exposing (CredentialHash, NetworkId(..))
 import Cardano.Cip30 as Cip30 exposing (WalletDescriptor)
 import Cardano.Cip95 as Cip95
+import Cardano.Data as Data
 import Cardano.Gov as Gov
 import Cardano.Transaction as Transaction exposing (Transaction)
 import Cardano.TxIntent
 import Cardano.Utxo as Utxo exposing (Output, TransactionId)
 import Cmd.Extra
 import ConcurrentTask exposing (ConcurrentTask)
+import ConcurrentTask.Http
 import Dict exposing (Dict)
 import Dict.Any
 import Footer
@@ -219,6 +221,7 @@ type TaskCompleted
     | GotLastStorageConfig Page.Preparation.StorageConfig
     | GotProposalMetadataTask String (Result String ProposalMetadata)
     | GotCart Page.Cart.Model
+    | GotHlabsIncentive Page.Cart.HlabsIncentive
     | PreparationTaskCompleted Page.Preparation.TaskCompleted
 
 
@@ -1056,13 +1059,32 @@ handleUrlChange route model =
                     }
 
             else
-                ( { model
-                    | errors = []
-                    , page = CartPage
-                    , appUrl = appUrl
-                  }
-                , pushUrlCmd
-                )
+                let
+                    updatedModel =
+                        { model
+                            | errors = []
+                            , page = CartPage
+                            , appUrl = appUrl
+                        }
+                in
+                case Page.Cart.findHlabsIncentiveDatumHash updatedModel.cart of
+                    Just datumHash ->
+                        let
+                            task =
+                                hlabsIncentiveLookup model.networkId datumHash
+                        in
+                        ConcurrentTask.attempt { pool = updatedModel.taskPool, send = sendTask, onComplete = OnTaskComplete } task
+                            |> Tuple.mapFirst
+                                (\newTaskPool ->
+                                    { updatedModel
+                                        | taskPool = newTaskPool
+                                        , cart = Page.Cart.setHlabsIncentive Page.Cart.Checking updatedModel.cart
+                                    }
+                                )
+                            |> Cmd.Extra.add pushUrlCmd
+
+                    Nothing ->
+                        ( updatedModel, pushUrlCmd )
 
         RouteMultisigRegistration ->
             ( { model
@@ -1474,6 +1496,118 @@ resetSigningStep error page =
             page
 
 
+{-| Build a ConcurrentTask that looks up the HLabs incentive UTxO for a given datum hash.
+Chain: datum\_info -> retrieve tx -> find output -> utxo\_info -> result.
+-}
+hlabsIncentiveLookup : NetworkId -> Bytes a -> ConcurrentTask String TaskCompleted
+hlabsIncentiveLookup networkId datumHash =
+    Api.taskGetDatumInfo networkId datumHash
+        |> httpErrToString
+        |> ConcurrentTask.andThen
+            (\{ creationTxHash } ->
+                retrieveTx networkId creationTxHash
+                    |> ConcurrentTask.andThen
+                        (\tx ->
+                            case findHlabsIncentiveOutput datumHash creationTxHash 0 tx.body.outputs of
+                                Nothing ->
+                                    ConcurrentTask.fail "No matching output found at script address"
+
+                                Just ( outputRef, output ) ->
+                                    Api.taskGetUtxoInfo networkId creationTxHash outputRef.outputIndex
+                                        |> httpErrToString
+                                        |> ConcurrentTask.andThen
+                                            (\isUnspent ->
+                                                if not isUnspent then
+                                                    ConcurrentTask.succeed Page.Cart.AlreadySpent
+
+                                                else
+                                                    retrieveRefScriptOutput networkId
+                                                        |> ConcurrentTask.map
+                                                            (\refScriptOutput ->
+                                                                Page.Cart.Found
+                                                                    { outputRef = outputRef
+                                                                    , output = output
+                                                                    , lovelace = output.amount.lovelace
+                                                                    , refScriptOutput = refScriptOutput
+                                                                    , enabled = True
+                                                                    }
+                                                            )
+                                            )
+                        )
+            )
+        |> ConcurrentTask.toResult
+        |> ConcurrentTask.map
+            (\result ->
+                case result of
+                    Ok incentive ->
+                        GotHlabsIncentive incentive
+
+                    Err _ ->
+                        GotHlabsIncentive Page.Cart.NotFound
+            )
+
+
+httpErrToString : ConcurrentTask ConcurrentTask.Http.Error a -> ConcurrentTask String a
+httpErrToString =
+    ConcurrentTask.mapError (\_ -> "HTTP request failed")
+
+
+retrieveTx : NetworkId -> Bytes TransactionId -> ConcurrentTask String Transaction
+retrieveTx networkId txId =
+    Api.defaultApiProvider.retrieveTx networkId txId
+        |> httpErrToString
+        |> ConcurrentTask.andThen
+            (\txBytes ->
+                case Transaction.deserialize txBytes of
+                    Nothing ->
+                        ConcurrentTask.fail "Failed to deserialize transaction"
+
+                    Just tx ->
+                        ConcurrentTask.succeed tx
+            )
+
+
+retrieveRefScriptOutput : NetworkId -> ConcurrentTask String Output
+retrieveRefScriptOutput networkId =
+    retrieveTx networkId Page.Cart.hlabsReferenceScriptRef.transactionId
+        |> ConcurrentTask.andThen
+            (\tx ->
+                case List.Extra.getAt Page.Cart.hlabsReferenceScriptRef.outputIndex tx.body.outputs of
+                    Nothing ->
+                        ConcurrentTask.fail "Reference script output not found"
+
+                    Just output ->
+                        ConcurrentTask.succeed output
+            )
+
+
+{-| Recursively search transaction outputs for the HLabs incentive UTxO.
+Matches outputs at the HLabs script address whose inline datum hashes to the expected hash.
+-}
+findHlabsIncentiveOutput : Bytes a -> Bytes TransactionId -> Int -> List Output -> Maybe ( Utxo.OutputReference, Output )
+findHlabsIncentiveOutput datumHash txId index outputs =
+    case outputs of
+        [] ->
+            Nothing
+
+        output :: rest ->
+            if output.address == Page.Cart.hlabsIncentiveScriptAddress && outputMatchesHlabsDatum datumHash output then
+                Just ( { transactionId = txId, outputIndex = index }, output )
+
+            else
+                findHlabsIncentiveOutput datumHash txId (index + 1) rest
+
+
+outputMatchesHlabsDatum : Bytes a -> Output -> Bool
+outputMatchesHlabsDatum datumHash output =
+    case output.datumOption of
+        Just (Utxo.DatumValue { rawBytes }) ->
+            Bytes.toHex (Data.rawDatumHash rawBytes) == Bytes.toHex datumHash
+
+        _ ->
+            False
+
+
 handleCompletedTask : ConcurrentTask.Response String TaskCompleted -> Model -> ( Model, Cmd Msg )
 handleCompletedTask response model =
     case ( response, model.page ) of
@@ -1549,7 +1683,26 @@ handleCompletedTask response model =
                 ( updatedModel, Cmd.none )
 
         ( ConcurrentTask.Success (GotCart cart), _ ) ->
-            ( { model | cart = cart }, Cmd.none )
+            let
+                updatedModel =
+                    { model | cart = cart }
+            in
+            case ( model.page, Page.Cart.findHlabsIncentiveDatumHash cart ) of
+                ( CartPage, Just datumHash ) ->
+                    ConcurrentTask.attempt { pool = updatedModel.taskPool, send = sendTask, onComplete = OnTaskComplete } (hlabsIncentiveLookup model.networkId datumHash)
+                        |> Tuple.mapFirst
+                            (\newTaskPool ->
+                                { updatedModel
+                                    | taskPool = newTaskPool
+                                    , cart = Page.Cart.setHlabsIncentive Page.Cart.Checking cart
+                                }
+                            )
+
+                _ ->
+                    ( updatedModel, Cmd.none )
+
+        ( ConcurrentTask.Success (GotHlabsIncentive incentive), _ ) ->
+            ( { model | cart = Page.Cart.setHlabsIncentive incentive model.cart }, Cmd.none )
 
         ( ConcurrentTask.Success (PreparationTaskCompleted taskCompleted), PreparationPage pageModel ) ->
             let

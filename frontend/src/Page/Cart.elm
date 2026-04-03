@@ -1,9 +1,10 @@
-module Page.Cart exposing (Model, Msg, UpdateContext, ViewContext, VoteRecord, addVote, cartCount, contains, deleteVote, deserialize, get, getVoter, init, removeFeePayer, serialize, update, view)
+module Page.Cart exposing (HlabsIncentive(..), Model, Msg, UpdateContext, ViewContext, VoteRecord, addVote, cartCount, contains, deleteVote, deserialize, findHlabsIncentiveDatumHash, get, getVoter, hlabsIncentiveScriptAddress, hlabsReferenceScriptRef, init, removeFeePayer, serialize, setHlabsIncentive, update, view)
 
 import Bytes.Comparable as Bytes exposing (Bytes)
-import Cardano.Address as Address exposing (Address, CredentialHash)
+import Cardano.Address as Address exposing (Address, CredentialHash, NetworkId(..))
 import Cardano.Cip30 as Cip30
 import Cardano.CoinSelection as CoinSelection
+import Cardano.Data as Data
 import Cardano.Gov as Gov exposing (ActionId, Anchor, CostModels, Id(..))
 import Cardano.Metadatum as Metadatum
 import Cardano.Script as Script
@@ -11,21 +12,47 @@ import Cardano.Transaction as Transaction exposing (Transaction)
 import Cardano.TxIntent as TxIntent exposing (Fee(..), TxFinalizationError(..), TxFinalized, TxIntent, VoteIntent)
 import Cardano.Uplc as Uplc
 import Cardano.Utils as Utils
-import Cardano.Utxo as Utxo exposing (Output)
+import Cardano.Utxo as Utxo exposing (Output, OutputReference)
 import Cardano.Witness as Witness exposing (Voter(..))
 import Cmd.Extra
 import Dict exposing (Dict)
 import Dict.Any
 import File exposing (File)
 import File.Select
-import Helper exposing (cardContainer, cardContent, cardHeader, sectionTitle, viewButton, viewError)
+import Helper exposing (cardContainer, cardContent, cardHeader, checkbox, sectionTitle, viewButton, viewError)
 import Html exposing (Html, div, text)
 import Html.Attributes as HA
 import Json.Decode as JD
 import Json.Encode as JE
-import Natural as N
+import Natural as N exposing (Natural)
 import Task
 import Url
+
+
+
+-- Hlabs incentive pilot constants
+
+
+hlabsGovActionBech32 : String
+hlabsGovActionBech32 =
+    "gov_action1ky2j077de82par6f0hny5q56rpnn5hh0csfhrpzeq3hsk7s6vetqquz3scv"
+
+
+hlabsIncentiveScriptAddress : Address
+hlabsIncentiveScriptAddress =
+    Address.script Mainnet hlabsScriptHash
+
+
+hlabsScriptHash : Bytes a
+hlabsScriptHash =
+    Bytes.fromHexUnchecked "e1239265c8fcc09339b404ccb3c73958244dceddf70785cec2718251"
+
+
+hlabsReferenceScriptRef : OutputReference
+hlabsReferenceScriptRef =
+    { transactionId = Bytes.fromHexUnchecked "3a9cd3cec83bb58d912f30ccf315b8850dae56ba95a687eedf7193e9d898fd89"
+    , outputIndex = 0
+    }
 
 
 {-| The Cart model has two states, preparing and ready.
@@ -44,12 +71,13 @@ type Model
 
 init : Model
 init =
-    Preparing { votersIntents = Dict.empty, error = Nothing }
+    Preparing { votersIntents = Dict.empty, error = Nothing, hlabsIncentive = NotChecked }
 
 
 type alias CartPreparation =
     { votersIntents : Dict String CartVoter -- keys are bech32 gov IDs
     , error : Maybe String
+    , hlabsIncentive : HlabsIncentive
     }
 
 
@@ -65,6 +93,16 @@ type alias VoteRecord =
     }
 
 
+{-| The state of the HLabs incentive UTxO lookup.
+-}
+type HlabsIncentive
+    = NotChecked
+    | Checking
+    | Found { outputRef : OutputReference, output : Output, lovelace : Natural, refScriptOutput : Output, enabled : Bool }
+    | AlreadySpent
+    | NotFound
+
+
 
 -- (intentionally no listAll; we render per-selected-voter only)
 
@@ -75,6 +113,7 @@ type alias CartReady =
     , currentResources : Resources
     , txFinalized : TxFinalized
     , keyNames : Dict String String
+    , hlabsIncentive : HlabsIncentive
     , feePayerAddress : Address
     }
 
@@ -136,6 +175,7 @@ getVoter voterId model =
 type Msg
     = NoMsg
     | BuildTx
+    | ToggleHlabsIncentive Bool
     | ImportCartButtonClicked
     | CartFileSelected File
     | LoadedCart String
@@ -156,12 +196,15 @@ update ctx msg model =
         ( _, NoMsg, _ ) ->
             ( model, Cmd.none )
 
+        ( _, ToggleHlabsIncentive checked, _ ) ->
+            ( toggleHlabsIncentive checked model, Cmd.none )
+
         ( ( Just { wallet, utxos }, Just costModels ), BuildTx, Preparing ({ votersIntents } as cartPrep) ) ->
             let
                 walletAddress =
                     Cip30.walletChangeAddress wallet
             in
-            case buildTx costModels utxos walletAddress votersIntents of
+            case buildTx costModels utxos walletAddress votersIntents cartPrep.hlabsIncentive of
                 Ok { keyNames, txFinalized, feePayerAddress } ->
                     let
                         tx =
@@ -191,6 +234,7 @@ update ctx msg model =
                         , currentResources = txResources
                         , txFinalized = txFinalized
                         , keyNames = keyNames
+                        , hlabsIncentive = cartPrep.hlabsIncentive
                         , feePayerAddress = feePayerAddress
                         }
                     , Cmd.none
@@ -227,15 +271,15 @@ update ctx msg model =
 
                 Err error ->
                     let
-                        reportError votersIntents errorStr =
-                            ( Preparing { votersIntents = votersIntents, error = Just errorStr }, Cmd.none )
+                        reportError votersIntents hlabsIncentive errorStr =
+                            ( Preparing { votersIntents = votersIntents, error = Just errorStr, hlabsIncentive = hlabsIncentive }, Cmd.none )
                     in
                     case model of
-                        Preparing { votersIntents } ->
-                            reportError votersIntents (JD.errorToString error)
+                        Preparing { votersIntents, hlabsIncentive } ->
+                            reportError votersIntents hlabsIncentive (JD.errorToString error)
 
-                        Ready { votersIntents } ->
-                            reportError votersIntents (JD.errorToString error)
+                        Ready { votersIntents, hlabsIncentive } ->
+                            reportError votersIntents hlabsIncentive (JD.errorToString error)
 
 
 handleCartFileRead : Result x String -> Msg
@@ -246,6 +290,91 @@ handleCartFileRead result =
 
         Ok cartJsonStr ->
             LoadedCart cartJsonStr
+
+
+
+-- HLabs incentives
+
+
+{-| Find the first DRep voter in the cart that has a vote on the Hlabs gov action,
+and return its datum hash for the incentive UTxO lookup.
+-}
+findHlabsIncentiveDatumHash : Model -> Maybe (Bytes a)
+findHlabsIncentiveDatumHash model =
+    let
+        allVotersIntents =
+            case model of
+                Preparing { votersIntents } ->
+                    votersIntents
+
+                Ready { votersIntents } ->
+                    votersIntents
+    in
+    Dict.values allVotersIntents
+        |> List.filterMap
+            (\{ voter, voteRecords } ->
+                if Dict.member hlabsGovActionBech32 voteRecords then
+                    voterToDatum voter
+                        |> Maybe.map Data.hash
+
+                else
+                    Nothing
+            )
+        |> List.head
+
+
+{-| Build the datum for a DRep voter credential.
+On-chain, the outer constructor differentiates voter types:
+0 = CC member, 1 = DRep, 2 = SPO.
+The inner constructor differentiates credential types:
+0 = VKeyHash, 1 = ScriptHash.
+-}
+voterToDatum : Witness.Voter -> Maybe Data.Data
+voterToDatum voter =
+    case voter of
+        WithDrepCred (Witness.WithKey keyHash) ->
+            Just <|
+                Data.Constr (N.fromSafeInt 1)
+                    [ Data.Constr (N.fromSafeInt 0) [ Data.Bytes (Bytes.toAny keyHash) ] ]
+
+        WithDrepCred (Witness.WithScript scriptHash _) ->
+            Just <|
+                Data.Constr (N.fromSafeInt 1)
+                    [ Data.Constr (N.fromSafeInt 1) [ Data.Bytes (Bytes.toAny scriptHash) ] ]
+
+        _ ->
+            Nothing
+
+
+{-| Set the Hlabs incentive result on the cart model.
+-}
+setHlabsIncentive : HlabsIncentive -> Model -> Model
+setHlabsIncentive incentive model =
+    case model of
+        Preparing prep ->
+            Preparing { prep | hlabsIncentive = incentive }
+
+        Ready ready ->
+            Ready { ready | hlabsIncentive = incentive }
+
+
+toggleHlabsIncentive : Bool -> Model -> Model
+toggleHlabsIncentive enabled model =
+    let
+        toggle incentive =
+            case incentive of
+                Found info ->
+                    Found { info | enabled = enabled }
+
+                other ->
+                    other
+    in
+    case model of
+        Preparing prep ->
+            Preparing { prep | hlabsIncentive = toggle prep.hlabsIncentive }
+
+        Ready ready ->
+            Ready { ready | hlabsIncentive = toggle ready.hlabsIncentive }
 
 
 
@@ -279,15 +408,17 @@ addVote voter voteRecord model =
                 )
     in
     case model of
-        Preparing { votersIntents } ->
-            Preparing { votersIntents = updateVotersIntents votersIntents, error = Nothing }
+        Preparing { votersIntents, hlabsIncentive } ->
+            Preparing { votersIntents = updateVotersIntents votersIntents, error = Nothing, hlabsIncentive = hlabsIncentive }
 
-        Ready { votersIntents } ->
-            Preparing { votersIntents = updateVotersIntents votersIntents, error = Nothing }
+        Ready { votersIntents, hlabsIncentive } ->
+            Preparing { votersIntents = updateVotersIntents votersIntents, error = Nothing, hlabsIncentive = hlabsIncentive }
 
 
 {-| Delete a vote from the cart.
 Reset the state to Preparing.
+Reset hlabsIncentive only when the deleted vote is the HLabs action
+or when the cart becomes empty.
 -}
 deleteVote : String -> String -> Model -> Model
 deleteVote voterIdStr actionIdStr model =
@@ -305,13 +436,31 @@ deleteVote voterIdStr actionIdStr model =
                         else
                             Just { voter = voter, voteRecords = newDict }
                    )
+
+        isHlabsVote =
+            actionIdStr == hlabsGovActionBech32
+
+        updateIncentive intents hlabsIncentive =
+            if isHlabsVote || Dict.isEmpty intents then
+                NotChecked
+
+            else
+                hlabsIncentive
     in
     case model of
-        Preparing { votersIntents } ->
-            Preparing { votersIntents = removeVoteFromCart votersIntents, error = Nothing }
+        Preparing { votersIntents, hlabsIncentive } ->
+            let
+                newIntents =
+                    removeVoteFromCart votersIntents
+            in
+            Preparing { votersIntents = newIntents, error = Nothing, hlabsIncentive = updateIncentive newIntents hlabsIncentive }
 
-        Ready { votersIntents } ->
-            Preparing { votersIntents = removeVoteFromCart votersIntents, error = Nothing }
+        Ready { votersIntents, hlabsIncentive } ->
+            let
+                newIntents =
+                    removeVoteFromCart votersIntents
+            in
+            Preparing { votersIntents = newIntents, error = Nothing, hlabsIncentive = updateIncentive newIntents hlabsIncentive }
 
 
 {-| Remove the fee payer, resetting the cart back to Preparing state.
@@ -319,8 +468,8 @@ deleteVote voterIdStr actionIdStr model =
 removeFeePayer : Model -> Model
 removeFeePayer model =
     case model of
-        Ready { votersIntents } ->
-            Preparing { votersIntents = votersIntents, error = Nothing }
+        Ready { votersIntents, hlabsIncentive } ->
+            Preparing { votersIntents = votersIntents, error = Nothing, hlabsIncentive = hlabsIncentive }
 
         Preparing _ ->
             model
@@ -497,7 +646,7 @@ serializeCredentialWitness cred =
 
 deserialize : JD.Decoder Model
 deserialize =
-    JD.map (\intents -> Preparing { votersIntents = intents, error = Nothing }) deserializeVotersIntents
+    JD.map (\intents -> Preparing { votersIntents = intents, error = Nothing, hlabsIncentive = NotChecked }) deserializeVotersIntents
 
 
 deserializeVotersIntents : JD.Decoder (Dict String CartVoter)
@@ -632,9 +781,24 @@ deserializeAnchor =
 -- Tx Building
 
 
-buildTx : CostModels -> Utxo.RefDict Output -> Address -> Dict String CartVoter -> Result String { keyNames : Dict String String, txFinalized : TxFinalized, feePayerAddress : Address }
-buildTx costModels localStateUtxos walletAddress votersIntents =
+buildTx : CostModels -> Utxo.RefDict Output -> Address -> Dict String CartVoter -> HlabsIncentive -> Result String { keyNames : Dict String String, txFinalized : TxFinalized, feePayerAddress : Address }
+buildTx costModels localStateUtxos walletAddress votersIntents hlabsIncentive =
     let
+        -- Add incentive UTxOs to the local state so the Tx builder can reference them
+        allLocalUtxos =
+            case hlabsIncentive of
+                Found { outputRef, output, refScriptOutput, enabled } ->
+                    if enabled then
+                        localStateUtxos
+                            |> Dict.Any.insert outputRef output
+                            |> Dict.Any.insert hlabsReferenceScriptRef refScriptOutput
+
+                    else
+                        localStateUtxos
+
+                _ ->
+                    localStateUtxos
+
         -- Use any address (enterprise / full) with the same payment cred
         -- as the one from the default wallet address to pay the fee
         walletOutputs =
@@ -683,6 +847,32 @@ buildTx costModels localStateUtxos walletAddress votersIntents =
                         TxIntent.Vote voter <| List.map .voteIntent <| Dict.values voteRecords
                     )
 
+        -- Hlabs incentive spend intent
+        incentiveIntents : List TxIntent
+        incentiveIntents =
+            case hlabsIncentive of
+                Found { outputRef, output, enabled } ->
+                    if not enabled then
+                        []
+
+                    else
+                        [ TxIntent.Spend
+                            (TxIntent.FromPlutusScript
+                                { spentInput = outputRef
+                                , datumWitness = Nothing
+                                , plutusScriptWitness =
+                                    { script = ( Script.PlutusV3, Witness.ByReference hlabsReferenceScriptRef )
+                                    , redeemerData = \_ -> Data.Constr (N.fromSafeInt 0) []
+                                    , requiredSigners = []
+                                    }
+                                }
+                            )
+                        , TxIntent.SendTo feeSource output.amount
+                        ]
+
+                _ ->
+                    []
+
         -- Give names to all potential expected keys
         feePayer =
             case Address.extractPubKeyHash feeSource of
@@ -730,10 +920,10 @@ buildTx costModels localStateUtxos walletAddress votersIntents =
                 n ->
                     "cfvt: " ++ String.fromInt n ++ " votes"
     in
-    allVoteIntents
+    (allVoteIntents ++ incentiveIntents)
         |> TxIntent.finalizeAdvanced
             { govState = TxIntent.emptyGovernanceState
-            , localStateUtxos = localStateUtxos
+            , localStateUtxos = allLocalUtxos
             , coinSelectionAlgo = CoinSelection.largestFirst
             , evalScriptsCosts = Uplc.evalScriptsCosts Uplc.defaultVmConfig
             , costModels = costModels
@@ -786,7 +976,7 @@ view ctx model =
 
 
 viewPreparingCart : ViewContext a msg -> CartPreparation -> Html msg
-viewPreparingCart ctx { votersIntents, error } =
+viewPreparingCart ctx { votersIntents, error, hlabsIncentive } =
     let
         hasVotes : Bool
         hasVotes =
@@ -860,7 +1050,7 @@ viewPreparingCart ctx { votersIntents, error } =
             List.concat
                 [ [ viewCartHeader, summaryBar ]
                 , List.map (viewVoterIntents ctx) (Dict.toList votersIntents)
-                , [ actionsBar, viewError error ]
+                , [ actionsBar, viewHlabsIncentive ctx.wrapMsg hlabsIncentive, viewError error ]
                 ]
 
     else
@@ -968,7 +1158,7 @@ viewVoteRecord ctx voterIdStr ( actionIdStr, { proposalTitle, voteIntent } ) =
 
 
 viewReadyCart : ViewContext a msg -> CartReady -> Html msg
-viewReadyCart ctx { votersIntents, maxResources, currentResources, txFinalized, keyNames, feePayerAddress } =
+viewReadyCart ctx { votersIntents, maxResources, currentResources, txFinalized, keyNames, hlabsIncentive, feePayerAddress } =
     let
         countedVotesCount : Int
         countedVotesCount =
@@ -1026,6 +1216,7 @@ viewReadyCart ctx { votersIntents, maxResources, currentResources, txFinalized, 
         , summaryBar
         , votesSection
         , viewResourcesCard maxResources currentResources
+        , viewHlabsIncentiveReadOnly hlabsIncentive
         , viewFeePayerCard ctx feePayerAddress
         , viewSigningButton ctx keyNames txFinalized
         ]
@@ -1295,6 +1486,62 @@ viewDecisionStat v count =
         , HA.style "font-size" "0.75rem"
         ]
         [ text <| label ++ " " ++ String.fromInt count ]
+
+
+viewHlabsIncentive : (Msg -> msg) -> HlabsIncentive -> Html msg
+viewHlabsIncentive wrapMsg incentive =
+    case incentive of
+        Found { lovelace, enabled } ->
+            let
+                adaAmount =
+                    String.fromFloat (toFloat (N.toInt lovelace) / 1000000)
+            in
+            cardContainer [ HA.style "background-color" "#F0FDF4", HA.style "border-color" "#BBF7D0" ]
+                [ cardContent [ HA.style "color" "#166534" ]
+                    [ checkbox
+                        { id = "hlabs-incentive"
+                        , label = " " ++ adaAmount ++ " ada sponsored by HLabs, for voting on its proposal"
+                        }
+                        enabled
+                        (wrapMsg << ToggleHlabsIncentive)
+                    ]
+                ]
+
+        AlreadySpent ->
+            cardContainer [ HA.style "background-color" "#FEF9C3", HA.style "border-color" "#FDE68A" ]
+                [ cardContent [ HA.style "color" "#854D0E" ]
+                    [ text "HLabs sponsoring already spent" ]
+                ]
+
+        Checking ->
+            cardContainer []
+                [ cardContent [ HA.style "color" "#64748B" ]
+                    [ text "Checking for HLabs vote incentive..." ]
+                ]
+
+        _ ->
+            text ""
+
+
+viewHlabsIncentiveReadOnly : HlabsIncentive -> Html msg
+viewHlabsIncentiveReadOnly incentive =
+    case incentive of
+        Found { lovelace, enabled } ->
+            if not enabled then
+                text ""
+
+            else
+                let
+                    adaAmount =
+                        String.fromFloat (toFloat (N.toInt lovelace) / 1000000)
+                in
+                cardContainer [ HA.style "background-color" "#F0FDF4", HA.style "border-color" "#BBF7D0" ]
+                    [ cardContent [ HA.style "color" "#166534" ]
+                        [ text <| adaAmount ++ " ada sponsored by HLabs, for voting on its proposal" ]
+                    ]
+
+        _ ->
+            text ""
 
 
 viewFeePayerCard : ViewContext a msg -> Address -> Html msg
