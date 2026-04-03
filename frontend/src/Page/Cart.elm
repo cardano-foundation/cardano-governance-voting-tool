@@ -22,6 +22,7 @@ import File.Select
 import Helper exposing (cardContainer, cardContent, cardHeader, checkbox, sectionTitle, viewButton, viewError)
 import Html exposing (Html, div, text)
 import Html.Attributes as HA
+import Html.Events exposing (onClick)
 import Json.Decode as JD
 import Json.Encode as JE
 import Natural as N exposing (Natural)
@@ -71,13 +72,14 @@ type Model
 
 init : Model
 init =
-    Preparing { votersIntents = Dict.empty, error = Nothing, hlabsIncentive = NotChecked }
+    Preparing { votersIntents = Dict.empty, error = Nothing, hlabsIncentive = NotChecked, pendingDeletion = Nothing }
 
 
 type alias CartPreparation =
     { votersIntents : Dict String CartVoter -- keys are bech32 gov IDs
     , error : Maybe String
     , hlabsIncentive : HlabsIncentive
+    , pendingDeletion : Maybe PendingDeletion
     }
 
 
@@ -115,6 +117,7 @@ type alias CartReady =
     , keyNames : Dict String String
     , hlabsIncentive : HlabsIncentive
     , feePayerAddress : Address
+    , pendingDeletion : Maybe PendingDeletion
     }
 
 
@@ -172,6 +175,11 @@ getVoter voterId model =
 -- UPDATE ############################################################
 
 
+type PendingDeletion
+    = PendingDeleteVote { voterIdStr : String, actionIdStr : String }
+    | PendingClearCart
+
+
 type Msg
     = NoMsg
     | BuildTx
@@ -179,6 +187,9 @@ type Msg
     | ImportCartButtonClicked
     | CartFileSelected File
     | LoadedCart String
+    | RequestDeleteVote { voterIdStr : String, actionIdStr : String }
+    | RequestClearCart
+    | CancelDelete
 
 
 type alias UpdateContext a msg =
@@ -236,6 +247,7 @@ update ctx msg model =
                         , keyNames = keyNames
                         , hlabsIncentive = cartPrep.hlabsIncentive
                         , feePayerAddress = feePayerAddress
+                        , pendingDeletion = Nothing
                         }
                     , Cmd.none
                     )
@@ -251,6 +263,15 @@ update ctx msg model =
 
         ( _, BuildTx, _ ) ->
             ( model, Cmd.none )
+
+        ( _, RequestDeleteVote ids, _ ) ->
+            ( setPendingDeletion (Just (PendingDeleteVote ids)) model, Cmd.none )
+
+        ( _, RequestClearCart, _ ) ->
+            ( setPendingDeletion (Just PendingClearCart) model, Cmd.none )
+
+        ( _, CancelDelete, _ ) ->
+            ( setPendingDeletion Nothing model, Cmd.none )
 
         ( _, ImportCartButtonClicked, _ ) ->
             ( model
@@ -272,7 +293,7 @@ update ctx msg model =
                 Err error ->
                     let
                         reportError votersIntents hlabsIncentive errorStr =
-                            ( Preparing { votersIntents = votersIntents, error = Just errorStr, hlabsIncentive = hlabsIncentive }, Cmd.none )
+                            ( Preparing { votersIntents = votersIntents, error = Just errorStr, hlabsIncentive = hlabsIncentive, pendingDeletion = Nothing }, Cmd.none )
                     in
                     case model of
                         Preparing { votersIntents, hlabsIncentive } ->
@@ -409,10 +430,10 @@ addVote voter voteRecord model =
     in
     case model of
         Preparing { votersIntents, hlabsIncentive } ->
-            Preparing { votersIntents = updateVotersIntents votersIntents, error = Nothing, hlabsIncentive = hlabsIncentive }
+            Preparing { votersIntents = updateVotersIntents votersIntents, error = Nothing, hlabsIncentive = hlabsIncentive, pendingDeletion = Nothing }
 
         Ready { votersIntents, hlabsIncentive } ->
-            Preparing { votersIntents = updateVotersIntents votersIntents, error = Nothing, hlabsIncentive = hlabsIncentive }
+            Preparing { votersIntents = updateVotersIntents votersIntents, error = Nothing, hlabsIncentive = hlabsIncentive, pendingDeletion = Nothing }
 
 
 {-| Delete a vote from the cart.
@@ -453,14 +474,14 @@ deleteVote voterIdStr actionIdStr model =
                 newIntents =
                     removeVoteFromCart votersIntents
             in
-            Preparing { votersIntents = newIntents, error = Nothing, hlabsIncentive = updateIncentive newIntents hlabsIncentive }
+            Preparing { votersIntents = newIntents, error = Nothing, hlabsIncentive = updateIncentive newIntents hlabsIncentive, pendingDeletion = Nothing }
 
         Ready { votersIntents, hlabsIncentive } ->
             let
                 newIntents =
                     removeVoteFromCart votersIntents
             in
-            Preparing { votersIntents = newIntents, error = Nothing, hlabsIncentive = updateIncentive newIntents hlabsIncentive }
+            Preparing { votersIntents = newIntents, error = Nothing, hlabsIncentive = updateIncentive newIntents hlabsIncentive, pendingDeletion = Nothing }
 
 
 {-| Remove the fee payer, resetting the cart back to Preparing state.
@@ -469,10 +490,20 @@ removeFeePayer : Model -> Model
 removeFeePayer model =
     case model of
         Ready { votersIntents, hlabsIncentive } ->
-            Preparing { votersIntents = votersIntents, error = Nothing, hlabsIncentive = hlabsIncentive }
+            Preparing { votersIntents = votersIntents, error = Nothing, hlabsIncentive = hlabsIncentive, pendingDeletion = Nothing }
 
         Preparing _ ->
             model
+
+
+setPendingDeletion : Maybe PendingDeletion -> Model -> Model
+setPendingDeletion pending model =
+    case model of
+        Preparing prep ->
+            Preparing { prep | pendingDeletion = pending }
+
+        Ready ready ->
+            Ready { ready | pendingDeletion = pending }
 
 
 
@@ -646,7 +677,7 @@ serializeCredentialWitness cred =
 
 deserialize : JD.Decoder Model
 deserialize =
-    JD.map (\intents -> Preparing { votersIntents = intents, error = Nothing, hlabsIncentive = NotChecked }) deserializeVotersIntents
+    JD.map (\intents -> Preparing { votersIntents = intents, error = Nothing, hlabsIncentive = NotChecked, pendingDeletion = Nothing }) deserializeVotersIntents
 
 
 deserializeVotersIntents : JD.Decoder (Dict String CartVoter)
@@ -976,7 +1007,7 @@ view ctx model =
 
 
 viewPreparingCart : ViewContext a msg -> CartPreparation -> Html msg
-viewPreparingCart ctx { votersIntents, error, hlabsIncentive } =
+viewPreparingCart ctx { votersIntents, error, hlabsIncentive, pendingDeletion } =
     let
         hasVotes : Bool
         hasVotes =
@@ -1012,7 +1043,7 @@ viewPreparingCart ctx { votersIntents, error, hlabsIncentive } =
                         , viewDecisionStat Gov.VoteNo counts.no
                         , viewDecisionStat Gov.VoteAbstain counts.abstain
                         ]
-                    , viewButton "Clear Cart" ctx.clearCart
+                    , viewClearCartButton ctx pendingDeletion
                     ]
 
             else
@@ -1049,7 +1080,7 @@ viewPreparingCart ctx { votersIntents, error, hlabsIncentive } =
         div pageAttrs <|
             List.concat
                 [ [ viewCartHeader, summaryBar ]
-                , List.map (viewVoterIntents ctx) (Dict.toList votersIntents)
+                , List.map (viewVoterIntents ctx pendingDeletion) (Dict.toList votersIntents)
                 , [ actionsBar, viewHlabsIncentive ctx.wrapMsg hlabsIncentive, viewError error ]
                 ]
 
@@ -1069,8 +1100,8 @@ viewPreparingCart ctx { votersIntents, error, hlabsIncentive } =
             ]
 
 
-viewVoterIntents : ViewContext a msg -> ( String, { voter : Witness.Voter, voteRecords : Dict String VoteRecord } ) -> Html msg
-viewVoterIntents ctx ( voterIdStr, { voteRecords } ) =
+viewVoterIntents : ViewContext a msg -> Maybe PendingDeletion -> ( String, { voter : Witness.Voter, voteRecords : Dict String VoteRecord } ) -> Html msg
+viewVoterIntents ctx pendingDeletion ( voterIdStr, { voteRecords } ) =
     cardContainer []
         [ cardHeader
             [ HA.style "display" "flex"
@@ -1090,13 +1121,13 @@ viewVoterIntents ctx ( voterIdStr, { voteRecords } ) =
             ]
         , cardContent []
             (Dict.toList voteRecords
-                |> List.map (viewVoteRecord ctx voterIdStr)
+                |> List.map (viewVoteRecord ctx pendingDeletion voterIdStr)
             )
         ]
 
 
-viewVoteRecord : ViewContext a msg -> String -> ( String, VoteRecord ) -> Html msg
-viewVoteRecord ctx voterIdStr ( actionIdStr, { proposalTitle, voteIntent } ) =
+viewVoteRecord : ViewContext a msg -> Maybe PendingDeletion -> String -> ( String, VoteRecord ) -> Html msg
+viewVoteRecord ctx pendingDeletion voterIdStr ( actionIdStr, { proposalTitle, voteIntent } ) =
     let
         { vote, rationale } =
             voteIntent
@@ -1153,12 +1184,12 @@ viewVoteRecord ctx voterIdStr ( actionIdStr, { proposalTitle, voteIntent } ) =
                 ]
             ]
         , div [ HA.style "align-self" "center", HA.style "margin-left" "auto", HA.style "flex-shrink" "0" ]
-            [ Helper.trashButton (ctx.deleteVote { voterIdStr = voterIdStr, actionIdStr = actionIdStr }) ]
+            [ viewDeleteVoteButton ctx pendingDeletion voterIdStr actionIdStr ]
         ]
 
 
 viewReadyCart : ViewContext a msg -> CartReady -> Html msg
-viewReadyCart ctx { votersIntents, maxResources, currentResources, txFinalized, keyNames, hlabsIncentive, feePayerAddress } =
+viewReadyCart ctx { votersIntents, maxResources, currentResources, txFinalized, keyNames, hlabsIncentive, feePayerAddress, pendingDeletion } =
     let
         countedVotesCount : Int
         countedVotesCount =
@@ -1194,7 +1225,7 @@ viewReadyCart ctx { votersIntents, maxResources, currentResources, txFinalized, 
                         , viewDecisionStat Gov.VoteNo counts.no
                         , viewDecisionStat Gov.VoteAbstain counts.abstain
                         ]
-                    , viewButton "Clear Cart" ctx.clearCart
+                    , viewClearCartButton ctx pendingDeletion
                     ]
 
             else
@@ -1209,7 +1240,7 @@ viewReadyCart ctx { votersIntents, maxResources, currentResources, txFinalized, 
                     ]
 
             else
-                div [] (List.map (viewVoterIntents ctx) (Dict.toList votersIntents))
+                div [] (List.map (viewVoterIntents ctx pendingDeletion) (Dict.toList votersIntents))
     in
     div pageAttrs
         [ viewCartHeader
@@ -1220,6 +1251,57 @@ viewReadyCart ctx { votersIntents, maxResources, currentResources, txFinalized, 
         , viewFeePayerCard ctx feePayerAddress
         , viewSigningButton ctx keyNames txFinalized
         ]
+
+
+{-| Show "Clear Cart" button, or confirm/cancel if pending.
+-}
+viewClearCartButton : ViewContext a msg -> Maybe PendingDeletion -> Html msg
+viewClearCartButton ctx pendingDeletion =
+    case pendingDeletion of
+        Just PendingClearCart ->
+            div [ HA.style "display" "flex", HA.style "gap" "0.5rem", HA.style "align-items" "center" ]
+                [ viewSmallButton "#DC2626" "Confirm Clear" ctx.clearCart
+                , viewSmallButton "#6B7280" "Cancel" (ctx.wrapMsg CancelDelete)
+                ]
+
+        _ ->
+            viewButton "Clear Cart" (ctx.wrapMsg RequestClearCart)
+
+
+{-| Show trash button, or confirm/cancel if this vote is pending deletion.
+-}
+viewDeleteVoteButton : ViewContext a msg -> Maybe PendingDeletion -> String -> String -> Html msg
+viewDeleteVoteButton ctx pendingDeletion voterIdStr actionIdStr =
+    case pendingDeletion of
+        Just (PendingDeleteVote ids) ->
+            if ids.voterIdStr == voterIdStr && ids.actionIdStr == actionIdStr then
+                div [ HA.style "display" "flex", HA.style "gap" "0.25rem", HA.style "align-items" "center" ]
+                    [ viewSmallButton "#DC2626" "Delete" (ctx.deleteVote { voterIdStr = voterIdStr, actionIdStr = actionIdStr })
+                    , viewSmallButton "#6B7280" "Keep" (ctx.wrapMsg CancelDelete)
+                    ]
+
+            else
+                Helper.trashButton (ctx.wrapMsg (RequestDeleteVote { voterIdStr = voterIdStr, actionIdStr = actionIdStr }))
+
+        _ ->
+            Helper.trashButton (ctx.wrapMsg (RequestDeleteVote { voterIdStr = voterIdStr, actionIdStr = actionIdStr }))
+
+
+viewSmallButton : String -> String -> msg -> Html msg
+viewSmallButton bgColor label msg =
+    Html.button
+        [ onClick msg
+        , HA.style "background-color" bgColor
+        , HA.style "color" "white"
+        , HA.style "border" "none"
+        , HA.style "border-radius" "0.375rem"
+        , HA.style "padding" "0.25rem 0.75rem"
+        , HA.style "font-size" "0.8125rem"
+        , HA.style "font-weight" "500"
+        , HA.style "cursor" "pointer"
+        , HA.style "white-space" "nowrap"
+        ]
+        [ text label ]
 
 
 viewCartHeader : Html msg
