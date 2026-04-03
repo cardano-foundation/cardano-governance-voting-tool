@@ -1046,7 +1046,7 @@ innerUpdate ctx msg model =
                     )
 
         --
-        -- Storage Configuration Step
+        -- Vote Rationale Storage Configuration Step
         --
         StorageMethodSelected method ->
             ( updateStorageConfigForm (\form -> { form | storageMethod = method }) model
@@ -2226,7 +2226,7 @@ addVotesInfo votes webdata =
 
 
 
--- Storage Configuration Step
+-- Vote Rationale Storage Configuration Step
 
 
 setLastStorageConfig : StorageConfig -> Model -> ( Model, Msg )
@@ -4291,7 +4291,7 @@ getProposalContent metadata metadataUrl =
 
 
 --
--- Storage Configuration Step
+-- Vote Rationale Storage Configuration Step
 --
 
 
@@ -4301,7 +4301,7 @@ viewStorageConfigStep ctx step =
         Preparing form ->
             Html.map ctx.wrapMsg <|
                 div []
-                    [ Helper.sectionTitle "Storage Configuration"
+                    [ Helper.sectionTitle "Vote Rationale Storage Config"
                     , Html.p [ HA.class "mb-4" ]
                         [ text "Only a link to your rationale is stored on Cardano,"
                         , text " so it's recommended to store the actual file containing the text in a permanent storage solution."
@@ -4345,13 +4345,13 @@ viewStorageConfigStep ctx step =
 
         Validating _ _ ->
             div []
-                [ Helper.sectionTitle "Storage Configuration"
+                [ Helper.sectionTitle "Vote Rationale Storage Config"
                 , Helper.loadingSpinner "Validating storage configuration..."
                 ]
 
         Done _ storageConfig ->
             div []
-                [ Helper.sectionTitle "Storage Configuration"
+                [ Helper.sectionTitle "Vote Rationale Storage Config"
                 , Helper.storageConfigCard "Selected Storage Method"
                     [ viewStorageConfigInfo storageConfig ]
                 , Html.p [ HA.style "margin-top" "1rem" ]
@@ -5393,7 +5393,7 @@ viewMissingStepsMessage model =
         , Helper.missingStepsList
             [ Helper.missingStepItem "Voter identification" (isStepIncomplete model.voterStep) (Just "voter-step")
             , Helper.missingStepItem "Proposal selection" (isStepIncomplete model.pickProposalStep) (Just "proposal-step")
-            , Helper.missingStepItem "Storage configuration" (isStepIncomplete model.storageConfigStep) (Just "storage-config-step")
+            , Helper.missingStepItem "Rationale storage config" (isStepIncomplete model.storageConfigStep) (Just "storage-config-step")
             , Helper.missingStepItem "Rationale creation" (isRationaleAppCreated && isStepIncomplete model.rationaleCreationStep) (Just "rationale-step")
             , Helper.missingStepItem "Rationale storage" (hasRationale && isStepIncomplete model.permanentStorageStep) (Just "storage-step")
             ]
