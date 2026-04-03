@@ -3920,6 +3920,7 @@ viewProposalCardHelper wrapMsg networkId currentEpoch getPastVote proposal =
         , pastVote = pastVote
         , isRatifying = proposal.ratified == currentEpoch
         , isLastEpoch = currentEpoch == Just (proposal.epoch_validity.end - 1)
+        , expiryText = "Expires: epoch " ++ String.fromInt proposal.epoch_validity.end ++ " (" ++ Helper.epochToExpiryDate networkId proposal.epoch_validity.end ++ ")"
         , title = title
         , abstract = abstract
         , actionType = proposal.actionType
@@ -3932,7 +3933,7 @@ viewProposalCardHelper wrapMsg networkId currentEpoch getPastVote proposal =
 
 
 viewSelectedProposal : ViewContext msg -> Dict String Cip100VerificationState -> ActiveProposal -> Html msg
-viewSelectedProposal ctx cip100Verification { id, actionType, metadata, metadataUrl, metadataHash } =
+viewSelectedProposal ctx cip100Verification { id, actionType, metadata, metadataUrl, metadataHash, epoch_validity } =
     let
         actionIdStr =
             Helper.actionIdToBech32 id
@@ -4186,6 +4187,8 @@ viewSelectedProposal ctx cip100Verification { id, actionType, metadata, metadata
             [ Helper.proposalDetailsItem "Proposal ID" (cardanoExplorerActionLink ctx.networkId id)
             , Helper.proposalDetailsItem "Type" actionTypeDisplay
             , Helper.proposalDetailsItem "Title" (Html.span [ HA.style "font-weight" "500" ] [ text title ])
+            , Helper.proposalDetailsItem "Expires"
+                (Html.span [] [ text ("Epoch " ++ String.fromInt epoch_validity.end ++ " (" ++ Helper.epochToExpiryDate ctx.networkId epoch_validity.end ++ ")") ])
             , if hashIsValid then
                 text ""
 

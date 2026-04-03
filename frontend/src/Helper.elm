@@ -20,6 +20,7 @@ module Helper exposing
     , signerCard, authorForm, labeledField, readOnlyField, formButtonsRow, secondaryButton, primaryButton, importSignedRationaleButton
     , stepCard, missingStepsList, missingStepItem, loadingSpinner
     , signingButton
+    , epochToExpiryDate
     )
 
 {-| Helper module for miscellaneous functions that didn't fit elsewhere,
@@ -114,10 +115,17 @@ and are potentially useful in multiple places.
 
 @docs signingButton
 
+
+# Epoch / Time helpers
+
+@docs epochToExpiryDate
+
 -}
 
+import Cardano.Address exposing (NetworkId(..))
 import Cardano.Gov as Gov exposing (ActionId)
 import Cardano.TxIntent exposing (VoteIntent)
+import Cardano.Uplc as Uplc
 import Html exposing (Html, div, text)
 import Html.Attributes as HA
 import Html.Events exposing (onCheck, onClick)
@@ -129,6 +137,7 @@ import Numeral
 import RemoteData
 import Svg
 import Svg.Attributes as SA
+import Time
 import Url
 
 
@@ -1311,8 +1320,8 @@ showMoreButton hasMore visibleCount totalCount clickMsg =
 
 {-| Card for an individual proposal
 -}
-proposalCard : { title : String, hashIsValid : Bool, pastVote : Maybe Gov.Vote, isRatifying : Bool, isLastEpoch : Bool, abstract : String, actionType : String, linkUrl : String, linkHex : String, index : Int } -> msg -> Html msg -> Html msg
-proposalCard { title, hashIsValid, pastVote, isRatifying, isLastEpoch, abstract, actionType, linkUrl, linkHex, index } selectMsg actionIcon =
+proposalCard : { title : String, hashIsValid : Bool, pastVote : Maybe Gov.Vote, isRatifying : Bool, isLastEpoch : Bool, expiryText : String, abstract : String, actionType : String, linkUrl : String, linkHex : String, index : Int } -> msg -> Html msg -> Html msg
+proposalCard { title, hashIsValid, pastVote, isRatifying, isLastEpoch, expiryText, abstract, actionType, linkUrl, linkHex, index } selectMsg actionIcon =
     div
         [ HA.style "border" "1px solid #E2E8F0"
         , HA.style "border-radius" "0.75rem"
@@ -1503,6 +1512,12 @@ proposalCard { title, hashIsValid, pastVote, isRatifying, isLastEpoch, abstract,
                         , actionIcon
                         ]
                     ]
+                , Html.div
+                    [ HA.style "font-size" "0.75rem"
+                    , HA.style "color" "#718096"
+                    , HA.style "margin-top" "0.3rem"
+                    ]
+                    [ text expiryText ]
                 ]
             , blackSquareButton
                 [ HA.style "width" "100%"
@@ -2947,3 +2962,105 @@ loadingSpinner message =
 signingButton : String -> Html msg
 signingButton buttonText =
     div [] [ Html.button buttonCommonStyle [ text buttonText ] ]
+
+
+
+-- EPOCH / TIME HELPERS ###############################################################
+
+
+{-| Convert an absolute epoch number to the first slot of that epoch.
+
+On mainnet, epoch numbering starts from the Byron era.
+Shelley started at epoch 208 / slot 4,492,800 with 432,000 slots per epoch.
+
+On Preview, there is no Byron era: epoch 0 starts at slot 0 with 86,400 slots per epoch.
+
+-}
+epochToSlot : NetworkId -> Int -> Natural
+epochToSlot networkId epoch =
+    case networkId of
+        Mainnet ->
+            -- slot = (epoch - shelleyEpoch) * slotsPerEpoch + shelleyFirstSlot
+            Natural.fromSafeInt ((epoch - 208) * 432000 + 4492800)
+
+        Testnet ->
+            Natural.fromSafeInt (epoch * 86400)
+
+
+{-| Get the SlotConfig for the given network.
+-}
+networkSlotConfig : NetworkId -> Uplc.SlotConfig
+networkSlotConfig networkId =
+    case networkId of
+        Mainnet ->
+            Uplc.slotConfigMainnet
+
+        Testnet ->
+            Uplc.slotConfigPreview
+
+
+{-| Convert an absolute epoch number to the Posix time at the start of that epoch.
+-}
+epochToTime : NetworkId -> Int -> Time.Posix
+epochToTime networkId epoch =
+    Uplc.slotToTime (networkSlotConfig networkId) (epochToSlot networkId epoch)
+
+
+{-| Format a Posix time as a UTC date string like "2025-07-15".
+-}
+posixToUtcDate : Time.Posix -> String
+posixToUtcDate posix =
+    let
+        year =
+            String.fromInt (Time.toYear Time.utc posix)
+
+        month =
+            case Time.toMonth Time.utc posix of
+                Time.Jan ->
+                    "01"
+
+                Time.Feb ->
+                    "02"
+
+                Time.Mar ->
+                    "03"
+
+                Time.Apr ->
+                    "04"
+
+                Time.May ->
+                    "05"
+
+                Time.Jun ->
+                    "06"
+
+                Time.Jul ->
+                    "07"
+
+                Time.Aug ->
+                    "08"
+
+                Time.Sep ->
+                    "09"
+
+                Time.Oct ->
+                    "10"
+
+                Time.Nov ->
+                    "11"
+
+                Time.Dec ->
+                    "12"
+
+        day =
+            String.fromInt (Time.toDay Time.utc posix)
+                |> String.padLeft 2 '0'
+    in
+    year ++ "-" ++ month ++ "-" ++ day
+
+
+{-| Convert an epoch number to a UTC date string like "2025-07-15".
+-}
+epochToExpiryDate : NetworkId -> Int -> String
+epochToExpiryDate networkId epoch =
+    posixToUtcDate (epochToTime networkId epoch)
