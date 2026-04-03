@@ -1989,13 +1989,17 @@ governanceTools =
       , url = "https://gov.tools"
       , description = "The original governance platform for Cardano. Register as a DRep, delegate your voting power, explore proposals, and cast your votes."
       }
+    , { name = "CGOV"
+      , url = "https://app.cgov.io/"
+      , description = "A Cardano governance platform for monitoring, tracking, and participating in on-chain governance."
+      }
     , { name = "tempo.vote"
       , url = "https://tempo.vote"
       , description = "An alternative comprehensive platform aiming to support all aspects of Cardano governance."
       }
-    , { name = "CGOV"
-      , url = "https://app.cgov.io/"
-      , description = "A Cardano governance platform for monitoring, tracking, and participating in on-chain governance."
+    , { name = "CardanoCube Governance"
+      , url = "https://www.cardanocube.com/governance"
+      , description = "Governance activity feed & browse DReps and proposals."
       }
     , { name = "governancespace.com"
       , url = "https://governancespace.com"
