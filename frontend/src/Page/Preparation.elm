@@ -36,7 +36,6 @@ import Cardano.Gov as Gov exposing (ActionId, Anchor, CostModels, Id(..), Vote)
 import Cardano.Pool as Pool
 import Cardano.Script as Script
 import Cardano.Transaction as Transaction exposing (Transaction)
-import Cardano.TxIntent exposing (VoteIntent)
 import Cardano.Utxo as Utxo exposing (Output, OutputReference)
 import Cardano.Witness as Witness
 import Cbor.Encode
@@ -65,6 +64,7 @@ import Page.Cart as Cart
 import Platform.Cmd as Cmd
 import Process
 import ProposalMetadata exposing (AuthorWitness, ProposalMetadata)
+import ProposalRelationships exposing (ProposalRelInfo)
 import RemoteData exposing (RemoteData, WebData)
 import ScriptInfo exposing (ScriptInfo)
 import Set exposing (Set)
@@ -3252,6 +3252,7 @@ type alias ViewContext msg =
     , signingLink : Transaction -> List { keyName : String, keyHash : Bytes CredentialHash } -> List (Html msg) -> Html msg
     , ipfsPreconfig : { label : String, description : String }
     , voterPreconfig : List PreconfVoter
+    , proposalRelationships : Dict String ProposalRelInfo
     }
 
 
@@ -3792,13 +3793,23 @@ viewProposalList ctx form maybeVoter proposalsDict visibleCount =
                 proposalsInValidEpoch
                     |> List.filter (\p -> roleCanVoteOn p.actionType)
 
+            -- TODO: REMOVE - Mock bech32 IDs to exclude from proposal list
+            mockInCartIds =
+                Set.fromList
+                    [ Helper.actionIdToBech32 { transactionId = Bytes.fromHexUnchecked (String.repeat 32 "ee"), govActionIndex = 0 }
+                    , Helper.actionIdToBech32 { transactionId = Bytes.fromHexUnchecked (String.repeat 32 "cc"), govActionIndex = 0 }
+                    ]
+
             proposalsNotInCart =
-                case maybeVoterId of
+                (case maybeVoterId of
                     Just voterId ->
                         List.filter (\p -> not <| Cart.contains voterId p.id ctx.cart) proposalsForVoter
 
                     Nothing ->
                         proposalsForVoter
+                )
+                    -- TODO: REMOVE - Also filter out mock cart entries
+                    |> List.filter (\p -> not <| Set.member (Helper.actionIdToBech32 p.id) mockInCartIds)
 
             totalProposalCount =
                 List.length proposalsNotInCart
@@ -3825,14 +3836,13 @@ viewProposalList ctx form maybeVoter proposalsDict visibleCount =
                     1
 
             visibleProposals =
-                List.sortBy (\proposal -> ( hasPastVote proposal.id, proposal.epoch_validity.end )) proposalsNotInCart
+                List.sortBy (\proposal -> ( hasPastVote proposal.id, proposal.epoch_validity.end, ( proposal.actionType, Helper.actionIdToBech32 proposal.id ) )) proposalsNotInCart
                     |> List.take visibleCount
 
             hasMore =
                 totalProposalCount > visibleCount
 
             -- Proposals already in the cart for the selected voter.
-            votesInCart : List { proposalTitle : String, voteIntent : VoteIntent }
             votesInCart =
                 case maybeVoterId of
                     Nothing ->
@@ -3840,24 +3850,60 @@ viewProposalList ctx form maybeVoter proposalsDict visibleCount =
 
                     Just voterIdStr ->
                         Cart.getVoter voterIdStr ctx.cart
-                            |> Dict.values
+                            |> Dict.toList
+                            |> List.map
+                                (\( actionIdStr, { proposalTitle, voteIntent } ) ->
+                                    { proposalTitle = proposalTitle
+                                    , voteIntent = voteIntent
+                                    , relInfo =
+                                        Dict.get actionIdStr ctx.proposalRelationships
+                                            |> Maybe.map (\info -> { number = info.number, follows = info.follows, competingWith = info.competingWith, isDelaying = info.isDelaying })
+                                    }
+                                )
+
+            -- TODO: REMOVE - Mock cart entries for testing relationship badges
+            mockVoteIntent actionId =
+                { vote = Gov.VoteAbstain
+                , actionId = actionId
+                , rationale = Nothing
+                }
+
+            mockCartEntries =
+                let
+                    eeId =
+                        { transactionId = Bytes.fromHexUnchecked (String.repeat 32 "ee"), govActionIndex = 0 }
+
+                    ccId =
+                        { transactionId = Bytes.fromHexUnchecked (String.repeat 32 "cc"), govActionIndex = 0 }
+
+                    eeRel =
+                        Dict.get (Helper.actionIdToBech32 eeId) ctx.proposalRelationships
+                            |> Maybe.map (\info -> { number = info.number, follows = info.follows, competingWith = info.competingWith, isDelaying = info.isDelaying })
+
+                    ccRel =
+                        Dict.get (Helper.actionIdToBech32 ccId) ctx.proposalRelationships
+                            |> Maybe.map (\info -> { number = info.number, follows = info.follows, competingWith = info.competingWith, isDelaying = info.isDelaying })
+                in
+                [ { proposalTitle = "Mock NewCommittee ee", voteIntent = mockVoteIntent eeId, relInfo = eeRel }
+                , { proposalTitle = "Mock ParameterChange cc", voteIntent = mockVoteIntent ccId, relInfo = ccRel }
+                ]
         in
         div []
             [ Helper.proposalListContainer
                 "Select a proposal to vote on"
                 totalProposalCount
-                (List.map (viewProposalCardHelper ctx.wrapMsg ctx.networkId ctx.epoch getPastVote) visibleProposals)
+                (List.map (viewProposalCardHelper ctx.wrapMsg ctx.networkId ctx.epoch getPastVote ctx.proposalRelationships) visibleProposals)
             , Helper.showMoreButton
                 hasMore
                 visibleCount
                 totalProposalCount
                 (ctx.wrapMsg (ShowMoreProposals visibleCount))
-            , Helper.viewProposalsListInCart votesInCart
+            , Helper.viewProposalsListInCart (votesInCart ++ mockCartEntries)
             ]
 
 
-viewProposalCardHelper : (Msg -> msg) -> NetworkId -> Maybe Int -> (ActionId -> Maybe OnchainVote) -> ActiveProposal -> Html msg
-viewProposalCardHelper wrapMsg networkId currentEpoch getPastVote proposal =
+viewProposalCardHelper : (Msg -> msg) -> NetworkId -> Maybe Int -> (ActionId -> Maybe OnchainVote) -> Dict String ProposalRelInfo -> ActiveProposal -> Html msg
+viewProposalCardHelper wrapMsg networkId currentEpoch getPastVote relationships proposal =
     let
         idString =
             Helper.actionIdToBech32 proposal.id
@@ -3901,6 +3947,10 @@ viewProposalCardHelper wrapMsg networkId currentEpoch getPastVote proposal =
 
         linkHex =
             Helper.shortenedHex 5 (Bytes.toHex proposal.id.transactionId)
+
+        relInfo =
+            Dict.get idString relationships
+                |> Maybe.map (\info -> { number = info.number, follows = info.follows, competingWith = info.competingWith, isDelaying = info.isDelaying })
     in
     Helper.proposalCard
         { hashIsValid = hashIsValid
@@ -3914,6 +3964,7 @@ viewProposalCardHelper wrapMsg networkId currentEpoch getPastVote proposal =
         , linkUrl = linkUrl
         , linkHex = linkHex
         , index = proposal.id.govActionIndex
+        , relInfo = relInfo
         }
         (wrapMsg (PickProposalButtonClicked idString))
         (Helper.viewActionTypeIcon proposal.actionType)

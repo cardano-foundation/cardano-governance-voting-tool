@@ -1,4 +1,4 @@
-module Api exposing (ActiveProposal, ApiProvider, AuthorVerification, CcInfo, Cip100VerificationResponse, DrepInfo, IpfsAnswer(..), IpfsFile, OnchainVote, PoolInfo, ProtocolParams, defaultApiProvider, taskFetchFromUrl, taskGetDatumInfo, taskGetUtxoInfo)
+module Api exposing (ActiveProposal, ApiProvider, AuthorVerification, CcInfo, Cip100VerificationResponse, DrepInfo, IpfsAnswer(..), IpfsFile, OnchainVote, PoolInfo, ProtocolParams, defaultApiProvider, taskFetchFromUrl, taskGetDatumInfo, taskGetUtxoInfo, taskRetrieveTxBatch)
 
 {-| Module gathering all the remote HTTP calls made by the app.
 -}
@@ -13,6 +13,7 @@ import Cardano.Utxo exposing (TransactionId)
 import ConcurrentTask exposing (ConcurrentTask)
 import ConcurrentTask.Http
 import ConcurrentTask.Process
+import Dict exposing (Dict)
 import File exposing (File)
 import Helper
 import Http
@@ -1058,6 +1059,45 @@ taskRetrieveTx networkId txId =
                     ]
                 )
         , expect = ConcurrentTask.Http.expectJson thisTxDecoder
+        , timeout = Nothing
+        }
+
+
+{-| Task to retrieve the raw CBOR of multiple Txs in a single Koios request.
+Returns a Dict keyed by tx hash hex string.
+-}
+taskRetrieveTxBatch : NetworkId -> List (Bytes TransactionId) -> ConcurrentTask ConcurrentTask.Http.Error (Dict String (Bytes a))
+taskRetrieveTxBatch networkId txIds =
+    let
+        batchDecoder : Decoder (Dict String (Bytes a))
+        batchDecoder =
+            JD.list
+                (JD.map2 (\txId cbor -> ( Bytes.toHex txId, cbor ))
+                    (JD.field "tx_hash" Bytes.jsonDecoder)
+                    (JD.field "cbor" Bytes.jsonDecoder)
+                )
+                |> JD.map Dict.fromList
+
+        koiosUrl =
+            case networkId of
+                Testnet ->
+                    "https://preview.koios.rest/api/v1"
+
+                Mainnet ->
+                    "https://api.koios.rest/api/v1"
+    in
+    ConcurrentTask.Http.post
+        { url = "/proxy/json"
+        , headers = []
+        , body =
+            ConcurrentTask.Http.jsonBody
+                (JE.object
+                    [ ( "url", JE.string <| koiosUrl ++ "/tx_cbor" )
+                    , ( "method", JE.string "POST" )
+                    , ( "body", JE.object [ ( "_tx_hashes", JE.list (JE.string << Bytes.toHex) txIds ) ] )
+                    ]
+                )
+        , expect = ConcurrentTask.Http.expectJson batchDecoder
         , timeout = Nothing
         }
 

@@ -1320,8 +1320,8 @@ showMoreButton hasMore visibleCount totalCount clickMsg =
 
 {-| Card for an individual proposal
 -}
-proposalCard : { title : String, hashIsValid : Bool, pastVote : Maybe Gov.Vote, isRatifying : Bool, isLastEpoch : Bool, expiryText : String, abstract : String, actionType : String, linkUrl : String, linkHex : String, index : Int } -> msg -> Html msg -> Html msg
-proposalCard { title, hashIsValid, pastVote, isRatifying, isLastEpoch, expiryText, abstract, actionType, linkUrl, linkHex, index } selectMsg actionIcon =
+proposalCard : { title : String, hashIsValid : Bool, pastVote : Maybe Gov.Vote, isRatifying : Bool, isLastEpoch : Bool, expiryText : String, abstract : String, actionType : String, linkUrl : String, linkHex : String, index : Int, relInfo : Maybe { number : Int, follows : Maybe Int, competingWith : List Int, isDelaying : Bool } } -> msg -> Html msg -> Html msg
+proposalCard { title, hashIsValid, pastVote, isRatifying, isLastEpoch, expiryText, abstract, actionType, linkUrl, linkHex, index, relInfo } selectMsg actionIcon =
     div
         [ HA.style "border" "1px solid #E2E8F0"
         , HA.style "border-radius" "0.75rem"
@@ -1393,12 +1393,13 @@ proposalCard { title, hashIsValid, pastVote, isRatifying, isLastEpoch, expiryTex
 
                 badges : List (Html msg)
                 badges =
-                    (if hashIsValid then
-                        []
+                    viewRelBadges relInfo
+                        ++ (if hashIsValid then
+                                []
 
-                     else
-                        [ invalidHashBadge ]
-                    )
+                            else
+                                [ invalidHashBadge ]
+                           )
                         ++ (if isRatifying then
                                 [ ratifyingBadge ]
 
@@ -1628,9 +1629,55 @@ viewPastVoteBadge vote =
         [ text label ]
 
 
+{-| Render relationship badges (number, follows, competing, delaying) for a proposal.
+Reusable across proposal cards, cart rows, etc.
+-}
+viewRelBadges : Maybe { number : Int, follows : Maybe Int, competingWith : List Int, isDelaying : Bool } -> List (Html msg)
+viewRelBadges relInfo =
+    case relInfo of
+        Nothing ->
+            []
+
+        Just info ->
+            let
+                smallBadge bgColor color label =
+                    Html.span
+                        [ HA.style "display" "inline-flex"
+                        , HA.style "align-items" "center"
+                        , HA.style "background-color" bgColor
+                        , HA.style "color" color
+                        , HA.style "font-weight" "600"
+                        , HA.style "padding" "0.125rem 0.4rem"
+                        , HA.style "border-radius" "0.375rem"
+                        , HA.style "font-size" "0.75rem"
+                        ]
+                        [ text label ]
+            in
+            smallBadge "#E2E8F0" "#4A5568" ("#" ++ String.fromInt info.number)
+                :: (case info.follows of
+                        Just n ->
+                            [ smallBadge "#FEF3C7" "#D97706" ("Follows #" ++ String.fromInt n) ]
+
+                        Nothing ->
+                            []
+                   )
+                ++ (if List.isEmpty info.competingWith then
+                        []
+
+                    else
+                        [ smallBadge "#FEE2E2" "#DC2626" ("Competing #" ++ String.join ", #" (List.map String.fromInt info.competingWith)) ]
+                   )
+                ++ (if info.isDelaying then
+                        [ smallBadge "#EDE9FE" "#7C3AED" "Delaying" ]
+
+                    else
+                        []
+                   )
+
+
 {-| List of proposals already in the cart for the currently selected voter.
 -}
-viewProposalsListInCart : List { proposalTitle : String, voteIntent : VoteIntent } -> Html msg
+viewProposalsListInCart : List { proposalTitle : String, voteIntent : VoteIntent, relInfo : Maybe { number : Int, follows : Maybe Int, competingWith : List Int, isDelaying : Bool } } -> Html msg
 viewProposalsListInCart items =
     if List.isEmpty items then
         text ""
@@ -1650,8 +1697,8 @@ viewProposalsListInCart items =
             ]
 
 
-viewProposalRowAt : Int -> { proposalTitle : String, voteIntent : VoteIntent } -> Html msg
-viewProposalRowAt index { proposalTitle, voteIntent } =
+viewProposalRowAt : Int -> { proposalTitle : String, voteIntent : VoteIntent, relInfo : Maybe { number : Int, follows : Maybe Int, competingWith : List Int, isDelaying : Bool } } -> Html msg
+viewProposalRowAt index { proposalTitle, voteIntent, relInfo } =
     Html.li
         [ HA.style "display" "flex"
         , HA.style "justify-content" "space-between"
@@ -1678,7 +1725,22 @@ viewProposalRowAt index { proposalTitle, voteIntent } =
                 , HA.style "overflow-wrap" "break-word"
                 , HA.style "word-break" "break-word"
                 ]
-                [ text proposalTitle ]
+                (text proposalTitle
+                    :: (case viewRelBadges relInfo of
+                            [] ->
+                                []
+
+                            badges ->
+                                [ Html.span
+                                    [ HA.style "display" "inline-flex"
+                                    , HA.style "gap" "0.25rem"
+                                    , HA.style "margin-left" "0.5rem"
+                                    , HA.style "vertical-align" "middle"
+                                    ]
+                                    badges
+                                ]
+                       )
+                )
             ]
         , viewDecisionBadge voteIntent.vote
         ]
