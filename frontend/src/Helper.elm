@@ -1640,7 +1640,7 @@ viewRelBadges relInfo =
 
         Just info ->
             let
-                smallBadge bgColor color label =
+                smallBadge bgColor color tooltip label =
                     Html.span
                         [ HA.style "display" "inline-flex"
                         , HA.style "align-items" "center"
@@ -1650,13 +1650,15 @@ viewRelBadges relInfo =
                         , HA.style "padding" "0.125rem 0.4rem"
                         , HA.style "border-radius" "0.375rem"
                         , HA.style "font-size" "0.75rem"
+                        , HA.style "cursor" "help"
+                        , HA.title tooltip
                         ]
                         [ text label ]
             in
-            smallBadge "#E2E8F0" "#4A5568" ("#" ++ String.fromInt info.number)
+            smallBadge "#E2E8F0" "#4A5568" "Proposal number for cross-referencing related proposals" ("#" ++ String.fromInt info.number)
                 :: (case info.follows of
                         Just n ->
-                            [ smallBadge "#FEF3C7" "#D97706" ("Follows #" ++ String.fromInt n) ]
+                            [ smallBadge "#FEF3C7" "#D97706" ("This proposal depends on #" ++ String.fromInt n ++ " being enacted first") ("Follows #" ++ String.fromInt n) ]
 
                         Nothing ->
                             []
@@ -1665,10 +1667,10 @@ viewRelBadges relInfo =
                         []
 
                     else
-                        [ smallBadge "#FEE2E2" "#DC2626" ("Competing #" ++ String.join ", #" (List.map String.fromInt info.competingWith)) ]
+                        [ smallBadge "#FEE2E2" "#DC2626" "These proposals share the same purpose and parent action, so only one can be enacted" ("Competing #" ++ String.join ", #" (List.map String.fromInt info.competingWith)) ]
                    )
                 ++ (if info.isDelaying then
-                        [ smallBadge "#EDE9FE" "#7C3AED" "Delaying" ]
+                        [ smallBadge "#EDE9FE" "#7C3AED" "If ratified, this action delays all other ratifications for the rest of the epoch" "Delaying" ]
 
                     else
                         []
