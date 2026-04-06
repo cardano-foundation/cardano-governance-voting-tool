@@ -1,4 +1,4 @@
-module Api exposing (ActiveProposal, ApiProvider, AuthorVerification, CcInfo, Cip100VerificationResponse, DrepInfo, IpfsAnswer(..), IpfsFile, OnchainVote, PoolInfo, ProtocolParams, defaultApiProvider, taskGetDatumInfo, taskGetUtxoInfo)
+module Api exposing (ActiveProposal, ApiProvider, AuthorVerification, CcInfo, Cip100VerificationResponse, DrepInfo, IpfsAnswer(..), IpfsFile, OnchainVote, PoolInfo, ProtocolParams, defaultApiProvider, taskFetchFromUrl, taskGetDatumInfo, taskGetUtxoInfo)
 
 {-| Module gathering all the remote HTTP calls made by the app.
 -}
@@ -932,44 +932,45 @@ by proxying through this app server.
 -}
 taskLoadProposalMetadata : String -> ConcurrentTask String ProposalMetadata
 taskLoadProposalMetadata url =
+    taskFetchFromUrl url
+        |> ConcurrentTask.map ProposalMetadata.fromRaw
+
+
+{-| Fetch content from a URL as raw string.
+For IPFS URLs (ipfs://), uses staggered multi-gateway fetching:
+the first gateway fires immediately, then every 2 seconds a new gateway
+is tried. The first successful response wins via `ConcurrentTask.race`.
+For HTTPS URLs, makes a direct request with CORS fallback via the server proxy.
+-}
+taskFetchFromUrl : String -> ConcurrentTask String String
+taskFetchFromUrl url =
     if String.startsWith "ipfs://" url then
         let
             cid =
                 String.dropLeft 7 url
         in
-        fetchFromIpfsGateways cid
+        case ipfsGateways of
+            [] ->
+                ConcurrentTask.fail "No IPFS gateways configured"
+
+            first :: rest ->
+                let
+                    staggeredTask : Int -> String -> ConcurrentTask ConcurrentTask.Http.Error String
+                    staggeredTask index gateway =
+                        ConcurrentTask.Process.sleep (index * 2000)
+                            |> ConcurrentTask.andThenDo (fetchMetadataFromUrl (gateway ++ cid))
+                in
+                ConcurrentTask.race
+                    (fetchMetadataFromUrl (first ++ cid))
+                    (List.indexedMap (\i gw -> staggeredTask (i + 1) gw) rest)
+                    |> httpErrorToString
 
     else
         fetchMetadataFromUrl url
-            |> ConcurrentTask.map ProposalMetadata.fromRaw
             |> httpErrorToString
 
 
-{-| Try fetching from multiple IPFS gateways with staggered delays.
-The first gateway fires immediately, then every 2 seconds a new gateway
-is tried. The first successful response wins via `ConcurrentTask.race`.
--}
-fetchFromIpfsGateways : String -> ConcurrentTask String ProposalMetadata
-fetchFromIpfsGateways cid =
-    case ipfsGateways of
-        [] ->
-            ConcurrentTask.fail "No IPFS gateways configured"
-
-        first :: rest ->
-            let
-                staggeredTask : Int -> String -> ConcurrentTask ConcurrentTask.Http.Error String
-                staggeredTask index gateway =
-                    ConcurrentTask.Process.sleep (index * 2000)
-                        |> ConcurrentTask.andThenDo (fetchMetadataFromUrl (gateway ++ cid))
-            in
-            ConcurrentTask.race
-                (fetchMetadataFromUrl (first ++ cid))
-                (List.indexedMap (\i gw -> staggeredTask (i + 1) gw) rest)
-                |> ConcurrentTask.map ProposalMetadata.fromRaw
-                |> httpErrorToString
-
-
-{-| Fetch metadata from a URL, with CORS fallback via the server proxy.
+{-| Fetch content from a URL, with CORS fallback via the server proxy.
 -}
 fetchMetadataFromUrl : String -> ConcurrentTask ConcurrentTask.Http.Error String
 fetchMetadataFromUrl adjustedUrl =
