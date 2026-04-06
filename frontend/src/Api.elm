@@ -1151,8 +1151,8 @@ taskGetUtxoInfo networkId txHash outputIndex =
                     "https://api.koios.rest/api/v1"
 
         decoder =
-            JD.list JD.value
-                |> JD.map (\items -> not (List.isEmpty items))
+            JD.list (JD.field "is_spent" JD.bool)
+                |> JD.map (\items -> items == [ False ])
     in
     ConcurrentTask.Http.post
         { url = "/proxy/json"
