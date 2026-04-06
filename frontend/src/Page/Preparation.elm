@@ -5092,7 +5092,7 @@ viewPermanentStorageStep ctx pickProposalStep rationaleSignatureStep storageConf
                 ( Done _ _, Done _ _, Preparing form ) ->
                     Helper.storageUploadCard PinJsonIpfsButtonClicked (viewError form.error)
 
-                ( Done _ _, Done _ _, Validating _ _ ) ->
+                ( Done _ _, _, Validating _ _ ) ->
                     Helper.uploadingSpinner "Checking rationale storage..."
 
                 ( Done _ (UseCustomPrepublished _), _, Done _ storage ) ->
