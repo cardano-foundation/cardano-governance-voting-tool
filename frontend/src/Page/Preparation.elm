@@ -3793,23 +3793,13 @@ viewProposalList ctx form maybeVoter proposalsDict visibleCount =
                 proposalsInValidEpoch
                     |> List.filter (\p -> roleCanVoteOn p.actionType)
 
-            -- TODO: REMOVE - Mock bech32 IDs to exclude from proposal list
-            mockInCartIds =
-                Set.fromList
-                    [ Helper.actionIdToBech32 { transactionId = Bytes.fromHexUnchecked (String.repeat 32 "ee"), govActionIndex = 0 }
-                    , Helper.actionIdToBech32 { transactionId = Bytes.fromHexUnchecked (String.repeat 32 "cc"), govActionIndex = 0 }
-                    ]
-
             proposalsNotInCart =
-                (case maybeVoterId of
+                case maybeVoterId of
                     Just voterId ->
                         List.filter (\p -> not <| Cart.contains voterId p.id ctx.cart) proposalsForVoter
 
                     Nothing ->
                         proposalsForVoter
-                )
-                    -- TODO: REMOVE - Also filter out mock cart entries
-                    |> List.filter (\p -> not <| Set.member (Helper.actionIdToBech32 p.id) mockInCartIds)
 
             totalProposalCount =
                 List.length proposalsNotInCart
@@ -3861,32 +3851,6 @@ viewProposalList ctx form maybeVoter proposalsDict visibleCount =
                                     }
                                 )
 
-            -- TODO: REMOVE - Mock cart entries for testing relationship badges
-            mockVoteIntent actionId =
-                { vote = Gov.VoteAbstain
-                , actionId = actionId
-                , rationale = Nothing
-                }
-
-            mockCartEntries =
-                let
-                    eeId =
-                        { transactionId = Bytes.fromHexUnchecked (String.repeat 32 "ee"), govActionIndex = 0 }
-
-                    ccId =
-                        { transactionId = Bytes.fromHexUnchecked (String.repeat 32 "cc"), govActionIndex = 0 }
-
-                    eeRel =
-                        Dict.get (Helper.actionIdToBech32 eeId) ctx.proposalRelationships
-                            |> Maybe.map (\info -> { number = info.number, follows = info.follows, competingWith = info.competingWith, isDelaying = info.isDelaying })
-
-                    ccRel =
-                        Dict.get (Helper.actionIdToBech32 ccId) ctx.proposalRelationships
-                            |> Maybe.map (\info -> { number = info.number, follows = info.follows, competingWith = info.competingWith, isDelaying = info.isDelaying })
-                in
-                [ { proposalTitle = "Mock NewCommittee ee", voteIntent = mockVoteIntent eeId, relInfo = eeRel }
-                , { proposalTitle = "Mock ParameterChange cc", voteIntent = mockVoteIntent ccId, relInfo = ccRel }
-                ]
         in
         div []
             [ Helper.proposalListContainer
@@ -3898,7 +3862,7 @@ viewProposalList ctx form maybeVoter proposalsDict visibleCount =
                 visibleCount
                 totalProposalCount
                 (ctx.wrapMsg (ShowMoreProposals visibleCount))
-            , Helper.viewProposalsListInCart (votesInCart ++ mockCartEntries)
+            , Helper.viewProposalsListInCart votesInCart
             ]
 
 

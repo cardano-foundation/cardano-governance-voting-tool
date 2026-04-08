@@ -1812,122 +1812,6 @@ recomputeProposalRelationships proposalsData govActions =
 
 
 
--- TODO: REMOVE - Mock data for testing proposal relationship badges
--- Scenario:
---   #1 ParameterChange (epoch 550) — competing with #2
---   #2 ParameterChange (epoch 551) — competing with #1
---   #3 ParameterChange (epoch 553) — follows #1
---   #4 NoConfidence    (epoch 552) — delaying, competing with #5
---   #5 UpdateCommittee (epoch 554) — delaying, competing with #4
-
-
-mockActionId : String -> Int -> Gov.ActionId
-mockActionId hexPair index =
-    -- hexPair is a 2-char hex like "aa", "bb", etc. Repeat to fill 64 hex chars (32 bytes).
-    { transactionId = Bytes.fromHexUnchecked (String.repeat 32 hexPair)
-    , govActionIndex = index
-    }
-
-
-mockProposal : String -> Int -> String -> Int -> Int -> ActiveProposal
-mockProposal hexSuffix index actionType startEpoch endEpoch =
-    { id = mockActionId hexSuffix index
-    , actionType = actionType
-    , metadataUrl = ""
-    , metadataHash = ""
-    , epoch_validity = { start = startEpoch, end = endEpoch }
-    , ratified = Nothing
-    , metadata = RemoteData.Success { raw = "", computedHash = "", body = { title = Just ("Mock " ++ actionType ++ " " ++ hexSuffix), abstract = Just "Mock proposal for testing relationship badges." }, authors = [] }
-    }
-
-
-mockProposals : Int -> List ( String, ActiveProposal )
-mockProposals currentEpoch =
-    let
-        p1 =
-            mockProposal "aa" 0 "ParameterChange" currentEpoch (currentEpoch + 6)
-
-        p2 =
-            mockProposal "bb" 0 "ParameterChange" currentEpoch (currentEpoch + 6)
-
-        p3 =
-            mockProposal "cc" 0 "ParameterChange" currentEpoch (currentEpoch + 6)
-
-        p4 =
-            mockProposal "dd" 0 "NoConfidence" currentEpoch (currentEpoch + 6)
-
-        p5 =
-            mockProposal "ee" 0 "NewCommittee" currentEpoch (currentEpoch + 6)
-    in
-    [ ( Helper.actionIdToBech32 p1.id, p1 )
-    , ( Helper.actionIdToBech32 p2.id, p2 )
-    , ( Helper.actionIdToBech32 p3.id, p3 )
-    , ( Helper.actionIdToBech32 p4.id, p4 )
-    , ( Helper.actionIdToBech32 p5.id, p5 )
-    ]
-
-
-{-| The "already enacted" action that #1 and #2 both reference (not an active proposal).
--}
-mockEnactedActionId : Gov.ActionId
-mockEnactedActionId =
-    mockActionId "ff" 0
-
-
-{-| The "already enacted" committee action that #4 and #5 both reference.
--}
-mockEnactedCommitteeActionId : Gov.ActionId
-mockEnactedCommitteeActionId =
-    mockActionId "ee" 1
-
-
-mockGovActions : Dict String Gov.Action
-mockGovActions =
-    let
-        bech32 hexSuffix =
-            Helper.actionIdToBech32 (mockActionId hexSuffix 0)
-    in
-    Dict.fromList
-        [ -- #1 and #2 both reference the same enacted action (competing)
-          ( bech32 "aa"
-          , Gov.ParameterChange
-                { latestEnacted = Just mockEnactedActionId
-                , protocolParamUpdate = Gov.noParamUpdate
-                , guardrailsPolicy = Nothing
-                }
-          )
-        , ( bech32 "bb"
-          , Gov.ParameterChange
-                { latestEnacted = Just mockEnactedActionId
-                , protocolParamUpdate = Gov.noParamUpdate
-                , guardrailsPolicy = Nothing
-                }
-          )
-
-        -- #3 follows #1 (its latestEnacted points to mock "aa")
-        , ( bech32 "cc"
-          , Gov.ParameterChange
-                { latestEnacted = Just (mockActionId "aa" 0)
-                , protocolParamUpdate = Gov.noParamUpdate
-                , guardrailsPolicy = Nothing
-                }
-          )
-
-        -- #4 and #5 share CommitteePurpose and same latestEnacted (competing + delaying)
-        , ( bech32 "dd"
-          , Gov.NoConfidence { latestEnacted = Just mockEnactedCommitteeActionId }
-          )
-        , ( bech32 "ee"
-          , Gov.UpdateCommittee
-                { latestEnacted = Just mockEnactedCommitteeActionId
-                , removedMembers = []
-                , addedMembers = []
-                , quorumThreshold = { numerator = 2, denominator = 3 }
-                }
-          )
-        ]
-
-
 
 -- #########################################################
 -- VIEW
@@ -2077,18 +1961,6 @@ viewContent model =
                         _ ->
                             Nothing
 
-                -- TODO: REMOVE - Inject mock proposals and relationships at view time only
-                currentEpoch =
-                    RemoteData.withDefault 0 model.epoch
-
-                mockProps =
-                    mockProposals currentEpoch
-
-                proposalsWithMocks =
-                    RemoteData.map (\ps -> Dict.union ps (Dict.fromList mockProps)) model.proposals
-
-                mockRels =
-                    recomputeProposalRelationships proposalsWithMocks (Dict.union mockGovActions model.proposalGovActions)
             in
             Page.Preparation.view
                 { wrapMsg = PreparationPageMsg
@@ -2097,7 +1969,7 @@ viewContent model =
                 , drepId = model.walletDrepId
                 , epoch = RemoteData.toMaybe model.epoch
                 , cart = model.cart
-                , proposals = proposalsWithMocks
+                , proposals = model.proposals
                 , jsonLdContexts = model.jsonLdContexts
                 , costModels = Maybe.map .costModels model.protocolParams
                 , constitutionUri = model.constitutionUri
@@ -2110,7 +1982,7 @@ viewContent model =
                         link (RouteSigning { networkId = model.networkId, tx = Just tx, expectedSigners = expectedSigners }) []
                 , ipfsPreconfig = model.ipfsPreconfig
                 , voterPreconfig = model.voterPreconfig
-                , proposalRelationships = mockRels
+                , proposalRelationships = model.proposalRelationships
                 }
                 prepModel
 
