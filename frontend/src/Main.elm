@@ -1812,7 +1812,6 @@ recomputeProposalRelationships proposalsData govActions =
 
 
 
-
 -- #########################################################
 -- VIEW
 -- #########################################################
@@ -1960,7 +1959,6 @@ viewContent model =
 
                         _ ->
                             Nothing
-
             in
             Page.Preparation.view
                 { wrapMsg = PreparationPageMsg

@@ -3850,7 +3850,6 @@ viewProposalList ctx form maybeVoter proposalsDict visibleCount =
                                             |> Maybe.map (\info -> { number = info.number, follows = info.follows, competingWith = info.competingWith, isDelaying = info.isDelaying })
                                     }
                                 )
-
         in
         div []
             [ Helper.proposalListContainer
