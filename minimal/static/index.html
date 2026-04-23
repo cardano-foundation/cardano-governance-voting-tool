@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Cardano Governance Proposals (Minimal)</title>
+        <style>
+            *,
+            *::before,
+            *::after {
+                box-sizing: border-box;
+            }
+            body {
+                font-family: system-ui, sans-serif;
+                line-height: 1.5;
+                max-width: 60rem;
+                margin: 0 auto;
+                padding: 1rem;
+                color: #222;
+            }
+            h1 {
+                font-size: 1.5rem;
+                border-bottom: 1px solid #ccc;
+                padding-bottom: 0.5rem;
+            }
+            .proposals {
+                display: grid;
+                gap: 1rem;
+            }
+            .proposal {
+                border: 1px solid #ddd;
+                border-radius: 0.5rem;
+                padding: 1rem;
+            }
+            .proposal h3 {
+                margin: 0 0 0.25rem;
+            }
+            .proposal p {
+                margin: 0.25rem 0;
+                color: #555;
+            }
+            .badge {
+                display: inline-block;
+                font-size: 0.75rem;
+                padding: 0.125rem 0.5rem;
+                border-radius: 1rem;
+                background: #e0e7ff;
+                color: #3730a3;
+            }
+            .meta {
+                font-size: 0.85rem;
+                color: #777;
+            }
+            .error {
+                color: #b91c1c;
+                background: #fef2f2;
+                padding: 0.75rem;
+                border-radius: 0.5rem;
+            }
+            .loading {
+                color: #555;
+                font-style: italic;
+            }
+            .wallet-bar {
+                display: flex;
+                gap: 0.5rem;
+                flex-wrap: wrap;
+                align-items: center;
+                margin-bottom: 1rem;
+            }
+            .wallet-bar button {
+                cursor: pointer;
+                padding: 0.25rem 0.75rem;
+                border: 1px solid #999;
+                border-radius: 0.25rem;
+                background: #fff;
+            }
+            .wallet-bar button:hover {
+                background: #f0f0f0;
+            }
+            .wallet-bar .connected {
+                color: #16a34a;
+                font-weight: 600;
+            }
+            .hash-match {
+                color: #16a34a;
+            }
+            .hash-mismatch {
+                color: #b91c1c;
+            }
+        </style>
+    </head>
+
+    <body>
+        <div id="main-app"></div>
+        <script type="module">
+            import * as ElmCardano from "/elm-cardano.js";
+            import * as ConcurrentTask from "/elm-concurrent-task.js";
+            import * as Storage from "/storage.js";
+
+            // Load the compiled Elm app
+            await ElmCardano.loadMain("/main.js");
+
+            // Initialize IndexedDB for caching proposal metadata
+            const db = await Storage.init({
+                version: 1,
+                storeNames: ["proposalMetadata"],
+            });
+
+            var app = Elm.Main.init({
+                node: document.getElementById("main-app"),
+                flags: {
+                    url: window.location.href,
+                    db: db,
+                    networkId: 0, // 0: Preview/Testnet, 1: Mainnet
+                },
+            });
+
+            // Wire up CIP-30 wallet ports
+            ElmCardano.init({
+                portFromElmToWallet: app.ports.toWallet,
+                portFromWalletToElm: app.ports.fromWallet,
+            });
+
+            // Wire up concurrent task ports for storage
+            ConcurrentTask.register({
+                tasks: {
+                    "storage:read": async (args) => await Storage.read(args),
+                    "storage:write": async (args) => await Storage.write(args),
+                },
+                ports: {
+                    send: app.ports.sendTask,
+                    receive: app.ports.receiveTask,
+                },
+            });
+        </script>
+    </body>
+</html>
