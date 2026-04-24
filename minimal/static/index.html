@@ -88,6 +88,180 @@
             .hash-mismatch {
                 color: #b91c1c;
             }
+            /* Tabs */
+            .tabs {
+                display: flex;
+                gap: 0;
+                border-bottom: 2px solid #ddd;
+                margin-bottom: 1rem;
+            }
+            .tab {
+                cursor: pointer;
+                padding: 0.5rem 1.25rem;
+                border: none;
+                background: none;
+                font-size: 0.95rem;
+                color: #555;
+                border-bottom: 2px solid transparent;
+                margin-bottom: -2px;
+                transition: color 0.15s, border-color 0.15s;
+            }
+            .tab:hover { color: #222; }
+            .tab.active {
+                color: #3730a3;
+                border-bottom-color: #3730a3;
+                font-weight: 600;
+            }
+            /* Survey cards */
+            .survey-card {
+                border: 1px solid #ddd;
+                border-radius: 0.5rem;
+                padding: 1rem;
+                margin-bottom: 1rem;
+            }
+            .survey-card h3 { margin: 0 0 0.25rem; }
+            .survey-desc { color: #555; margin: 0.25rem 0; }
+            .survey-questions { margin-top: 0.75rem; }
+            .question-display {
+                border-left: 3px solid #e0e7ff;
+                padding: 0.5rem 0.75rem;
+                margin: 0.5rem 0;
+            }
+            .options-list { padding-left: 1rem; }
+            .option-item { color: #555; font-size: 0.9rem; }
+            .option-index { color: #999; font-size: 0.85rem; }
+            /* Forms */
+            .survey-form { max-width: 48rem; }
+            .form-group {
+                margin-bottom: 0.75rem;
+            }
+            .form-group label {
+                display: block;
+                font-size: 0.85rem;
+                font-weight: 600;
+                color: #444;
+                margin-bottom: 0.2rem;
+            }
+            .form-group input[type="text"],
+            .form-group input[type="number"],
+            .form-group textarea,
+            .form-group select {
+                width: 100%;
+                padding: 0.4rem 0.5rem;
+                border: 1px solid #ccc;
+                border-radius: 0.25rem;
+                font-size: 0.9rem;
+                font-family: inherit;
+            }
+            .form-group textarea { resize: vertical; }
+            .form-row {
+                display: flex;
+                gap: 1rem;
+            }
+            .form-row > .form-group { flex: 1; }
+            /* Question cards in form */
+            .question-card {
+                border: 1px solid #ddd;
+                border-radius: 0.5rem;
+                padding: 0.75rem;
+                margin-bottom: 0.75rem;
+                background: #fafafa;
+            }
+            .question-header {
+                display: flex;
+                align-items: center;
+                gap: 0.5rem;
+                margin-bottom: 0.5rem;
+            }
+            .question-header select {
+                padding: 0.25rem 0.4rem;
+                border: 1px solid #ccc;
+                border-radius: 0.25rem;
+                font-size: 0.85rem;
+            }
+            /* Options editor */
+            .options-editor { display: grid; gap: 0.25rem; }
+            .option-row {
+                display: flex;
+                align-items: center;
+                gap: 0.35rem;
+            }
+            .option-row input { flex: 1; }
+            /* Roles */
+            .roles-list { display: grid; gap: 0.35rem; }
+            .role-row {
+                display: flex;
+                align-items: center;
+                gap: 0.75rem;
+            }
+            .role-toggle {
+                display: flex;
+                align-items: center;
+                gap: 0.25rem;
+                min-width: 8rem;
+                cursor: pointer;
+                font-weight: normal !important;
+            }
+            .role-row select {
+                padding: 0.2rem 0.4rem;
+                border: 1px solid #ccc;
+                border-radius: 0.25rem;
+                font-size: 0.85rem;
+            }
+            /* Buttons */
+            .btn {
+                cursor: pointer;
+                padding: 0.35rem 0.75rem;
+                border: 1px solid #ccc;
+                border-radius: 0.25rem;
+                font-size: 0.85rem;
+                background: #fff;
+            }
+            .btn:hover { background: #f0f0f0; }
+            .btn-primary {
+                background: #3730a3;
+                color: #fff;
+                border-color: #3730a3;
+                font-size: 0.95rem;
+                padding: 0.5rem 1.5rem;
+                margin-top: 0.5rem;
+            }
+            .btn-primary:hover { background: #312e81; }
+            .btn-secondary { font-size: 0.8rem; }
+            .btn-danger { color: #b91c1c; border-color: #e5c5c5; }
+            .btn-danger:hover { background: #fef2f2; }
+            .btn-sm { padding: 0.15rem 0.4rem; font-size: 0.75rem; }
+            .link-btn {
+                background: none;
+                border: none;
+                color: #3730a3;
+                cursor: pointer;
+                text-decoration: underline;
+                padding: 0;
+                font-size: inherit;
+            }
+            /* Metadatum preview */
+            .metadatum-preview {
+                margin-top: 1rem;
+                border: 1px solid #ddd;
+                border-radius: 0.5rem;
+                padding: 0.75rem;
+                background: #f8f8f8;
+            }
+            .metadatum-preview h3 { margin: 0 0 0.5rem; font-size: 0.9rem; }
+            .metadatum-preview pre {
+                font-size: 0.8rem;
+                overflow-x: auto;
+                white-space: pre-wrap;
+                word-break: break-all;
+                margin: 0;
+            }
+            /* Empty state */
+            .empty-state {
+                text-align: center;
+                padding: 2rem 1rem;
+                color: #777;
+            }
         </style>
     </head>
 

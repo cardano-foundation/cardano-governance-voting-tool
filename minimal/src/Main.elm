@@ -2,23 +2,28 @@ port module Main exposing (main)
 
 {-| Minimal Cardano governance app: initializes Cardano-related code
 and displays current proposals with their metadata.
+Includes CIP-179 survey display and creation.
 -}
 
 import Api exposing (ActiveProposal)
 import Browser
+import Bytes.Comparable as Bytes
 import Cardano.Address exposing (NetworkId(..))
 import Cardano.Cip30 as Cip30 exposing (WalletDescriptor)
 import Cardano.Gov as Gov
+import Cardano.Metadatum as Metadatum
 import ConcurrentTask
 import Dict exposing (Dict)
-import Html exposing (Html, button, div, h1, h3, p, span, text)
+import Html exposing (Html, button, div, h1, h3, nav, p, pre, span, text)
 import Html.Attributes as HA
 import Html.Events exposing (onClick)
 import Http
+import Integer
 import Json.Decode as JD exposing (Value)
 import ProposalMetadata exposing (ProposalMetadata)
 import RemoteData exposing (RemoteData(..), WebData)
 import Storage
+import Survey
 
 
 
@@ -41,6 +46,12 @@ port receiveTask : (Value -> msg) -> Sub msg
 -- MODEL
 
 
+type Tab
+    = ProposalsTab
+    | SurveysTab
+    | CreateSurveyTab
+
+
 type alias Flags =
     { url : String
     , db : Value
@@ -58,6 +69,10 @@ type alias Model =
     , wallet : Maybe Cip30.Wallet
     , taskPool : ConcurrentTask.Pool Msg
     , errors : List String
+    , activeTab : Tab
+    , surveyForm : Survey.SurveyForm
+    , surveyFormError : Maybe String
+    , createdSurveys : List Survey.SurveyDefinition
     }
 
 
@@ -81,6 +96,10 @@ init flags =
             , wallet = Nothing
             , taskPool = ConcurrentTask.pool
             , errors = []
+            , activeTab = ProposalsTab
+            , surveyForm = Survey.emptyForm
+            , surveyFormError = Nothing
+            , createdSurveys = []
             }
     in
     ( { model | epoch = Loading }
@@ -106,6 +125,8 @@ type Msg
     | DisconnectWalletClicked
     | OnTaskProgress ( ConcurrentTask.Pool Msg, Cmd Msg )
     | OnTaskComplete (ConcurrentTask.Response String TaskCompleted)
+    | TabClicked Tab
+    | SurveyFormMsg Survey.FormMsg
 
 
 type TaskCompleted
@@ -243,6 +264,29 @@ update msg model =
                 ConcurrentTask.UnexpectedError _ ->
                     ( model, Cmd.none )
 
+        TabClicked tab ->
+            ( { model | activeTab = tab }, Cmd.none )
+
+        SurveyFormMsg formMsg ->
+            case formMsg of
+                Survey.SubmitSurvey ->
+                    case Survey.formToDefinition model.surveyForm of
+                        Ok def ->
+                            ( { model
+                                | createdSurveys = def :: model.createdSurveys
+                                , surveyForm = Survey.emptyForm
+                                , surveyFormError = Nothing
+                                , activeTab = SurveysTab
+                              }
+                            , Cmd.none
+                            )
+
+                        Err err ->
+                            ( { model | surveyFormError = Just err }, Cmd.none )
+
+                _ ->
+                    ( { model | surveyForm = Survey.updateForm formMsg model.surveyForm }, Cmd.none )
+
 
 walletResponseDecoder : JD.Decoder (Cip30.Response ())
 walletResponseDecoder =
@@ -292,13 +336,46 @@ subscriptions model =
 view : Model -> Html Msg
 view model =
     div []
-        [ h1 [] [ text "Cardano Governance Proposals" ]
+        [ h1 [] [ text "Cardano Governance" ]
         , viewNetworkInfo model.networkId
         , viewWalletBar model
         , viewStatus model
-        , viewProposals model
+        , viewTabs model.activeTab
+        , case model.activeTab of
+            ProposalsTab ->
+                viewProposals model
+
+            SurveysTab ->
+                viewSurveysTab model
+
+            CreateSurveyTab ->
+                viewCreateSurveyTab model
         , viewErrors model.errors
         ]
+
+
+viewTabs : Tab -> Html Msg
+viewTabs activeTab =
+    nav [ HA.class "tabs" ]
+        [ tabButton ProposalsTab "Proposals" activeTab
+        , tabButton SurveysTab "Surveys" activeTab
+        , tabButton CreateSurveyTab "Create Survey" activeTab
+        ]
+
+
+tabButton : Tab -> String -> Tab -> Html Msg
+tabButton tab label activeTab =
+    button
+        [ HA.class
+            (if tab == activeTab then
+                "tab active"
+
+             else
+                "tab"
+            )
+        , onClick (TabClicked tab)
+        ]
+        [ text label ]
 
 
 viewNetworkInfo : NetworkId -> Html Msg
@@ -363,6 +440,10 @@ viewStatus model =
             NotAsked ->
                 text ""
         ]
+
+
+
+-- PROPOSALS TAB
 
 
 viewProposals : Model -> Html Msg
@@ -441,6 +522,72 @@ viewHashValidity onchainHash computedHash =
         p [ HA.class "meta hash-mismatch" ] [ text "Hash mismatch!" ]
 
 
+
+-- SURVEYS TAB
+
+
+viewSurveysTab : Model -> Html Msg
+viewSurveysTab model =
+    div []
+        [ if List.isEmpty model.createdSurveys then
+            div [ HA.class "empty-state" ]
+                [ p [] [ text "No CIP-179 surveys yet." ]
+                , p [ HA.class "meta" ]
+                    [ text "Surveys created in the "
+                    , button
+                        [ HA.class "link-btn"
+                        , onClick (TabClicked CreateSurveyTab)
+                        ]
+                        [ text "Create Survey" ]
+                    , text " tab will appear here."
+                    ]
+                ]
+
+          else
+            div []
+                [ p [ HA.class "meta" ]
+                    [ text (String.fromInt (List.length model.createdSurveys) ++ " survey(s)") ]
+                , div [ HA.class "proposals" ]
+                    (List.indexedMap viewSurveyWithMetadatum model.createdSurveys)
+                ]
+        ]
+
+
+viewSurveyWithMetadatum : Int -> Survey.SurveyDefinition -> Html Msg
+viewSurveyWithMetadatum idx def =
+    div []
+        [ Survey.viewSurvey def
+        , div [ HA.class "metadatum-preview" ]
+            [ h3 [] [ text "Metadatum (label 17)" ]
+            , pre [] [ text (metadatumToString (Survey.toMetadatum def)) ]
+            ]
+        ]
+
+
+
+-- CREATE SURVEY TAB
+
+
+viewCreateSurveyTab : Model -> Html Msg
+viewCreateSurveyTab model =
+    div []
+        [ Survey.viewSurveyForm model.surveyForm model.surveyFormError SurveyFormMsg
+        , case Survey.formToDefinition model.surveyForm of
+            Ok def ->
+                div [ HA.class "metadatum-preview" ]
+                    [ h3 [] [ text "Preview: Metadatum (label 17)" ]
+                    , pre [] [ text (metadatumToString (Survey.toMetadatum def)) ]
+                    ]
+
+            Err _ ->
+                text ""
+        ]
+
+
+
+-- ERRORS
+
+
 viewErrors : List String -> Html Msg
 viewErrors errors =
     if List.isEmpty errors then
@@ -458,6 +605,64 @@ viewErrors errors =
 actionIdToBech32 : Gov.ActionId -> String
 actionIdToBech32 actionId =
     Gov.idToBech32 (Gov.GovActionId actionId)
+
+
+metadatumToString : Metadatum.Metadatum -> String
+metadatumToString m =
+    metadatumToStringHelper 0 m
+
+
+metadatumToStringHelper : Int -> Metadatum.Metadatum -> String
+metadatumToStringHelper indent m =
+    let
+        pad =
+            String.repeat (indent * 2) " "
+    in
+    case m of
+        Metadatum.Int i ->
+            String.fromInt (Integer.toInt i)
+
+        Metadatum.String s ->
+            "\"" ++ s ++ "\""
+
+        Metadatum.Bytes b ->
+            "h'" ++ Bytes.toHex (Bytes.toAny b) ++ "'"
+
+        Metadatum.List items ->
+            if List.isEmpty items then
+                "[]"
+
+            else
+                "[\n"
+                    ++ String.join ",\n"
+                        (List.map
+                            (\item -> pad ++ "  " ++ metadatumToStringHelper (indent + 1) item)
+                            items
+                        )
+                    ++ "\n"
+                    ++ pad
+                    ++ "]"
+
+        Metadatum.Map pairs ->
+            if List.isEmpty pairs then
+                "{}"
+
+            else
+                "{\n"
+                    ++ String.join ",\n"
+                        (List.map
+                            (\( k, v ) ->
+                                pad
+                                    ++ "  "
+                                    ++ metadatumToStringHelper (indent + 1) k
+                                    ++ ": "
+                                    ++ metadatumToStringHelper (indent + 1) v
+                            )
+                            pairs
+                        )
+                    ++ "\n"
+                    ++ pad
+                    ++ "}"
 
 
 
