@@ -1,22 +1,29 @@
 module Survey exposing
-    ( FormMsg(..)
+    ( AnswerForm(..)
+    , FormMsg(..)
     , NumericConstraints
     , QuestionForm
     , QuestionType(..)
+    , ResponseForm
+    , ResponseFormMsg(..)
     , Role(..)
     , SurveyDefinition
     , SurveyForm
     , SurveyQuestion(..)
     , WeightingMode(..)
+    , buildResponseMetadatum
     , emptyForm
     , emptyQuestion
     , formToDefinition
     , fromMetadatum
+    , initResponseForm
     , metadataLabel
     , questionTypeToString
     , roleToString
     , toMetadatum
     , updateForm
+    , updateResponseForm
+    , viewResponseForm
     , viewSurvey
     , viewSurveyForm
     , weightingModeToString
@@ -1571,3 +1578,458 @@ viewRoleWeighting toMsg rw =
           else
             text ""
         ]
+
+
+
+-- ============================================================
+-- RESPONSE FORM TYPES
+-- ============================================================
+
+
+type AnswerForm
+    = SingleChoiceForm (Maybe Int)
+    | MultiSelectForm (List Int)
+    | RankingForm (List Int)
+    | NumericForm String
+    | CustomForm String
+
+
+type alias ResponseForm =
+    { role : Maybe Role
+    , answers : List AnswerForm
+    }
+
+
+type ResponseFormMsg
+    = SetResponseRole String
+    | SelectSingleChoice Int Int
+    | ToggleMultiSelect Int Int
+    | AddToRanking Int Int
+    | RemoveFromRanking Int Int
+    | SetNumericAnswer Int String
+    | SetCustomAnswer Int String
+    | SubmitResponse
+
+
+
+-- ============================================================
+-- RESPONSE FORM LOGIC
+-- ============================================================
+
+
+initResponseForm : SurveyDefinition -> ResponseForm
+initResponseForm def =
+    { role =
+        case def.roleWeighting of
+            ( r, _ ) :: _ ->
+                Just r
+
+            [] ->
+                Nothing
+    , answers = List.map initAnswerForm def.questions
+    }
+
+
+initAnswerForm : SurveyQuestion -> AnswerForm
+initAnswerForm q =
+    case q of
+        SingleChoice _ ->
+            SingleChoiceForm Nothing
+
+        MultiSelect _ ->
+            MultiSelectForm []
+
+        Ranking _ ->
+            RankingForm []
+
+        NumericRange { constraints } ->
+            NumericForm (String.fromInt constraints.minValue)
+
+        Custom _ ->
+            CustomForm ""
+
+
+updateResponseForm : ResponseFormMsg -> ResponseForm -> ResponseForm
+updateResponseForm msg form =
+    case msg of
+        SetResponseRole roleStr ->
+            { form | role = stringToRole roleStr }
+
+        SelectSingleChoice qIdx optIdx ->
+            { form
+                | answers =
+                    updateAt qIdx (\_ -> SingleChoiceForm (Just optIdx)) form.answers
+            }
+
+        ToggleMultiSelect qIdx optIdx ->
+            { form
+                | answers =
+                    updateAt qIdx
+                        (\a ->
+                            case a of
+                                MultiSelectForm selected ->
+                                    if List.member optIdx selected then
+                                        MultiSelectForm (List.filter (\i -> i /= optIdx) selected)
+
+                                    else
+                                        MultiSelectForm (selected ++ [ optIdx ])
+
+                                _ ->
+                                    a
+                        )
+                        form.answers
+            }
+
+        AddToRanking qIdx optIdx ->
+            { form
+                | answers =
+                    updateAt qIdx
+                        (\a ->
+                            case a of
+                                RankingForm ranked ->
+                                    if List.member optIdx ranked then
+                                        RankingForm ranked
+
+                                    else
+                                        RankingForm (ranked ++ [ optIdx ])
+
+                                _ ->
+                                    a
+                        )
+                        form.answers
+            }
+
+        RemoveFromRanking qIdx position ->
+            { form
+                | answers =
+                    updateAt qIdx
+                        (\a ->
+                            case a of
+                                RankingForm ranked ->
+                                    RankingForm (List.Extra.removeAt position ranked)
+
+                                _ ->
+                                    a
+                        )
+                        form.answers
+            }
+
+        SetNumericAnswer qIdx valStr ->
+            { form
+                | answers =
+                    updateAt qIdx (\_ -> NumericForm valStr) form.answers
+            }
+
+        SetCustomAnswer qIdx valStr ->
+            { form
+                | answers =
+                    updateAt qIdx (\_ -> CustomForm valStr) form.answers
+            }
+
+        SubmitResponse ->
+            form
+
+
+stringToRole : String -> Maybe Role
+stringToRole s =
+    case s of
+        "DRep" ->
+            Just DRep
+
+        "SPO" ->
+            Just SPO
+
+        "CC" ->
+            Just CC
+
+        "Stakeholder" ->
+            Just Stakeholder
+
+        _ ->
+            Nothing
+
+
+
+-- ============================================================
+-- RESPONSE ENCODING
+-- ============================================================
+
+
+buildResponseMetadatum :
+    { txHash : String, index : Int }
+    -> Credential
+    -> SurveyDefinition
+    -> ResponseForm
+    -> Result String Metadatum
+buildResponseMetadatum surveyRef responder def form =
+    case form.role of
+        Nothing ->
+            Err "Please select a role"
+
+        Just role ->
+            let
+                indexedAnswers =
+                    List.indexedMap Tuple.pair form.answers
+
+                encodedAnswers =
+                    List.filterMap encodeAnswerForm indexedAnswers
+            in
+            if List.isEmpty encodedAnswers then
+                Err "Please answer at least one question"
+
+            else
+                Ok
+                    (List
+                        [ metaInt 1
+                        , List
+                            [ List
+                                [ List [ metaBytes (Bytes.fromHexUnchecked surveyRef.txHash), metaInt surveyRef.index ]
+                                , metaInt (roleToInt role)
+                                , credentialToMeta responder
+                                , List encodedAnswers
+                                ]
+                            ]
+                        ]
+                    )
+
+
+encodeAnswerForm : ( Int, AnswerForm ) -> Maybe Metadatum
+encodeAnswerForm ( qIdx, answerForm ) =
+    case answerForm of
+        SingleChoiceForm (Just optIdx) ->
+            Just (List [ metaInt 0, metaInt qIdx, metaInt optIdx ])
+
+        SingleChoiceForm Nothing ->
+            Nothing
+
+        MultiSelectForm selected ->
+            if List.isEmpty selected then
+                Nothing
+
+            else
+                Just (List [ metaInt 1, metaInt qIdx, List (List.map metaInt selected) ])
+
+        RankingForm ranked ->
+            if List.isEmpty ranked then
+                Nothing
+
+            else
+                Just (List [ metaInt 2, metaInt qIdx, List (List.map metaInt ranked) ])
+
+        NumericForm valStr ->
+            case String.toInt valStr of
+                Just v ->
+                    Just (List [ metaInt 3, metaInt qIdx, metaInt v ])
+
+                Nothing ->
+                    Nothing
+
+        CustomForm s ->
+            if String.isEmpty (String.trim s) then
+                Nothing
+
+            else
+                Just (List [ metaInt 4, metaInt qIdx, metaStr s ])
+
+
+
+-- ============================================================
+-- VIEWS: RESPONSE FORM
+-- ============================================================
+
+
+viewResponseForm : SurveyDefinition -> ResponseForm -> Maybe String -> String -> (ResponseFormMsg -> msg) -> Html msg
+viewResponseForm def form validationError submitLabel toMsg =
+    div [ HA.class "survey-form" ]
+        [ h3 [] [ text "Respond to Survey" ]
+        , viewSurvey def
+        , div [ HA.class "form-group" ]
+            [ label [] [ text "Your role" ]
+            , select
+                [ HA.value (Maybe.map roleToString form.role |> Maybe.withDefault "")
+                , HE.onInput (toMsg << SetResponseRole)
+                ]
+                (option [ HA.value "" ] [ text "-- Select role --" ]
+                    :: List.map
+                        (\( r, _ ) ->
+                            option [ HA.value (roleToString r) ] [ text (roleToString r) ]
+                        )
+                        def.roleWeighting
+                )
+            ]
+        , div [ HA.class "survey-questions" ]
+            (List.indexedMap
+                (\qIdx ( question, answer ) ->
+                    viewAnswerInput toMsg qIdx question answer
+                )
+                (List.map2 Tuple.pair def.questions form.answers)
+            )
+        , case validationError of
+            Just err ->
+                p [ HA.class "error" ] [ text err ]
+
+            Nothing ->
+                text ""
+        , button
+            [ HA.class "btn btn-primary"
+            , HE.onClick (toMsg SubmitResponse)
+            ]
+            [ text submitLabel ]
+        ]
+
+
+viewAnswerInput : (ResponseFormMsg -> msg) -> Int -> SurveyQuestion -> AnswerForm -> Html msg
+viewAnswerInput toMsg qIdx question answer =
+    div [ HA.class "question-card" ]
+        (case ( question, answer ) of
+            ( SingleChoice { prompt, options }, SingleChoiceForm selected ) ->
+                [ questionHeader qIdx "Single choice" prompt
+                , viewSingleChoiceInput toMsg qIdx selected options
+                ]
+
+            ( MultiSelect { prompt, options, maxSelections }, MultiSelectForm selected ) ->
+                [ questionHeader qIdx "Multi-select" prompt
+                , p [ HA.class "meta" ] [ text ("Select up to " ++ String.fromInt maxSelections) ]
+                , viewMultiSelectInput toMsg qIdx selected options
+                ]
+
+            ( Ranking { prompt, options, maxRanked }, RankingForm ranked ) ->
+                [ questionHeader qIdx "Ranking" prompt
+                , p [ HA.class "meta" ] [ text ("Rank up to " ++ String.fromInt maxRanked) ]
+                , viewRankingInput toMsg qIdx ranked options
+                ]
+
+            ( NumericRange { prompt, constraints }, NumericForm value ) ->
+                [ questionHeader qIdx "Numeric range" prompt
+                , p [ HA.class "meta" ]
+                    [ text
+                        ("Range: "
+                            ++ String.fromInt constraints.minValue
+                            ++ " to "
+                            ++ String.fromInt constraints.maxValue
+                            ++ (case constraints.step of
+                                    Just s ->
+                                        ", step " ++ String.fromInt s
+
+                                    Nothing ->
+                                        ""
+                               )
+                        )
+                    ]
+                , viewNumericInput toMsg qIdx value constraints
+                ]
+
+            ( Custom { prompt }, CustomForm value ) ->
+                [ questionHeader qIdx "Custom" prompt
+                , textarea
+                    [ HA.value value
+                    , HA.rows 3
+                    , HA.placeholder "Your answer..."
+                    , HE.onInput (toMsg << SetCustomAnswer qIdx)
+                    ]
+                    []
+                ]
+
+            _ ->
+                [ text "" ]
+        )
+
+
+viewSingleChoiceInput : (ResponseFormMsg -> msg) -> Int -> Maybe Int -> List String -> Html msg
+viewSingleChoiceInput toMsg qIdx selected options =
+    div []
+        (List.indexedMap
+            (\oIdx opt ->
+                label [ HA.style "display" "block", HA.style "cursor" "pointer" ]
+                    [ input
+                        [ HA.type_ "radio"
+                        , HA.name ("q" ++ String.fromInt qIdx)
+                        , HA.checked (selected == Just oIdx)
+                        , HE.onClick (toMsg (SelectSingleChoice qIdx oIdx))
+                        ]
+                        []
+                    , text (" " ++ opt)
+                    ]
+            )
+            options
+        )
+
+
+viewMultiSelectInput : (ResponseFormMsg -> msg) -> Int -> List Int -> List String -> Html msg
+viewMultiSelectInput toMsg qIdx selected options =
+    div []
+        (List.indexedMap
+            (\oIdx opt ->
+                label [ HA.style "display" "block", HA.style "cursor" "pointer" ]
+                    [ input
+                        [ HA.type_ "checkbox"
+                        , HA.checked (List.member oIdx selected)
+                        , HE.onClick (toMsg (ToggleMultiSelect qIdx oIdx))
+                        ]
+                        []
+                    , text (" " ++ opt)
+                    ]
+            )
+            options
+        )
+
+
+viewRankingInput : (ResponseFormMsg -> msg) -> Int -> List Int -> List String -> Html msg
+viewRankingInput toMsg qIdx ranked options =
+    div []
+        [ if not (List.isEmpty ranked) then
+            div []
+                [ p [ HA.class "meta" ] [ text "Current ranking:" ]
+                , div []
+                    (List.indexedMap
+                        (\pos optIdx ->
+                            div [ HA.style "display" "flex", HA.style "align-items" "center", HA.style "gap" "0.5rem", HA.style "margin" "0.15rem 0" ]
+                                [ span [] [ text (String.fromInt (pos + 1) ++ ". " ++ (List.Extra.getAt optIdx options |> Maybe.withDefault "?")) ]
+                                , button
+                                    [ HA.class "btn btn-danger btn-sm"
+                                    , HE.onClick (toMsg (RemoveFromRanking qIdx pos))
+                                    ]
+                                    [ text "x" ]
+                                ]
+                        )
+                        ranked
+                    )
+                ]
+
+          else
+            text ""
+        , div [ HA.style "margin-top" "0.25rem" ]
+            (List.indexedMap
+                (\oIdx opt ->
+                    if not (List.member oIdx ranked) then
+                        button
+                            [ HA.class "btn btn-sm"
+                            , HA.style "margin" "0.15rem"
+                            , HE.onClick (toMsg (AddToRanking qIdx oIdx))
+                            ]
+                            [ text ("+ " ++ opt) ]
+
+                    else
+                        text ""
+                )
+                options
+            )
+        ]
+
+
+viewNumericInput : (ResponseFormMsg -> msg) -> Int -> String -> NumericConstraints -> Html msg
+viewNumericInput toMsg qIdx value constraints =
+    input
+        [ HA.type_ "number"
+        , HA.value value
+        , HA.min (String.fromInt constraints.minValue)
+        , HA.max (String.fromInt constraints.maxValue)
+        , case constraints.step of
+            Just s ->
+                HA.step (String.fromInt s)
+
+            Nothing ->
+                HA.class ""
+        , HE.onInput (toMsg << SetNumericAnswer qIdx)
+        ]
+        []
