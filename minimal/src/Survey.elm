@@ -1280,8 +1280,8 @@ viewOptionsDisplay options =
 -- ============================================================
 
 
-viewSurveyForm : SurveyForm -> Maybe String -> (FormMsg -> msg) -> Html msg
-viewSurveyForm form validationError toMsg =
+viewSurveyForm : SurveyForm -> Maybe String -> String -> (FormMsg -> msg) -> Html msg
+viewSurveyForm form validationError submitLabel toMsg =
     div [ HA.class "survey-form" ]
         [ h3 [] [ text "Create Survey" ]
         , div [ HA.class "form-group" ]
@@ -1354,7 +1354,7 @@ viewSurveyForm form validationError toMsg =
             [ HA.class "btn btn-primary"
             , HE.onClick (toMsg SubmitSurvey)
             ]
-            [ text "Create Survey" ]
+            [ text submitLabel ]
         ]
 
 

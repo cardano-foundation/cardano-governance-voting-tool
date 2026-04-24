@@ -8,10 +8,14 @@ Includes CIP-179 survey display and creation.
 import Api exposing (ActiveProposal)
 import Browser
 import Bytes.Comparable as Bytes
-import Cardano.Address exposing (NetworkId(..))
+import Cardano.Address exposing (Credential(..), NetworkId(..))
 import Cardano.Cip30 as Cip30 exposing (WalletDescriptor)
 import Cardano.Gov as Gov
 import Cardano.Metadatum as Metadatum
+import Cardano.Transaction as Transaction exposing (Transaction)
+import Cardano.TxIntent as TxIntent exposing (SpendSource(..), TxIntent(..), TxOtherInfo(..))
+import Cardano.Utxo as Utxo exposing (Output)
+import Cardano.Value as Value
 import ConcurrentTask
 import Dict exposing (Dict)
 import Html exposing (Html, button, div, h1, h3, nav, p, pre, span, text)
@@ -19,7 +23,8 @@ import Html.Attributes as HA
 import Html.Events exposing (onClick)
 import Http
 import Integer
-import Json.Decode as JD exposing (Value)
+import Json.Decode as JD exposing (Decoder, Value)
+import Natural as N
 import ProposalMetadata exposing (ProposalMetadata)
 import RemoteData exposing (RemoteData(..), WebData)
 import Storage
@@ -52,6 +57,14 @@ type Tab
     | CreateSurveyTab
 
 
+type SubmissionStatus
+    = NotSubmitting
+    | WaitingForSignature { tx : Transaction, survey : Survey.SurveyDefinition }
+    | WaitingForSubmission { tx : Transaction, survey : Survey.SurveyDefinition }
+    | Submitted { txId : String, survey : Survey.SurveyDefinition }
+    | SubmissionError String
+
+
 type alias Flags =
     { url : String
     , db : Value
@@ -73,6 +86,8 @@ type alias Model =
     , surveyForm : Survey.SurveyForm
     , surveyFormError : Maybe String
     , createdSurveys : List Survey.SurveyDefinition
+    , walletUtxos : Maybe (Utxo.RefDict Output)
+    , submissionStatus : SubmissionStatus
     }
 
 
@@ -100,6 +115,8 @@ init flags =
             , surveyForm = Survey.emptyForm
             , surveyFormError = Nothing
             , createdSurveys = []
+            , walletUtxos = Nothing
+            , submissionStatus = NotSubmitting
             }
     in
     ( { model | epoch = Loading }
@@ -231,7 +248,7 @@ update msg model =
             )
 
         DisconnectWalletClicked ->
-            ( { model | wallet = Nothing }, Cmd.none )
+            ( { model | wallet = Nothing, walletUtxos = Nothing, submissionStatus = NotSubmitting }, Cmd.none )
 
         OnTaskProgress ( taskPool, cmd ) ->
             ( { model | taskPool = taskPool }, cmd )
@@ -270,43 +287,164 @@ update msg model =
         SurveyFormMsg formMsg ->
             case formMsg of
                 Survey.SubmitSurvey ->
-                    case Survey.formToDefinition model.surveyForm of
-                        Ok def ->
-                            ( { model
-                                | createdSurveys = def :: model.createdSurveys
-                                , surveyForm = Survey.emptyForm
-                                , surveyFormError = Nothing
-                                , activeTab = SurveysTab
-                              }
-                            , Cmd.none
-                            )
-
-                        Err err ->
-                            ( { model | surveyFormError = Just err }, Cmd.none )
+                    submitSurvey model
 
                 _ ->
-                    ( { model | surveyForm = Survey.updateForm formMsg model.surveyForm }, Cmd.none )
+                    ( { model
+                        | surveyForm = Survey.updateForm formMsg model.surveyForm
+                        , submissionStatus =
+                            case model.submissionStatus of
+                                SubmissionError _ ->
+                                    NotSubmitting
+
+                                _ ->
+                                    model.submissionStatus
+                      }
+                    , Cmd.none
+                    )
 
 
-walletResponseDecoder : JD.Decoder (Cip30.Response ())
+submitSurvey : Model -> ( Model, Cmd Msg )
+submitSurvey model =
+    case Survey.formToDefinition model.surveyForm of
+        Err err ->
+            ( { model | surveyFormError = Just err }, Cmd.none )
+
+        Ok def ->
+            case ( model.wallet, model.walletUtxos ) of
+                ( Nothing, _ ) ->
+                    ( { model | surveyFormError = Just "Please connect a wallet first" }, Cmd.none )
+
+                ( _, Nothing ) ->
+                    ( { model | surveyFormError = Just "Wallet UTxOs not loaded yet" }, Cmd.none )
+
+                ( Just wallet, Just utxos ) ->
+                    let
+                        changeAddr =
+                            Cip30.walletChangeAddress wallet
+
+                        surveyMetadatum =
+                            Survey.toMetadatum def
+
+                        -- CIP-179: owner key hash must be in required_signers
+                        requiredSignerInfo =
+                            case def.owner of
+                                VKeyHash hash ->
+                                    [ TxRequiredSigner hash ]
+
+                                ScriptHash _ ->
+                                    []
+
+                        txResult =
+                            TxIntent.finalize utxos
+                                (TxMetadata { tag = N.fromSafeInt 17, metadata = surveyMetadatum }
+                                    :: requiredSignerInfo
+                                )
+                                [ Spend (FromWallet { address = changeAddr, value = Value.onlyLovelace N.zero, guaranteedUtxos = [] }) ]
+                    in
+                    case txResult of
+                        Err err ->
+                            ( { model | surveyFormError = Just (TxIntent.errorToString err) }, Cmd.none )
+
+                        Ok { tx } ->
+                            ( { model
+                                | submissionStatus = WaitingForSignature { tx = tx, survey = def }
+                                , surveyFormError = Nothing
+                              }
+                            , toWallet (Cip30.encodeRequest (Cip30.signTx wallet { partialSign = False } tx))
+                            )
+
+
+walletResponseDecoder : Decoder (Cip30.Response Cip30.ApiResponse)
 walletResponseDecoder =
-    Cip30.responseDecoder Dict.empty
+    Cip30.responseDecoder
+        (Dict.fromList [ ( 30, Cip30.apiDecoder ) ])
 
 
-handleWalletResponse : Cip30.Response () -> Model -> ( Model, Cmd Msg )
+handleWalletResponse : Cip30.Response Cip30.ApiResponse -> Model -> ( Model, Cmd Msg )
 handleWalletResponse response model =
     case response of
         Cip30.AvailableWallets wallets ->
             ( { model | walletsDiscovered = wallets }, Cmd.none )
 
         Cip30.EnabledWallet wallet ->
-            ( { model | wallet = Just wallet }, Cmd.none )
+            ( { model | wallet = Just wallet }
+            , toWallet
+                (Cip30.encodeRequest
+                    (Cip30.getUtxos wallet { amount = Nothing, paginate = Nothing })
+                )
+            )
+
+        Cip30.ApiResponse _ apiResponse ->
+            handleApiResponse apiResponse model
 
         Cip30.ApiError { info } ->
-            ( { model | errors = info :: model.errors }, Cmd.none )
+            let
+                submissionUpdate =
+                    case model.submissionStatus of
+                        WaitingForSignature _ ->
+                            SubmissionError ("Wallet error: " ++ info)
+
+                        WaitingForSubmission _ ->
+                            SubmissionError ("Submission error: " ++ info)
+
+                        other ->
+                            other
+            in
+            ( { model
+                | errors = info :: model.errors
+                , submissionStatus = submissionUpdate
+              }
+            , Cmd.none
+            )
 
         Cip30.UnhandledResponseType err ->
             ( { model | errors = err :: model.errors }, Cmd.none )
+
+
+handleApiResponse : Cip30.ApiResponse -> Model -> ( Model, Cmd Msg )
+handleApiResponse apiResponse model =
+    case apiResponse of
+        Cip30.WalletUtxos utxos ->
+            ( { model | walletUtxos = Just (Utxo.refDictFromList utxos) }, Cmd.none )
+
+        Cip30.ChangeAddress addr ->
+            ( { model | wallet = Maybe.map (Cip30.updateChangeAddress addr) model.wallet }, Cmd.none )
+
+        Cip30.SignedTx vkeyWitnesses ->
+            case model.submissionStatus of
+                WaitingForSignature { tx, survey } ->
+                    let
+                        signedTx =
+                            Transaction.updateSignatures (\_ -> Just vkeyWitnesses) tx
+                    in
+                    case model.wallet of
+                        Just wallet ->
+                            ( { model | submissionStatus = WaitingForSubmission { tx = signedTx, survey = survey } }
+                            , toWallet (Cip30.encodeRequest (Cip30.submitTx wallet signedTx))
+                            )
+
+                        Nothing ->
+                            ( { model | submissionStatus = SubmissionError "Wallet disconnected" }, Cmd.none )
+
+                _ ->
+                    ( model, Cmd.none )
+
+        Cip30.SubmittedTx txId ->
+            case model.submissionStatus of
+                WaitingForSubmission { survey } ->
+                    ( { model
+                        | submissionStatus = Submitted { txId = Bytes.toHex txId, survey = survey }
+                        , createdSurveys = survey :: model.createdSurveys
+                        , surveyForm = Survey.emptyForm
+                        , surveyFormError = Nothing
+                        , activeTab = SurveysTab
+                      }
+                    , Cmd.none
+                    )
+
+                _ ->
+                    ( model, Cmd.none )
 
         _ ->
             ( model, Cmd.none )
@@ -571,7 +709,8 @@ viewSurveyWithMetadatum idx def =
 viewCreateSurveyTab : Model -> Html Msg
 viewCreateSurveyTab model =
     div []
-        [ Survey.viewSurveyForm model.surveyForm model.surveyFormError SurveyFormMsg
+        [ Survey.viewSurveyForm model.surveyForm model.surveyFormError (submitButtonLabel model) SurveyFormMsg
+        , viewSubmissionStatus model.submissionStatus
         , case Survey.formToDefinition model.surveyForm of
             Ok def ->
                 div [ HA.class "metadatum-preview" ]
@@ -582,6 +721,43 @@ viewCreateSurveyTab model =
             Err _ ->
                 text ""
         ]
+
+
+submitButtonLabel : Model -> String
+submitButtonLabel model =
+    case model.submissionStatus of
+        WaitingForSignature _ ->
+            "Awaiting signature..."
+
+        WaitingForSubmission _ ->
+            "Submitting..."
+
+        _ ->
+            case model.wallet of
+                Nothing ->
+                    "Connect wallet to submit"
+
+                Just _ ->
+                    "Submit Survey On-Chain"
+
+
+viewSubmissionStatus : SubmissionStatus -> Html Msg
+viewSubmissionStatus status =
+    case status of
+        NotSubmitting ->
+            text ""
+
+        WaitingForSignature _ ->
+            p [ HA.class "loading" ] [ text "Waiting for wallet signature..." ]
+
+        WaitingForSubmission _ ->
+            p [ HA.class "loading" ] [ text "Submitting transaction..." ]
+
+        Submitted { txId } ->
+            p [ HA.class "meta hash-match" ] [ text ("Transaction submitted! TxId: " ++ txId) ]
+
+        SubmissionError err ->
+            p [ HA.class "error" ] [ text ("Submission failed: " ++ err) ]
 
 
 
