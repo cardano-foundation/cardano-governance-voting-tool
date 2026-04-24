@@ -1,25 +1,25 @@
 module Survey exposing
-    ( Role(..)
-    , WeightingMode(..)
-    , SurveyQuestion(..)
-    , SurveyDefinition
+    ( FormMsg(..)
     , NumericConstraints
-    , QuestionType(..)
-    , SurveyForm
     , QuestionForm
-    , FormMsg(..)
+    , QuestionType(..)
+    , Role(..)
+    , SurveyDefinition
+    , SurveyForm
+    , SurveyQuestion(..)
+    , WeightingMode(..)
     , emptyForm
     , emptyQuestion
-    , updateForm
     , formToDefinition
-    , toMetadatum
     , fromMetadatum
+    , metadataLabel
+    , questionTypeToString
+    , roleToString
+    , toMetadatum
+    , updateForm
     , viewSurvey
     , viewSurveyForm
-    , metadataLabel
-    , roleToString
     , weightingModeToString
-    , questionTypeToString
     )
 
 import Bytes.Comparable as Bytes exposing (Any, Bytes)
