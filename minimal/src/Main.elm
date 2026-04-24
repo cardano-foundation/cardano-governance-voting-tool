@@ -57,6 +57,7 @@ type Tab
     | CreateSurveyTab
     | FillSurveyTab
     | ResponsesTab
+    | CancelSurveyTab
 
 
 type SubmissionStatus
@@ -103,11 +104,13 @@ type alias Model =
     , createdSurveys : List Survey.SurveyDefinition
     , onchainSurveys : WebData (List OnchainSurvey)
     , onchainResponses : List OnchainResponse
+    , onchainCancellations : List Survey.SurveyRef
     , walletUtxos : Maybe (Utxo.RefDict Output)
     , submissionStatus : SubmissionStatus
     , responseTarget : Maybe OnchainSurvey
     , responseForm : Survey.ResponseForm
     , responseFormError : Maybe String
+    , cancelTarget : Maybe OnchainSurvey
     }
 
 
@@ -137,11 +140,13 @@ init flags =
             , createdSurveys = []
             , onchainSurveys = NotAsked
             , onchainResponses = []
+            , onchainCancellations = []
             , walletUtxos = Nothing
             , submissionStatus = NotSubmitting
             , responseTarget = Nothing
             , responseForm = { role = Nothing, answers = [] }
             , responseFormError = Nothing
+            , cancelTarget = Nothing
             }
     in
     ( { model | epoch = Loading }
@@ -171,6 +176,8 @@ type Msg
     | SurveyFormMsg Survey.FormMsg
     | RespondToSurvey OnchainSurvey
     | ResponseFormMsg Survey.ResponseFormMsg
+    | CancelSurvey OnchainSurvey
+    | ConfirmCancelSurvey
     | GotSurveyTxHashes (Result Http.Error (List String))
     | GotSurveyMetadata (Result Http.Error (List Api.SurveyTxMetadata))
 
@@ -343,9 +350,23 @@ update msg model =
                 , responseFormError = Nothing
                 , submissionStatus = NotSubmitting
                 , activeTab = FillSurveyTab
+                , cancelTarget = Nothing
               }
             , Cmd.none
             )
+
+        CancelSurvey survey ->
+            ( { model
+                | cancelTarget = Just survey
+                , submissionStatus = NotSubmitting
+                , activeTab = CancelSurveyTab
+                , responseTarget = Nothing
+              }
+            , Cmd.none
+            )
+
+        ConfirmCancelSurvey ->
+            submitCancellation model
 
         ResponseFormMsg formMsg ->
             case formMsg of
@@ -429,10 +450,23 @@ update msg model =
                                             []
                                 )
                                 parsed
+
+                        cancellations =
+                            List.concatMap
+                                (\( _, payload ) ->
+                                    case payload of
+                                        Survey.ParsedCancellations refs ->
+                                            refs
+
+                                        _ ->
+                                            []
+                                )
+                                parsed
                     in
                     ( { model
                         | onchainSurveys = Success validSurveys
                         , onchainResponses = responses
+                        , onchainCancellations = cancellations
                       }
                     , Cmd.none
                     )
@@ -567,6 +601,15 @@ handleApiResponse apiResponse model =
         Cip30.SubmittedTx txId ->
             case model.submissionStatus of
                 WaitingForSubmission { createdSurvey } ->
+                    let
+                        newCancellations =
+                            case model.cancelTarget of
+                                Just target ->
+                                    { txHash = target.txHash, index = target.index } :: model.onchainCancellations
+
+                                Nothing ->
+                                    model.onchainCancellations
+                    in
                     ( { model
                         | submissionStatus = Submitted { txId = Bytes.toHex txId, createdSurvey = createdSurvey }
                         , createdSurveys =
@@ -585,6 +628,8 @@ handleApiResponse apiResponse model =
                                     model.surveyForm
                         , surveyFormError = Nothing
                         , responseFormError = Nothing
+                        , cancelTarget = Nothing
+                        , onchainCancellations = newCancellations
                         , activeTab = SurveysTab
                       }
                     , Cmd.none
@@ -641,6 +686,9 @@ view model =
 
             ResponsesTab ->
                 viewResponsesTab model
+
+            CancelSurveyTab ->
+                viewCancelSurveyTab model
         , viewErrors model.errors
         ]
 
@@ -821,6 +869,11 @@ viewHashValidity onchainHash computedHash =
 
 viewSurveysTab : Model -> Html Msg
 viewSurveysTab model =
+    let
+        isCancelled survey =
+            List.any (\ref -> ref.txHash == survey.txHash && ref.index == survey.index)
+                model.onchainCancellations
+    in
     div []
         [ case model.onchainSurveys of
             NotAsked ->
@@ -833,7 +886,11 @@ viewSurveysTab model =
                 p [ HA.class "error" ] [ text "Failed to load surveys from chain" ]
 
             Success surveys ->
-                if List.isEmpty surveys then
+                let
+                    ( cancelledSurveys, activeSurveys ) =
+                        List.partition isCancelled surveys
+                in
+                if List.isEmpty activeSurveys && List.isEmpty cancelledSurveys then
                     div [ HA.class "empty-state" ]
                         [ p [] [ text "No active CIP-179 surveys found on-chain." ]
                         , p [ HA.class "meta" ]
@@ -849,10 +906,25 @@ viewSurveysTab model =
 
                 else
                     div []
-                        [ p [ HA.class "meta" ]
-                            [ text (String.fromInt (List.length surveys) ++ " active survey(s) on-chain") ]
-                        , div [ HA.class "proposals" ]
-                            (List.map viewOnchainSurvey surveys)
+                        [ if not (List.isEmpty activeSurveys) then
+                            div []
+                                [ p [ HA.class "meta" ]
+                                    [ text (String.fromInt (List.length activeSurveys) ++ " active survey(s) on-chain") ]
+                                , div [ HA.class "proposals" ]
+                                    (List.map viewOnchainSurvey activeSurveys)
+                                ]
+
+                          else
+                            p [ HA.class "meta" ] [ text "No active surveys." ]
+                        , if not (List.isEmpty cancelledSurveys) then
+                            div [ HA.style "margin-top" "2rem" ]
+                                [ h3 [] [ text "Cancelled Surveys" ]
+                                , div [ HA.class "proposals" ]
+                                    (List.map viewCancelledSurvey cancelledSurveys)
+                                ]
+
+                          else
+                            text ""
                         ]
         ]
 
@@ -863,11 +935,32 @@ viewOnchainSurvey survey =
         [ Survey.viewSurvey survey.definition
         , p [ HA.class "meta" ]
             [ text ("Tx: " ++ survey.txHash ++ " [" ++ String.fromInt survey.index ++ "]") ]
-        , button
-            [ HA.class "btn btn-primary"
-            , onClick (RespondToSurvey survey)
+        , div [ HA.style "display" "flex", HA.style "gap" "0.5rem" ]
+            [ button
+                [ HA.class "btn btn-primary"
+                , onClick (RespondToSurvey survey)
+                ]
+                [ text "Respond" ]
+            , button
+                [ HA.class "btn btn-danger"
+                , onClick (CancelSurvey survey)
+                ]
+                [ text "Cancel" ]
             ]
-            [ text "Respond" ]
+        ]
+
+
+viewCancelledSurvey : OnchainSurvey -> Html Msg
+viewCancelledSurvey survey =
+    div [ HA.class "survey-card", HA.style "opacity" "0.7" ]
+        [ h3 []
+            [ span [ HA.class "badge", HA.style "background" "#fee2e2", HA.style "color" "#b91c1c" ] [ text "Cancelled" ]
+            , span [ HA.style "margin-left" "0.5rem" ] [ text survey.definition.title ]
+            ]
+        , p [ HA.class "meta" ]
+            [ text ("Tx: " ++ survey.txHash ++ " [" ++ String.fromInt survey.index ++ "]") ]
+        , p [ HA.class "meta" ]
+            [ text ("Owner: " ++ Survey.credentialToHex survey.definition.owner) ]
         ]
 
 
@@ -1021,6 +1114,116 @@ submitResponse model =
 
 
 
+-- CANCEL SURVEY TAB
+
+
+viewCancelSurveyTab : Model -> Html Msg
+viewCancelSurveyTab model =
+    case model.cancelTarget of
+        Nothing ->
+            p [ HA.class "error" ] [ text "No survey selected" ]
+
+        Just target ->
+            let
+                ownerHex =
+                    Survey.credentialToHex target.definition.owner
+
+                walletCredHex =
+                    model.wallet
+                        |> Maybe.andThen (\w -> Cardano.Address.extractPaymentCred (Cip30.walletChangeAddress w))
+                        |> Maybe.map Survey.credentialToHex
+
+                ownerMatches =
+                    walletCredHex == Just ownerHex
+            in
+            div []
+                [ button
+                    [ HA.class "btn btn-secondary"
+                    , onClick (TabClicked SurveysTab)
+                    ]
+                    [ text "Back to Surveys" ]
+                , div [ HA.class "survey-card", HA.style "margin-top" "1rem" ]
+                    [ h3 [] [ text "Cancel Survey" ]
+                    , Survey.viewSurvey target.definition
+                    , p [ HA.class "meta" ]
+                        [ text ("Tx: " ++ target.txHash ++ " [" ++ String.fromInt target.index ++ "]") ]
+                    , if ownerMatches then
+                        div []
+                            [ p [ HA.class "meta hash-match" ] [ text "Owner credential matches your wallet." ]
+                            , button
+                                [ HA.class "btn btn-danger"
+                                , HA.style "margin-top" "0.5rem"
+                                , onClick ConfirmCancelSurvey
+                                ]
+                                [ text (submitButtonLabel "Connect wallet to cancel" "Confirm Cancellation" model) ]
+                            ]
+
+                      else
+                        case walletCredHex of
+                            Nothing ->
+                                p [ HA.class "error" ] [ text "Please connect a wallet to verify ownership." ]
+
+                            Just wHex ->
+                                p [ HA.class "error" ]
+                                    [ text ("Your wallet credential (" ++ wHex ++ ") does not match the survey owner (" ++ ownerHex ++ "). Only the owner can cancel.") ]
+                    ]
+                , viewSubmissionStatus model.submissionStatus
+                ]
+
+
+submitCancellation : Model -> ( Model, Cmd Msg )
+submitCancellation model =
+    case model.cancelTarget of
+        Nothing ->
+            ( { model | errors = "No survey selected for cancellation" :: model.errors }, Cmd.none )
+
+        Just target ->
+            case ( model.wallet, model.walletUtxos ) of
+                ( Nothing, _ ) ->
+                    ( { model | errors = "Please connect a wallet first" :: model.errors }, Cmd.none )
+
+                ( _, Nothing ) ->
+                    ( { model | errors = "Wallet UTxOs not loaded yet" :: model.errors }, Cmd.none )
+
+                ( Just wallet, Just utxos ) ->
+                    let
+                        changeAddr =
+                            Cip30.walletChangeAddress wallet
+
+                        surveyRef =
+                            { txHash = target.txHash, index = target.index }
+
+                        cancellationMeta =
+                            Survey.buildCancellationMetadatum surveyRef
+
+                        requiredSignerInfo =
+                            case target.definition.owner of
+                                VKeyHash hash ->
+                                    [ TxRequiredSigner hash ]
+
+                                ScriptHash _ ->
+                                    []
+
+                        txResult =
+                            TxIntent.finalize utxos
+                                (TxMetadata { tag = N.fromSafeInt Survey.metadataLabel, metadata = cancellationMeta }
+                                    :: requiredSignerInfo
+                                )
+                                [ Spend (FromWallet { address = changeAddr, value = Value.onlyLovelace N.zero, guaranteedUtxos = [] }) ]
+                    in
+                    case txResult of
+                        Err err ->
+                            ( { model | errors = TxIntent.errorToString err :: model.errors }, Cmd.none )
+
+                        Ok { tx } ->
+                            ( { model
+                                | submissionStatus = WaitingForSignature { tx = tx, createdSurvey = Nothing }
+                              }
+                            , toWallet (Cip30.encodeRequest (Cip30.signTx wallet { partialSign = False } tx))
+                            )
+
+
+
 -- RESPONSES TAB
 
 
@@ -1037,19 +1240,28 @@ viewResponsesTab model =
             p [ HA.class "error" ] [ text "Failed to load data" ]
 
         Success surveys ->
-            if List.isEmpty model.onchainResponses then
+            let
+                isCancelledRef ref =
+                    List.any (\c -> c.txHash == ref.txHash && c.index == ref.index)
+                        model.onchainCancellations
+
+                nonCancelledResponses =
+                    List.filter (\r -> not (isCancelledRef r.response.surveyRef))
+                        model.onchainResponses
+            in
+            if List.isEmpty nonCancelledResponses then
                 div [ HA.class "empty-state" ]
                     [ p [] [ text "No survey responses found on-chain." ] ]
 
             else
                 let
                     groups =
-                        groupResponsesBySurvey surveys model.onchainResponses
+                        groupResponsesBySurvey surveys nonCancelledResponses
                 in
                 div []
                     [ p [ HA.class "meta" ]
                         [ text
-                            (String.fromInt (List.length model.onchainResponses)
+                            (String.fromInt (List.length nonCancelledResponses)
                                 ++ " response(s) across "
                                 ++ String.fromInt (List.length groups)
                                 ++ " survey(s)"

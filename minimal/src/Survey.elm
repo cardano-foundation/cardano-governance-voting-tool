@@ -15,7 +15,9 @@ module Survey exposing
     , SurveyRef
     , SurveyResponse
     , WeightingMode(..)
+    , buildCancellationMetadatum
     , buildResponseMetadatum
+    , credentialToHex
     , emptyForm
     , emptyQuestion
     , formToDefinition
@@ -128,6 +130,7 @@ type AnswerItem
 type ParsedPayload
     = ParsedDefinitions (List SurveyDefinition)
     | ParsedResponses (List SurveyResponse)
+    | ParsedCancellations (List SurveyRef)
 
 
 
@@ -729,6 +732,11 @@ fromMetadatum m =
                                             expectList contentM
                                                 |> Result.andThen (traverseResults decodeResponse)
                                                 |> Result.map ParsedResponses
+
+                                        2 ->
+                                            expectList contentM
+                                                |> Result.andThen (traverseResults decodeSurveyRef)
+                                                |> Result.map ParsedCancellations
 
                                         _ ->
                                             Err ("Unknown CIP-179 tag: " ++ String.fromInt tag)
@@ -1915,6 +1923,16 @@ buildResponseMetadatum surveyRef responder def form =
                             ]
                         ]
                     )
+
+
+buildCancellationMetadatum : SurveyRef -> Metadatum
+buildCancellationMetadatum ref =
+    List
+        [ metaInt 2
+        , List
+            [ List [ metaBytes (Bytes.fromHexUnchecked ref.txHash), metaInt ref.index ]
+            ]
+        ]
 
 
 encodeAnswerForm : ( Int, AnswerForm ) -> Maybe Metadatum
