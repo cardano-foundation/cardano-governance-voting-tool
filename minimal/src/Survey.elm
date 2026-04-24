@@ -1,7 +1,9 @@
 module Survey exposing
     ( AnswerForm(..)
+    , AnswerItem(..)
     , FormMsg(..)
     , NumericConstraints
+    , ParsedPayload(..)
     , QuestionForm
     , QuestionType(..)
     , ResponseForm
@@ -10,6 +12,8 @@ module Survey exposing
     , SurveyDefinition
     , SurveyForm
     , SurveyQuestion(..)
+    , SurveyRef
+    , SurveyResponse
     , WeightingMode(..)
     , buildResponseMetadatum
     , emptyForm
@@ -23,6 +27,7 @@ module Survey exposing
     , toMetadatum
     , updateForm
     , updateResponseForm
+    , viewResponseCard
     , viewResponseForm
     , viewSurvey
     , viewSurveyForm
@@ -96,6 +101,33 @@ type alias SurveyDefinition =
     , roleWeighting : List ( Role, WeightingMode )
     , endEpoch : Int
     }
+
+
+type alias SurveyRef =
+    { txHash : String
+    , index : Int
+    }
+
+
+type alias SurveyResponse =
+    { surveyRef : SurveyRef
+    , role : Role
+    , responder : Credential
+    , answers : List AnswerItem
+    }
+
+
+type AnswerItem
+    = AnswerSingleChoice Int Int
+    | AnswerMultiSelect Int (List Int)
+    | AnswerRanking Int (List Int)
+    | AnswerNumeric Int Int
+    | AnswerCustom Int Metadatum
+
+
+type ParsedPayload
+    = ParsedDefinitions (List SurveyDefinition)
+    | ParsedResponses (List SurveyResponse)
 
 
 
@@ -677,26 +709,118 @@ resultApply ra rf =
             Err e
 
 
-fromMetadatum : Metadatum -> Result String (List SurveyDefinition)
+fromMetadatum : Metadatum -> Result String ParsedPayload
 fromMetadatum m =
     expectList m
         |> Result.andThen
             (\items ->
                 case items of
-                    [ tagM, defsM ] ->
+                    [ tagM, contentM ] ->
                         expectInt tagM
                             |> Result.andThen
                                 (\tag ->
-                                    if tag == 0 then
-                                        expectList defsM
-                                            |> Result.andThen (traverseResults decodeDefinition)
+                                    case tag of
+                                        0 ->
+                                            expectList contentM
+                                                |> Result.andThen (traverseResults decodeDefinition)
+                                                |> Result.map ParsedDefinitions
 
-                                    else
-                                        Err ("Expected definitions (tag 0), got tag " ++ String.fromInt tag)
+                                        1 ->
+                                            expectList contentM
+                                                |> Result.andThen (traverseResults decodeResponse)
+                                                |> Result.map ParsedResponses
+
+                                        _ ->
+                                            Err ("Unknown CIP-179 tag: " ++ String.fromInt tag)
                                 )
 
                     _ ->
                         Err "CIP-179 payload: expected [tag, content]"
+            )
+
+
+decodeResponse : Metadatum -> Result String SurveyResponse
+decodeResponse m =
+    expectList m
+        |> Result.andThen
+            (\items ->
+                case items of
+                    [ refM, roleM, credM, answersM ] ->
+                        Ok SurveyResponse
+                            |> resultApply (decodeSurveyRef refM)
+                            |> resultApply
+                                (expectInt roleM
+                                    |> Result.andThen
+                                        (\n ->
+                                            intToRole n
+                                                |> Result.fromMaybe ("Unknown role: " ++ String.fromInt n)
+                                        )
+                                )
+                            |> resultApply (decodeCredential credM)
+                            |> resultApply (expectList answersM |> Result.andThen (traverseResults decodeAnswerItem))
+
+                    _ ->
+                        Err ("Survey response: expected 4-element array, got " ++ String.fromInt (List.length items))
+            )
+
+
+decodeSurveyRef : Metadatum -> Result String SurveyRef
+decodeSurveyRef m =
+    expectList m
+        |> Result.andThen
+            (\items ->
+                case items of
+                    [ txIdM, indexM ] ->
+                        Result.map2 SurveyRef
+                            (expectBytes txIdM |> Result.map (\b -> Bytes.toHex b))
+                            (expectInt indexM)
+
+                    _ ->
+                        Err "Survey ref: expected [tx_id, index]"
+            )
+
+
+decodeAnswerItem : Metadatum -> Result String AnswerItem
+decodeAnswerItem m =
+    expectList m
+        |> Result.andThen
+            (\items ->
+                case items of
+                    tagM :: rest ->
+                        expectInt tagM
+                            |> Result.andThen
+                                (\tag ->
+                                    case ( tag, rest ) of
+                                        ( 0, [ qIdxM, optIdxM ] ) ->
+                                            Result.map2 AnswerSingleChoice
+                                                (expectInt qIdxM)
+                                                (expectInt optIdxM)
+
+                                        ( 1, [ qIdxM, selM ] ) ->
+                                            Result.map2 AnswerMultiSelect
+                                                (expectInt qIdxM)
+                                                (expectList selM |> Result.andThen (traverseResults expectInt))
+
+                                        ( 2, [ qIdxM, rankM ] ) ->
+                                            Result.map2 AnswerRanking
+                                                (expectInt qIdxM)
+                                                (expectList rankM |> Result.andThen (traverseResults expectInt))
+
+                                        ( 3, [ qIdxM, valM ] ) ->
+                                            Result.map2 AnswerNumeric
+                                                (expectInt qIdxM)
+                                                (expectInt valM)
+
+                                        ( 4, [ qIdxM, valM ] ) ->
+                                            expectInt qIdxM
+                                                |> Result.map (\qIdx -> AnswerCustom qIdx valM)
+
+                                        _ ->
+                                            Err ("Unknown answer tag/arity: " ++ String.fromInt tag)
+                                )
+
+                    [] ->
+                        Err "Answer item array is empty"
             )
 
 
@@ -2033,3 +2157,111 @@ viewNumericInput toMsg qIdx value constraints =
         , HE.onInput (toMsg << SetNumericAnswer qIdx)
         ]
         []
+
+
+
+-- ============================================================
+-- VIEWS: RESPONSE DISPLAY
+-- ============================================================
+
+
+viewResponseCard : Maybe SurveyDefinition -> SurveyResponse -> Html msg
+viewResponseCard maybeDef response =
+    div [ HA.class "survey-card" ]
+        [ p [ HA.class "meta" ]
+            [ text ("Responder: " ++ credentialToHex response.responder) ]
+        , p [ HA.class "meta" ]
+            [ text ("Role: " ++ roleToString response.role) ]
+        , div [ HA.class "survey-questions" ]
+            (List.map (viewAnswerItemDisplay maybeDef) response.answers)
+        ]
+
+
+viewAnswerItemDisplay : Maybe SurveyDefinition -> AnswerItem -> Html msg
+viewAnswerItemDisplay maybeDef item =
+    let
+        getQuestion qIdx =
+            maybeDef |> Maybe.andThen (\def -> List.Extra.getAt qIdx def.questions)
+
+        getPrompt qIdx =
+            getQuestion qIdx
+                |> Maybe.map questionPrompt
+                |> Maybe.withDefault ("Question " ++ String.fromInt qIdx)
+
+        getOption qIdx optIdx =
+            getQuestion qIdx
+                |> Maybe.andThen (questionOptions >> List.Extra.getAt optIdx)
+                |> Maybe.withDefault (String.fromInt optIdx)
+    in
+    case item of
+        AnswerSingleChoice qIdx optIdx ->
+            div [ HA.class "question-display" ]
+                [ p [] [ text (getPrompt qIdx) ]
+                , p [ HA.class "meta" ] [ text ("Answer: " ++ getOption qIdx optIdx) ]
+                ]
+
+        AnswerMultiSelect qIdx selected ->
+            div [ HA.class "question-display" ]
+                [ p [] [ text (getPrompt qIdx) ]
+                , p [ HA.class "meta" ]
+                    [ text ("Selected: " ++ String.join ", " (List.map (getOption qIdx) selected)) ]
+                ]
+
+        AnswerRanking qIdx ranked ->
+            div [ HA.class "question-display" ]
+                [ p [] [ text (getPrompt qIdx) ]
+                , div [ HA.class "meta" ]
+                    (List.indexedMap
+                        (\pos optIdx ->
+                            p [] [ text (String.fromInt (pos + 1) ++ ". " ++ getOption qIdx optIdx) ]
+                        )
+                        ranked
+                    )
+                ]
+
+        AnswerNumeric qIdx value ->
+            div [ HA.class "question-display" ]
+                [ p [] [ text (getPrompt qIdx) ]
+                , p [ HA.class "meta" ] [ text ("Value: " ++ String.fromInt value) ]
+                ]
+
+        AnswerCustom qIdx _ ->
+            div [ HA.class "question-display" ]
+                [ p [] [ text (getPrompt qIdx) ]
+                , p [ HA.class "meta" ] [ text "(Custom answer)" ]
+                ]
+
+
+questionPrompt : SurveyQuestion -> String
+questionPrompt q =
+    case q of
+        SingleChoice { prompt } ->
+            prompt
+
+        MultiSelect { prompt } ->
+            prompt
+
+        Ranking { prompt } ->
+            prompt
+
+        NumericRange { prompt } ->
+            prompt
+
+        Custom { prompt } ->
+            prompt
+
+
+questionOptions : SurveyQuestion -> List String
+questionOptions q =
+    case q of
+        SingleChoice { options } ->
+            options
+
+        MultiSelect { options } ->
+            options
+
+        Ranking { options } ->
+            options
+
+        _ ->
+            []

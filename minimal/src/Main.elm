@@ -56,6 +56,7 @@ type Tab
     | SurveysTab
     | CreateSurveyTab
     | FillSurveyTab
+    | ResponsesTab
 
 
 type SubmissionStatus
@@ -70,6 +71,12 @@ type alias OnchainSurvey =
     { txHash : String
     , index : Int
     , definition : Survey.SurveyDefinition
+    }
+
+
+type alias OnchainResponse =
+    { txHash : String
+    , response : Survey.SurveyResponse
     }
 
 
@@ -95,6 +102,7 @@ type alias Model =
     , surveyFormError : Maybe String
     , createdSurveys : List Survey.SurveyDefinition
     , onchainSurveys : WebData (List OnchainSurvey)
+    , onchainResponses : List OnchainResponse
     , walletUtxos : Maybe (Utxo.RefDict Output)
     , submissionStatus : SubmissionStatus
     , responseTarget : Maybe OnchainSurvey
@@ -128,6 +136,7 @@ init flags =
             , surveyFormError = Nothing
             , createdSurveys = []
             , onchainSurveys = NotAsked
+            , onchainResponses = []
             , walletUtxos = Nothing
             , submissionStatus = NotSubmitting
             , responseTarget = Nothing
@@ -373,11 +382,23 @@ update msg model =
                         currentEpoch =
                             RemoteData.withDefault 0 model.epoch
 
-                        surveys =
-                            List.concatMap
+                        parsed =
+                            List.filterMap
                                 (\txMeta ->
                                     case Survey.fromMetadatum txMeta.metadatum of
-                                        Ok defs ->
+                                        Ok payload ->
+                                            Just ( txMeta, payload )
+
+                                        Err _ ->
+                                            Nothing
+                                )
+                                txMetaList
+
+                        surveys =
+                            List.concatMap
+                                (\( txMeta, payload ) ->
+                                    case payload of
+                                        Survey.ParsedDefinitions defs ->
                                             List.indexedMap
                                                 (\i def ->
                                                     { txHash = txMeta.txHash
@@ -387,15 +408,34 @@ update msg model =
                                                 )
                                                 defs
 
-                                        Err _ ->
+                                        _ ->
                                             []
                                 )
-                                txMetaList
+                                parsed
 
                         validSurveys =
                             List.filter (\s -> s.definition.endEpoch >= currentEpoch) surveys
+
+                        responses =
+                            List.concatMap
+                                (\( txMeta, payload ) ->
+                                    case payload of
+                                        Survey.ParsedResponses resps ->
+                                            List.map
+                                                (\r -> { txHash = txMeta.txHash, response = r })
+                                                resps
+
+                                        _ ->
+                                            []
+                                )
+                                parsed
                     in
-                    ( { model | onchainSurveys = Success validSurveys }, Cmd.none )
+                    ( { model
+                        | onchainSurveys = Success validSurveys
+                        , onchainResponses = responses
+                      }
+                    , Cmd.none
+                    )
 
 
 submitSurvey : Model -> ( Model, Cmd Msg )
@@ -598,6 +638,9 @@ view model =
 
             FillSurveyTab ->
                 viewFillSurveyTab model
+
+            ResponsesTab ->
+                viewResponsesTab model
         , viewErrors model.errors
         ]
 
@@ -608,6 +651,7 @@ viewTabs activeTab =
         -- Disable proposals tab temporarily
         -- [ tabButton ProposalsTab "Proposals" activeTab
         [ tabButton SurveysTab "Surveys" activeTab
+        , tabButton ResponsesTab "Responses" activeTab
         , tabButton CreateSurveyTab "Create Survey" activeTab
         ]
 
@@ -974,6 +1018,120 @@ submitResponse model =
                                               }
                                             , toWallet (Cip30.encodeRequest (Cip30.signTx wallet { partialSign = False } tx))
                                             )
+
+
+
+-- RESPONSES TAB
+
+
+viewResponsesTab : Model -> Html Msg
+viewResponsesTab model =
+    case model.onchainSurveys of
+        NotAsked ->
+            text ""
+
+        Loading ->
+            p [ HA.class "loading" ] [ text "Loading..." ]
+
+        Failure _ ->
+            p [ HA.class "error" ] [ text "Failed to load data" ]
+
+        Success surveys ->
+            if List.isEmpty model.onchainResponses then
+                div [ HA.class "empty-state" ]
+                    [ p [] [ text "No survey responses found on-chain." ] ]
+
+            else
+                let
+                    groups =
+                        groupResponsesBySurvey surveys model.onchainResponses
+                in
+                div []
+                    [ p [ HA.class "meta" ]
+                        [ text
+                            (String.fromInt (List.length model.onchainResponses)
+                                ++ " response(s) across "
+                                ++ String.fromInt (List.length groups)
+                                ++ " survey(s)"
+                            )
+                        ]
+                    , div [ HA.class "proposals" ]
+                        (List.map viewResponseGroup groups)
+                    ]
+
+
+type alias ResponseGroup =
+    { survey : Maybe OnchainSurvey
+    , surveyRef : Survey.SurveyRef
+    , responses : List OnchainResponse
+    }
+
+
+groupResponsesBySurvey : List OnchainSurvey -> List OnchainResponse -> List ResponseGroup
+groupResponsesBySurvey surveys responses =
+    let
+        refKey ref =
+            ref.txHash ++ ":" ++ String.fromInt ref.index
+
+        surveyDict =
+            List.map (\s -> ( s.txHash ++ ":" ++ String.fromInt s.index, s )) surveys
+                |> Dict.fromList
+    in
+    List.foldl
+        (\resp acc ->
+            let
+                key =
+                    refKey resp.response.surveyRef
+            in
+            Dict.update key
+                (\existing ->
+                    case existing of
+                        Just group ->
+                            Just { group | responses = group.responses ++ [ resp ] }
+
+                        Nothing ->
+                            Just
+                                { survey = Dict.get key surveyDict
+                                , surveyRef = resp.response.surveyRef
+                                , responses = [ resp ]
+                                }
+                )
+                acc
+        )
+        Dict.empty
+        responses
+        |> Dict.values
+
+
+viewResponseGroup : ResponseGroup -> Html Msg
+viewResponseGroup group =
+    div [ HA.class "survey-card" ]
+        [ case group.survey of
+            Just survey ->
+                div []
+                    [ h3 [] [ text survey.definition.title ]
+                    , p [ HA.class "meta" ]
+                        [ text ("Tx: " ++ group.surveyRef.txHash ++ " [" ++ String.fromInt group.surveyRef.index ++ "]") ]
+                    ]
+
+            Nothing ->
+                div []
+                    [ h3 [] [ text "Unknown survey" ]
+                    , p [ HA.class "meta" ]
+                        [ text ("Ref: " ++ group.surveyRef.txHash ++ " [" ++ String.fromInt group.surveyRef.index ++ "]") ]
+                    ]
+        , p [ HA.class "meta" ]
+            [ text (String.fromInt (List.length group.responses) ++ " response(s)") ]
+        , div []
+            (List.map
+                (\resp ->
+                    Survey.viewResponseCard
+                        (Maybe.map .definition group.survey)
+                        resp.response
+                )
+                group.responses
+            )
+        ]
 
 
 
