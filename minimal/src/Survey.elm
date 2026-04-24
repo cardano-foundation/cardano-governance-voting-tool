@@ -313,7 +313,12 @@ metaBytes b =
 
 chunkedTextToMeta : String -> Metadatum
 chunkedTextToMeta s =
-    List (List.map metaStr (chunkText s))
+    case chunkText s of
+        [ single ] ->
+            metaStr single
+
+        chunks ->
+            List (List.map metaStr chunks)
 
 
 credentialToMeta : Credential -> Metadatum
@@ -466,12 +471,16 @@ expectBytes m =
 
 decodeChunkedText : Metadatum -> Result String String
 decodeChunkedText m =
-    expectList m
-        |> Result.andThen
-            (\items ->
-                traverseResults expectStr items
-                    |> Result.map String.concat
-            )
+    case m of
+        String s ->
+            Ok s
+
+        List items ->
+            traverseResults expectStr items
+                |> Result.map String.concat
+
+        _ ->
+            Err "Expected string or list of strings"
 
 
 traverseResults : (a -> Result e b) -> List a -> Result e (List b)
