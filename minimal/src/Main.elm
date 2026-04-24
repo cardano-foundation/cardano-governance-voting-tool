@@ -119,7 +119,7 @@ init flags =
             , wallet = Nothing
             , taskPool = ConcurrentTask.pool
             , errors = []
-            , activeTab = ProposalsTab
+            , activeTab = SurveysTab
             , surveyForm = Survey.emptyForm
             , surveyFormError = Nothing
             , createdSurveys = []
@@ -188,8 +188,9 @@ update msg model =
                 Ok epoch ->
                     ( { model | epoch = Success epoch, proposals = Loading, onchainSurveys = Loading }
                     , Cmd.batch
-                        [ Api.loadGovProposals model.networkId epoch GotProposals
-                        , Api.loadSurveyTxHashes model.networkId GotSurveyTxHashes
+                        -- Deactivate temporarily proposals
+                        -- [ Api.loadGovProposals model.networkId epoch GotProposals
+                        [ Api.loadSurveyTxHashes model.networkId GotSurveyTxHashes
                         ]
                     )
 
@@ -555,8 +556,9 @@ view model =
 viewTabs : Tab -> Html Msg
 viewTabs activeTab =
     nav [ HA.class "tabs" ]
-        [ tabButton ProposalsTab "Proposals" activeTab
-        , tabButton SurveysTab "Surveys" activeTab
+        -- Disable proposals tab temporarily
+        -- [ tabButton ProposalsTab "Proposals" activeTab
+        [ tabButton SurveysTab "Surveys" activeTab
         , tabButton CreateSurveyTab "Create Survey" activeTab
         ]
 
