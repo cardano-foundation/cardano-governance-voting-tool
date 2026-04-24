@@ -16,6 +16,7 @@ module Survey exposing
     , fromMetadatum
     , viewSurvey
     , viewSurveyForm
+    , metadataLabel
     , roleToString
     , weightingModeToString
     , questionTypeToString
@@ -29,6 +30,20 @@ import Html.Attributes as HA
 import Html.Events as HE
 import Integer exposing (Integer)
 import List.Extra
+
+
+
+-- ============================================================
+-- CIP-179 CONSTANTS
+-- ============================================================
+
+
+{-| Metadata label for CIP-179 surveys.
+Using 171717 instead of 17 to avoid collisions during experimentation.
+-}
+metadataLabel : Int
+metadataLabel =
+    171717
 
 
 

@@ -1,4 +1,4 @@
-module Api exposing (ActiveProposal, ProtocolParams, loadProtocolParams, queryEpoch, loadGovProposals, taskLoadProposalMetadata)
+module Api exposing (ActiveProposal, ProtocolParams, SurveyTxMetadata, loadGovProposals, loadProtocolParams, loadSurveyMetadata, loadSurveyTxHashes, queryEpoch, taskLoadProposalMetadata)
 
 {-| Minimal API module for fetching Cardano governance data from Koios.
 -}
@@ -6,15 +6,18 @@ module Api exposing (ActiveProposal, ProtocolParams, loadProtocolParams, queryEp
 import Bytes.Comparable as Bytes
 import Cardano.Address exposing (NetworkId(..))
 import Cardano.Gov as Gov exposing (ActionId, CostModels)
+import Cardano.Metadatum as Metadatum exposing (Metadatum)
 import ConcurrentTask exposing (ConcurrentTask)
 import ConcurrentTask.Http
 import ConcurrentTask.Process
 import Http
+import Integer
 import Json.Decode as JD exposing (Decoder)
 import Json.Encode as JE
 import Natural
 import ProposalMetadata exposing (ProposalMetadata)
 import RemoteData exposing (RemoteData)
+import Survey
 
 
 {-| Free Tier Koios API token.
@@ -111,8 +114,14 @@ loadGovProposals : NetworkId -> Int -> (Result Http.Error (List ActiveProposal) 
 loadGovProposals networkId currentEpoch toMsg =
     let
         selectedRows =
-            [ "proposal_tx_hash", "proposal_index", "proposal_type"
-            , "meta_url", "meta_hash", "proposed_epoch", "expiration", "ratified_epoch"
+            [ "proposal_tx_hash"
+            , "proposal_index"
+            , "proposal_type"
+            , "meta_url"
+            , "meta_hash"
+            , "proposed_epoch"
+            , "expiration"
+            , "ratified_epoch"
             ]
                 |> String.join ","
     in
@@ -201,3 +210,93 @@ fetchFromUrl url =
         , expect = ConcurrentTask.Http.expectString
         , timeout = Nothing
         }
+
+
+
+-- CIP-179 Surveys
+
+
+loadSurveyTxHashes : NetworkId -> (Result Http.Error (List String) -> msg) -> Cmd msg
+loadSurveyTxHashes networkId toMsg =
+    Http.request
+        { method = "GET"
+        , url = koiosUrl networkId ++ "/tx_by_metalabel?_label=" ++ String.fromInt Survey.metadataLabel ++ "&order=tx_timestamp.desc&limit=100"
+        , headers = [ Http.header "Authorization" ("Bearer " ++ koiosApiToken) ]
+        , body = Http.emptyBody
+        , expect =
+            Http.expectJson toMsg
+                (JD.list (JD.field "tx_hash" JD.string))
+        , timeout = Nothing
+        , tracker = Nothing
+        }
+
+
+type alias SurveyTxMetadata =
+    { txHash : String
+    , metadatum : Metadatum
+    }
+
+
+loadSurveyMetadata : NetworkId -> List String -> (Result Http.Error (List SurveyTxMetadata) -> msg) -> Cmd msg
+loadSurveyMetadata networkId txHashes toMsg =
+    Http.request
+        { method = "POST"
+        , url = koiosUrl networkId ++ "/tx_metadata"
+        , headers = [ Http.header "Authorization" ("Bearer " ++ koiosApiToken) ]
+        , body = Http.jsonBody (JE.object [ ( "_tx_hashes", JE.list JE.string txHashes ) ])
+        , expect =
+            Http.expectJson toMsg
+                (JD.list (JD.maybe txSurveyMetadataDecoder)
+                    |> JD.map (List.filterMap identity)
+                )
+        , timeout = Nothing
+        , tracker = Nothing
+        }
+
+
+txSurveyMetadataDecoder : Decoder SurveyTxMetadata
+txSurveyMetadataDecoder =
+    JD.map2 SurveyTxMetadata
+        (JD.field "tx_hash" JD.string)
+        (JD.at [ "metadata", String.fromInt Survey.metadataLabel ] koiosMetadatumDecoder)
+
+
+
+-- Koios JSON -> Cardano Metadatum decoder
+--
+-- Koios returns CBOR metadata decoded to JSON with these conventions:
+--   CBOR Int    -> JSON number
+--   CBOR Text   -> JSON string
+--   CBOR Bytes  -> JSON string prefixed with "0x"
+--   CBOR Array  -> JSON array
+--   CBOR Map    -> JSON object (keys become strings)
+
+
+koiosMetadatumDecoder : Decoder Metadatum
+koiosMetadatumDecoder =
+    JD.oneOf
+        [ JD.int |> JD.map (\n -> Metadatum.Int (Integer.fromSafeInt n))
+        , JD.string |> JD.map koiosStringToMetadatum
+        , JD.list (JD.lazy (\_ -> koiosMetadatumDecoder)) |> JD.map Metadatum.List
+        , JD.keyValuePairs (JD.lazy (\_ -> koiosMetadatumDecoder))
+            |> JD.map (\pairs -> Metadatum.Map (List.map (\( k, v ) -> ( koiosKeyToMetadatum k, v )) pairs))
+        ]
+
+
+koiosStringToMetadatum : String -> Metadatum
+koiosStringToMetadatum s =
+    if String.startsWith "0x" s then
+        Metadatum.Bytes (Bytes.fromHexUnchecked (String.dropLeft 2 s))
+
+    else
+        Metadatum.String s
+
+
+koiosKeyToMetadatum : String -> Metadatum
+koiosKeyToMetadatum k =
+    case String.toInt k of
+        Just n ->
+            Metadatum.Int (Integer.fromSafeInt n)
+
+        Nothing ->
+            koiosStringToMetadatum k

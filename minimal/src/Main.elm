@@ -65,6 +65,13 @@ type SubmissionStatus
     | SubmissionError String
 
 
+type alias OnchainSurvey =
+    { txHash : String
+    , index : Int
+    , definition : Survey.SurveyDefinition
+    }
+
+
 type alias Flags =
     { url : String
     , db : Value
@@ -86,6 +93,7 @@ type alias Model =
     , surveyForm : Survey.SurveyForm
     , surveyFormError : Maybe String
     , createdSurveys : List Survey.SurveyDefinition
+    , onchainSurveys : WebData (List OnchainSurvey)
     , walletUtxos : Maybe (Utxo.RefDict Output)
     , submissionStatus : SubmissionStatus
     }
@@ -115,6 +123,7 @@ init flags =
             , surveyForm = Survey.emptyForm
             , surveyFormError = Nothing
             , createdSurveys = []
+            , onchainSurveys = NotAsked
             , walletUtxos = Nothing
             , submissionStatus = NotSubmitting
             }
@@ -144,6 +153,8 @@ type Msg
     | OnTaskComplete (ConcurrentTask.Response String TaskCompleted)
     | TabClicked Tab
     | SurveyFormMsg Survey.FormMsg
+    | GotSurveyTxHashes (Result Http.Error (List String))
+    | GotSurveyMetadata (Result Http.Error (List Api.SurveyTxMetadata))
 
 
 type TaskCompleted
@@ -175,8 +186,11 @@ update msg model =
                     ( { model | epoch = Failure Http.NetworkError }, Cmd.none )
 
                 Ok epoch ->
-                    ( { model | epoch = Success epoch, proposals = Loading }
-                    , Api.loadGovProposals model.networkId epoch GotProposals
+                    ( { model | epoch = Success epoch, proposals = Loading, onchainSurveys = Loading }
+                    , Cmd.batch
+                        [ Api.loadGovProposals model.networkId epoch GotProposals
+                        , Api.loadSurveyTxHashes model.networkId GotSurveyTxHashes
+                        ]
                     )
 
         GotProposals result ->
@@ -303,6 +317,52 @@ update msg model =
                     , Cmd.none
                     )
 
+        GotSurveyTxHashes result ->
+            case result of
+                Err err ->
+                    ( { model | onchainSurveys = Failure err }, Cmd.none )
+
+                Ok txHashes ->
+                    if List.isEmpty txHashes then
+                        ( { model | onchainSurveys = Success [] }, Cmd.none )
+
+                    else
+                        ( model, Api.loadSurveyMetadata model.networkId txHashes GotSurveyMetadata )
+
+        GotSurveyMetadata result ->
+            case result of
+                Err err ->
+                    ( { model | onchainSurveys = Failure err }, Cmd.none )
+
+                Ok txMetaList ->
+                    let
+                        currentEpoch =
+                            RemoteData.withDefault 0 model.epoch
+
+                        surveys =
+                            List.concatMap
+                                (\txMeta ->
+                                    case Survey.fromMetadatum txMeta.metadatum of
+                                        Ok defs ->
+                                            List.indexedMap
+                                                (\i def ->
+                                                    { txHash = txMeta.txHash
+                                                    , index = i
+                                                    , definition = def
+                                                    }
+                                                )
+                                                defs
+
+                                        Err _ ->
+                                            []
+                                )
+                                txMetaList
+
+                        validSurveys =
+                            List.filter (\s -> s.definition.endEpoch >= currentEpoch) surveys
+                    in
+                    ( { model | onchainSurveys = Success validSurveys }, Cmd.none )
+
 
 submitSurvey : Model -> ( Model, Cmd Msg )
 submitSurvey model =
@@ -337,7 +397,7 @@ submitSurvey model =
 
                         txResult =
                             TxIntent.finalize utxos
-                                (TxMetadata { tag = N.fromSafeInt 17, metadata = surveyMetadatum }
+                                (TxMetadata { tag = N.fromSafeInt Survey.metadataLabel, metadata = surveyMetadatum }
                                     :: requiredSignerInfo
                                 )
                                 [ Spend (FromWallet { address = changeAddr, value = Value.onlyLovelace N.zero, guaranteedUtxos = [] }) ]
@@ -667,38 +727,47 @@ viewHashValidity onchainHash computedHash =
 viewSurveysTab : Model -> Html Msg
 viewSurveysTab model =
     div []
-        [ if List.isEmpty model.createdSurveys then
-            div [ HA.class "empty-state" ]
-                [ p [] [ text "No CIP-179 surveys yet." ]
-                , p [ HA.class "meta" ]
-                    [ text "Surveys created in the "
-                    , button
-                        [ HA.class "link-btn"
-                        , onClick (TabClicked CreateSurveyTab)
-                        ]
-                        [ text "Create Survey" ]
-                    , text " tab will appear here."
-                    ]
-                ]
+        [ case model.onchainSurveys of
+            NotAsked ->
+                text ""
 
-          else
-            div []
-                [ p [ HA.class "meta" ]
-                    [ text (String.fromInt (List.length model.createdSurveys) ++ " survey(s)") ]
-                , div [ HA.class "proposals" ]
-                    (List.indexedMap viewSurveyWithMetadatum model.createdSurveys)
-                ]
+            Loading ->
+                p [ HA.class "loading" ] [ text "Loading on-chain surveys..." ]
+
+            Failure _ ->
+                p [ HA.class "error" ] [ text "Failed to load surveys from chain" ]
+
+            Success surveys ->
+                if List.isEmpty surveys then
+                    div [ HA.class "empty-state" ]
+                        [ p [] [ text "No active CIP-179 surveys found on-chain." ]
+                        , p [ HA.class "meta" ]
+                            [ text "Create one in the "
+                            , button
+                                [ HA.class "link-btn"
+                                , onClick (TabClicked CreateSurveyTab)
+                                ]
+                                [ text "Create Survey" ]
+                            , text " tab."
+                            ]
+                        ]
+
+                else
+                    div []
+                        [ p [ HA.class "meta" ]
+                            [ text (String.fromInt (List.length surveys) ++ " active survey(s) on-chain") ]
+                        , div [ HA.class "proposals" ]
+                            (List.map viewOnchainSurvey surveys)
+                        ]
         ]
 
 
-viewSurveyWithMetadatum : Int -> Survey.SurveyDefinition -> Html Msg
-viewSurveyWithMetadatum idx def =
+viewOnchainSurvey : OnchainSurvey -> Html Msg
+viewOnchainSurvey survey =
     div []
-        [ Survey.viewSurvey def
-        , div [ HA.class "metadatum-preview" ]
-            [ h3 [] [ text "Metadatum (label 17)" ]
-            , pre [] [ text (metadatumToString (Survey.toMetadatum def)) ]
-            ]
+        [ Survey.viewSurvey survey.definition
+        , p [ HA.class "meta" ]
+            [ text ("Tx: " ++ survey.txHash ++ " [" ++ String.fromInt survey.index ++ "]") ]
         ]
 
 
@@ -714,7 +783,7 @@ viewCreateSurveyTab model =
         , case Survey.formToDefinition model.surveyForm of
             Ok def ->
                 div [ HA.class "metadatum-preview" ]
-                    [ h3 [] [ text "Preview: Metadatum (label 17)" ]
+                    [ h3 [] [ text ("Preview: Metadatum (label " ++ String.fromInt Survey.metadataLabel ++ ")") ]
                     , pre [] [ text (metadatumToString (Survey.toMetadatum def)) ]
                     ]
 
