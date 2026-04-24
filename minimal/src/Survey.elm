@@ -284,16 +284,47 @@ chunkText s =
         [ "" ]
 
     else
-        chunkTextHelper s []
+        chunkTextByBytes (String.toList s) [] "" 0
 
 
-chunkTextHelper : String -> List String -> List String
-chunkTextHelper remaining acc =
-    if String.isEmpty remaining then
-        List.reverse acc
+{-| Split a string into chunks that each fit within 64 UTF-8 bytes.
+Splits at character boundaries to avoid cutting multi-byte chars.
+-}
+chunkTextByBytes : List Char -> List String -> String -> Int -> List String
+chunkTextByBytes chars acc currentChunk currentBytes =
+    case chars of
+        [] ->
+            List.reverse (currentChunk :: acc)
+
+        c :: rest ->
+            let
+                w =
+                    charUtf8Width c
+            in
+            if currentBytes + w > 64 then
+                chunkTextByBytes rest (currentChunk :: acc) (String.fromChar c) w
+
+            else
+                chunkTextByBytes rest acc (currentChunk ++ String.fromChar c) (currentBytes + w)
+
+
+charUtf8Width : Char -> Int
+charUtf8Width c =
+    let
+        code =
+            Char.toCode c
+    in
+    if code <= 0x7F then
+        1
+
+    else if code <= 0x07FF then
+        2
+
+    else if code <= 0xFFFF then
+        3
 
     else
-        chunkTextHelper (String.dropLeft 64 remaining) (String.left 64 remaining :: acc)
+        4
 
 
 metaInt : Int -> Metadatum
