@@ -26,7 +26,7 @@ The steps are sequential but allow going back to modify previous steps.
 -}
 
 import Api exposing (ActiveProposal, AuthorVerification, CcInfo, DrepInfo, IpfsAnswer(..), OnchainVote, PoolInfo)
-import Blake2b exposing (blake2b256)
+import Blake2b256
 import Browser.Dom as Dom
 import Bytes as ElmBytes
 import Bytes.Comparable as Bytes exposing (Bytes)
@@ -1735,10 +1735,9 @@ handleTaskCompleted task (Model model) =
                                 , identifier = uploadedIdentifierFromUri form.publishedRationaleUri
                                 , raw = rawJson
                                 , dataHash =
-                                    Bytes.fromText rawJson
-                                        |> Bytes.toU8
-                                        |> blake2b256 Nothing
-                                        |> Bytes.fromU8
+                                    Blake2b256.fromString rawJson
+                                        |> Blake2b256.toHex
+                                        |> Bytes.fromHexUnchecked
                                 }
                         in
                         ( Model { model | permanentStorageStep = Done { form | error = Nothing } { jsonFile = uploadedFile } }
@@ -3164,10 +3163,9 @@ handleRationaleIpfsAnswer model form ipfsAnswer =
                     , identifier = IpfsIdentifier file.cid
                     , raw = rawJson
                     , dataHash =
-                        Bytes.fromText rawJson
-                            |> Bytes.toU8
-                            |> blake2b256 Nothing
-                            |> Bytes.fromU8
+                        Blake2b256.fromString rawJson
+                            |> Blake2b256.toHex
+                            |> Bytes.fromHexUnchecked
                     }
 
                 downloadCmd =
@@ -3237,10 +3235,9 @@ allPrepSteps m =
                             Just
                                 { url = uploadedIdentifierToUri s.jsonFile.identifier
                                 , dataHash =
-                                    Bytes.fromText s.jsonFile.raw
-                                        |> Bytes.toU8
-                                        |> blake2b256 Nothing
-                                        |> Bytes.fromU8
+                                    Blake2b256.fromString s.jsonFile.raw
+                                        |> Blake2b256.toHex
+                                        |> Bytes.fromHexUnchecked
                                 }
                         }
 

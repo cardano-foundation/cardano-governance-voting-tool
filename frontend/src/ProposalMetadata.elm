@@ -3,7 +3,7 @@ module ProposalMetadata exposing (AuthorWitness, Body, ProposalMetadata, authorW
 {-| Helper module to handle proposals metadata following [CIP-108](https://cips.cardano.org/cip/CIP-0108).
 -}
 
-import Bytes.Comparable as Bytes
+import Blake2b256
 import Json.Decode as JD exposing (Decoder, Value)
 import Json.Encode as JE
 
@@ -75,9 +75,8 @@ fromRaw : String -> ProposalMetadata
 fromRaw raw =
     let
         computedHash =
-            Bytes.fromText raw
-                |> Bytes.blake2b256
-                |> Bytes.toHex
+            Blake2b256.fromString raw
+                |> Blake2b256.toHex
 
         authorsDecoder =
             JD.field "authors" (JD.list authorWitnessDecoder)
