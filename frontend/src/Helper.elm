@@ -15,7 +15,7 @@ module Helper exposing
     , storageConfigCard, storageMethodOption, storageProviderForm, storageProviderCard, storageConfigItem, addHeaderButton
     , storageHeaderForm, storageInfoGrid, storageNotAvailableCard, storageUploadCard, uploadingSpinner, storageSuccessCard, fileInfoItem, externalLinkDisplay
     , rationaleCard, checkbox, rationaleMarkdownInput, rationaleTextArea, pdfAutogenCheckbox, voteNumberInput, referenceCard, referenceForm
-    , rationaleCompletedCard, optionalSection, formattedInternalVote, formattedReferences
+    , rationaleCompletedCard, viewPartialFailuresWithIntro, optionalSection, formattedInternalVote, formattedReferences
     , stepNotAvailableCard, downloadJSONButton, authorsCard, addAuthorButton, codeSnippetBox, noAuthorsPlaceholder
     , signerCard, authorForm, labeledField, readOnlyField, formButtonsRow, secondaryButton, primaryButton, importSignedRationaleButton
     , stepCard, missingStepsList, missingStepItem, loadingSpinner
@@ -97,7 +97,7 @@ and are potentially useful in multiple places.
 # Rationale Components
 
 @docs rationaleCard, checkbox, rationaleMarkdownInput, rationaleTextArea, pdfAutogenCheckbox, voteNumberInput, referenceCard, referenceForm
-@docs rationaleCompletedCard, optionalSection, formattedInternalVote, formattedReferences
+@docs rationaleCompletedCard, viewPartialFailuresWithIntro, optionalSection, formattedInternalVote, formattedReferences
 
 
 # Document Creation Components
@@ -2258,29 +2258,64 @@ referenceForm index typeName label uri deleteMsg typeChangeMsg labelChangeMsg ur
 
 {-| Card for completed rationale
 -}
-rationaleCompletedCard : String -> List (Html msg) -> msg -> Html msg
-rationaleCompletedCard summary content editMsg =
+rationaleCompletedCard : String -> List (Html msg) -> List (Html msg) -> msg -> Html msg
+rationaleCompletedCard summary content belowCard editMsg =
     div []
-        [ sectionTitle "Vote Rationale"
-        , cardContainer []
-            [ cardHeader [] "Rationale Summary" "" []
-            , cardContent []
-                [ div [ HA.style "display" "grid", HA.style "gap" "1.5rem" ]
-                    (div []
-                        [ Html.p
-                            [ HA.style "font-size" "0.9375rem"
-                            , HA.style "line-height" "1.6"
-                            , HA.style "color" "#4A5568"
+        (sectionTitle "Vote Rationale"
+            :: cardContainer []
+                [ cardHeader [] "Rationale Summary" "" []
+                , cardContent []
+                    [ div [ HA.style "display" "grid", HA.style "gap" "1.5rem" ]
+                        (div []
+                            [ Html.p
+                                [ HA.style "font-size" "0.9375rem"
+                                , HA.style "line-height" "1.6"
+                                , HA.style "color" "#4A5568"
+                                ]
+                                [ text summary ]
                             ]
-                            [ text summary ]
-                        ]
-                        :: content
-                    )
+                            :: content
+                        )
+                    ]
                 ]
+            :: belowCard
+            ++ [ Html.p [ HA.style "margin-top" "1rem" ]
+                    [ viewButton "Edit rationale" editMsg ]
+               ]
+        )
+
+
+{-| Amber callout listing labeled failures under an intro line. Renders nothing
+when the list is empty.
+-}
+viewPartialFailuresWithIntro : String -> List ( String, String ) -> Html msg
+viewPartialFailuresWithIntro intro failures =
+    if List.isEmpty failures then
+        text ""
+
+    else
+        div
+            [ HA.style "margin" "1rem 0"
+            , HA.style "padding" "0.75rem 1rem"
+            , HA.style "border" "1px solid #FCD34D"
+            , HA.style "border-radius" "0.5rem"
+            , HA.style "background-color" "#FFFBEB"
+            , HA.style "color" "#92400E"
+            , HA.style "font-size" "0.875rem"
             ]
-        , Html.p [ HA.style "margin-top" "1rem" ]
-            [ viewButton "Edit rationale" editMsg ]
-        ]
+            [ Html.p [ HA.style "font-weight" "600", HA.style "margin-bottom" "0.5rem" ]
+                [ text intro ]
+            , Html.ul [ HA.style "padding-left" "1.25rem", HA.style "margin" "0" ]
+                (List.map
+                    (\( label, err ) ->
+                        Html.li [ HA.style "margin-bottom" "0.25rem" ]
+                            [ Html.strong [] [ text (label ++ ": ") ]
+                            , text err
+                            ]
+                    )
+                    failures
+                )
+            ]
 
 
 {-| Display optional section if content exists

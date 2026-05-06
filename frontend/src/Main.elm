@@ -674,6 +674,7 @@ update msg model =
                             , constitutionUri = model.constitutionUri
                             , networkId = model.networkId
                             , authorPreconfig = model.authorPreconfig
+                            , ipfsPreconfig = model.ipfsPreconfig
                             }
 
                         ( newPageModel, cmds, msgToParent ) =
