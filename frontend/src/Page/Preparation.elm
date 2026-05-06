@@ -3778,8 +3778,10 @@ viewProposalList ctx form maybeVoter proposalsDict visibleCount =
             currentEpoch =
                 Maybe.withDefault 0 ctx.epoch
 
-            proposalsDictValues =
-                Dict.values proposalsDict
+            -- proposalsDict is already keyed by bech32 id, so we keep the (idStr, proposal)
+            -- pairs all the way through the pipeline to avoid re-encoding bech32.
+            proposalsDictPairs =
+                Dict.toList proposalsDict
 
             maybeVoterId =
                 Maybe.map (Witness.toVoter >> Gov.voterToId >> Gov.idToBech32) maybeVoter
@@ -3817,17 +3819,17 @@ viewProposalList ctx form maybeVoter proposalsDict visibleCount =
 
             -- Remove proposals already in the cart from that list for this voter
             proposalsInValidEpoch =
-                proposalsDictValues
-                    |> List.filter (\p -> p.epoch_validity.end > currentEpoch)
+                proposalsDictPairs
+                    |> List.filter (\( _, p ) -> p.epoch_validity.end > currentEpoch)
 
             proposalsForVoter =
                 proposalsInValidEpoch
-                    |> List.filter (\p -> roleCanVoteOn p.actionType)
+                    |> List.filter (\( _, p ) -> roleCanVoteOn p.actionType)
 
             proposalsNotInCart =
                 case maybeVoterId of
                     Just voterId ->
-                        List.filter (\p -> not <| Cart.contains voterId p.id ctx.cart) proposalsForVoter
+                        List.filter (\( idStr, _ ) -> not <| Cart.contains { voterId = voterId, actionId = idStr } ctx.cart) proposalsForVoter
 
                     Nothing ->
                         proposalsForVoter
@@ -3849,16 +3851,26 @@ viewProposalList ctx form maybeVoter proposalsDict visibleCount =
             getPastVote actionId =
                 Dict.get (Gov.idToBech32 <| GovActionId actionId) pastVotes
 
-            hasPastVote actionId =
-                if getPastVote actionId == Nothing then
-                    0
-
-                else
+            hasPastVoteByStr idStr =
+                if Dict.member idStr pastVotes then
                     1
 
+                else
+                    0
+
+            -- Decorate-sort-undecorate: compute the sort key once per proposal
+            -- instead of re-evaluating it during every comparison.
             visibleProposals =
-                List.sortBy (\proposal -> ( hasPastVote proposal.id, proposal.epoch_validity.end, ( proposal.actionType, Helper.actionIdToBech32 proposal.id ) )) proposalsNotInCart
+                proposalsNotInCart
+                    |> List.map
+                        (\( idStr, p ) ->
+                            ( ( hasPastVoteByStr idStr, p.epoch_validity.end, ( p.actionType, idStr ) )
+                            , p
+                            )
+                        )
+                    |> List.sortBy Tuple.first
                     |> List.take visibleCount
+                    |> List.map Tuple.second
 
             hasMore =
                 totalProposalCount > visibleCount

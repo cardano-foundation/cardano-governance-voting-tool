@@ -130,11 +130,18 @@ type alias Resources =
 
 {-| Check if a given proposal is present in the cart.
 -}
-contains : String -> ActionId -> Model -> Bool
-contains voterId actionId model =
-    get voterId actionId model
-        |> Maybe.map (\_ -> True)
-        |> Maybe.withDefault False
+contains : { voterId : String, actionId : String } -> Model -> Bool
+contains { voterId, actionId } model =
+    case model of
+        Preparing { votersIntents } ->
+            Dict.get voterId votersIntents
+                |> Maybe.map (\{ voteRecords } -> Dict.member actionId voteRecords)
+                |> Maybe.withDefault False
+
+        Ready { votersIntents } ->
+            Dict.get voterId votersIntents
+                |> Maybe.map (\{ voteRecords } -> Dict.member actionId voteRecords)
+                |> Maybe.withDefault False
 
 
 {-| Try to retrieve a vote from the cart.
