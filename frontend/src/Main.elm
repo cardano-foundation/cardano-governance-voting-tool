@@ -82,6 +82,7 @@ import Page.Preparation exposing (JsonLdContexts, StorageConfig)
 import Page.Signing
 import Platform.Cmd as Cmd
 import ProposalMetadata exposing (ProposalMetadata)
+import ProposalRelationships exposing (ProposalRelInfo, isChainableAction)
 import RemoteData exposing (WebData)
 import ScriptInfo exposing (ScriptInfo)
 import Storage
@@ -187,6 +188,9 @@ type alias Model =
     , constitutionUri : Maybe String
     , epoch : WebData Int
     , proposals : WebData (Dict String ActiveProposal)
+    , pendingProposalId : Maybe String
+    , proposalRelationships : Dict String ProposalRelInfo
+    , proposalGovActions : Dict String Gov.Action
     , scriptsInfo : Dict String ScriptInfo
     , drepsInfo : Dict String DrepInfo
     , ccsInfo : Dict String CcInfo
@@ -200,7 +204,6 @@ type alias Model =
     , authorPreconfig : List PreconfAuthor
     , cart : Page.Cart.Model
     , errors : List String
-    , pendingProposalId : Maybe String
     }
 
 
@@ -222,6 +225,7 @@ type TaskCompleted
     | GotProposalMetadataTask String (Result String ProposalMetadata)
     | GotCart Page.Cart.Model
     | GotHlabsIncentive Page.Cart.HlabsIncentive
+    | GotProposalGovActions (Result String (Dict String Gov.Action))
     | PreparationTaskCompleted Page.Preparation.TaskCompleted
 
 
@@ -300,6 +304,9 @@ initialModel { jsonLdContexts, db, networkId, ipfsPreconfig, voterPreconfig, aut
     , constitutionUri = Nothing
     , epoch = RemoteData.NotAsked
     , proposals = RemoteData.NotAsked
+    , pendingProposalId = Nothing
+    , proposalRelationships = Dict.empty
+    , proposalGovActions = Dict.empty
     , scriptsInfo = Dict.empty
     , drepsInfo = Dict.empty
     , ccsInfo = Dict.empty
@@ -313,7 +320,6 @@ initialModel { jsonLdContexts, db, networkId, ipfsPreconfig, voterPreconfig, aut
     , authorPreconfig = authorPreconfig
     , cart = Page.Cart.init
     , errors = []
-    , pendingProposalId = Nothing
     }
 
 
@@ -898,9 +904,52 @@ update msg model =
                                 |> ConcurrentTask.toResult
                                 |> ConcurrentTask.map (GotProposalMetadataTask <| Helper.actionIdToBech32 id)
 
+                        -- Fetch tx CBORs for chainable proposals to extract latestEnacted
+                        chainableProposals =
+                            List.filter (\( _, p ) -> isChainableAction p.actionType) proposalsList
+
+                        -- Deduplicate tx hashes (multiple proposals can be in the same tx)
+                        uniqueTxIds =
+                            chainableProposals
+                                |> List.map (\( _, p ) -> p.id.transactionId)
+                                |> List.Extra.uniqueBy Bytes.toHex
+
+                        fetchGovActionsTask : ConcurrentTask x TaskCompleted
+                        fetchGovActionsTask =
+                            Api.taskRetrieveTxBatch model.networkId uniqueTxIds
+                                |> ConcurrentTask.map
+                                    (\txCborDict ->
+                                        let
+                                            extractAction ( bech32Id, proposal ) =
+                                                Dict.get (Bytes.toHex proposal.id.transactionId) txCborDict
+                                                    |> Maybe.andThen Transaction.deserialize
+                                                    |> Maybe.andThen (\tx -> List.Extra.getAt proposal.id.govActionIndex tx.body.proposalProcedures)
+                                                    |> Maybe.map (\procedure -> ( bech32Id, procedure.govAction ))
+
+                                            govActions =
+                                                List.filterMap extractAction chainableProposals
+                                                    |> Dict.fromList
+                                        in
+                                        GotProposalGovActions (Ok govActions)
+                                    )
+                                |> ConcurrentTask.onError
+                                    (\_ ->
+                                        ConcurrentTask.succeed <|
+                                            GotProposalGovActions (Err "Failed to fetch proposals transaction CBORs")
+                                    )
+
+                        govActionTasks =
+                            if List.isEmpty chainableProposals then
+                                []
+
+                            else
+                                [ fetchGovActionsTask ]
+
                         ( newPool, cmds ) =
                             ConcurrentTask.attemptEach { pool = model.taskPool, send = sendTask, onComplete = OnTaskComplete }
-                                (List.map completeReadProposalMetadataTask activeProposals)
+                                (List.map completeReadProposalMetadataTask activeProposals
+                                    ++ govActionTasks
+                                )
 
                         updatedModel =
                             { model
@@ -1682,6 +1731,23 @@ handleCompletedTask response model =
             else
                 ( updatedModel, Cmd.none )
 
+        ( ConcurrentTask.Success (GotProposalGovActions result), _ ) ->
+            case result of
+                Err _ ->
+                    ( model, Cmd.none )
+
+                Ok govActions ->
+                    let
+                        newRelationships =
+                            recomputeProposalRelationships model.proposals govActions
+                    in
+                    ( { model
+                        | proposalGovActions = govActions
+                        , proposalRelationships = newRelationships
+                      }
+                    , Cmd.none
+                    )
+
         ( ConcurrentTask.Success (GotCart cart), _ ) ->
             let
                 updatedModel =
@@ -1714,6 +1780,35 @@ handleCompletedTask response model =
 
         ( ConcurrentTask.Success (PreparationTaskCompleted _), _ ) ->
             ( model, Cmd.none )
+
+
+{-| Recompute proposal relationships from the current proposals and decoded gov actions.
+-}
+recomputeProposalRelationships : WebData (Dict String ActiveProposal) -> Dict String Gov.Action -> Dict String ProposalRelInfo
+recomputeProposalRelationships proposalsData govActions =
+    case proposalsData of
+        RemoteData.Success proposals ->
+            let
+                -- Build the list of chainable proposals with their decoded latestEnacted
+                chainableWithActions : List ( String, ActiveProposal, Maybe Gov.ActionId )
+                chainableWithActions =
+                    Dict.toList proposals
+                        |> List.filter (\( _, p ) -> isChainableAction p.actionType)
+                        |> List.filterMap
+                            (\( bech32Id, proposal ) ->
+                                case Dict.get bech32Id govActions of
+                                    Just action ->
+                                        Just ( bech32Id, proposal, ProposalRelationships.actionLatestEnacted action )
+
+                                    Nothing ->
+                                        -- Gov action not yet decoded, skip for now
+                                        Nothing
+                            )
+            in
+            ProposalRelationships.proposalRelationships chainableWithActions
+
+        _ ->
+            Dict.empty
 
 
 
@@ -1885,6 +1980,7 @@ viewContent model =
                         link (RouteSigning { networkId = model.networkId, tx = Just tx, expectedSigners = expectedSigners }) []
                 , ipfsPreconfig = model.ipfsPreconfig
                 , voterPreconfig = model.voterPreconfig
+                , proposalRelationships = model.proposalRelationships
                 }
                 prepModel
 
