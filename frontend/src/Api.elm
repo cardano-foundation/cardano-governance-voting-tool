@@ -130,6 +130,7 @@ type alias ActiveProposal =
     , metadataHash : String
     , epoch_validity : { start : Int, end : Int }
     , ratified : Maybe Int
+    , dropped : Maybe Int
     , metadata : RemoteData String ProposalMetadata
     }
 
@@ -137,7 +138,7 @@ type alias ActiveProposal =
 koiosGovProposalsDecoder : Decoder (List ActiveProposal)
 koiosGovProposalsDecoder =
     JD.list <|
-        JD.map7 ActiveProposal
+        JD.map8 ActiveProposal
             (JD.map2
                 (\id index ->
                     { transactionId = Bytes.fromHexUnchecked id
@@ -157,6 +158,7 @@ koiosGovProposalsDecoder =
                 (JD.field "expiration" JD.int)
             )
             (JD.field "ratified_epoch" <| JD.maybe JD.int)
+            (JD.field "dropped_epoch" <| JD.maybe JD.int)
             (JD.succeed RemoteData.Loading)
 
 
@@ -606,6 +608,7 @@ defaultApiProvider =
                     , "proposed_epoch"
                     , "expiration"
                     , "ratified_epoch"
+                    , "dropped_epoch"
                     ]
                         |> String.join ","
             in
