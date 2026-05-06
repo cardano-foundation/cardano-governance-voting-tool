@@ -10,6 +10,3 @@
 [submodule "frontend/elm-kernel-replacements/elm-stuff/elm/virtual-dom/1.0.4"]
 	path = frontend/elm-kernel-replacements/elm-stuff/elm/virtual-dom/1.0.4
 	url = https://github.com/lydell/virtual-dom.git
-[submodule "frontend/elm-doc-preview"]
-	path = frontend/elm-doc-preview
-	url = git@github.com:dmy/elm-doc-preview.git
