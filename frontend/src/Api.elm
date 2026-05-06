@@ -453,13 +453,49 @@ responseToIpfsAnswer response =
 ipfsAnswerDecoder : JD.Decoder IpfsAnswer
 ipfsAnswerDecoder =
     JD.oneOf
-        -- Error
-        [ JD.map3 (\err msg code -> IpfsError <| String.fromInt code ++ " (" ++ err ++ "): " ++ msg)
+        -- Blockfrost error: { "error", "message", "status_code" }
+        [ JD.map3
+            (\_ msg _ ->
+                IpfsError <|
+                    if String.contains "Network token mismatch" msg then
+                        "Your Blockfrost project ID is for a different service. "
+                            ++ "IPFS uploads need a project ID created for the IPFS service "
+                            ++ "(not Mainnet, Preprod, or Preview). "
+                            ++ "Create one in your Blockfrost dashboard, then update it in the rationale storage config."
+
+                    else if String.contains "Invalid project token" msg then
+                        "Your Blockfrost project ID is not valid. "
+                            ++ "Double-check the value in the settings. It should start with \"ipfs\"."
+
+                    else if String.contains "Missing project token" msg then
+                        "No Blockfrost project ID was sent. Please add it in the rationale storage config."
+
+                    else
+                        "The IPFS pin request was rejected: " ++ msg
+            )
             (JD.field "error" JD.string)
             (JD.field "message" JD.string)
             (JD.field "status_code" JD.int)
-        , JD.map IpfsError
-            (JD.field "errorMessage" JD.string)
+
+        -- NMKR RFC 9110 problem-details: { "errors": { "authorization": [...] }, ... }
+        , JD.at [ "errors", "authorization" ] (JD.list JD.string)
+            |> JD.map
+                (\_ ->
+                    IpfsError "No NMKR API key was sent. Please add it in the settings."
+                )
+
+        -- NMKR error: { "errorMessage", ... }
+        , JD.field "errorMessage" JD.string
+            |> JD.map
+                (\msg ->
+                    IpfsError <|
+                        if String.contains "Apikey" msg || String.contains "Accesstoken" msg then
+                            "Your NMKR API key is not correct. "
+                                ++ "Double-check it in the settings, and confirm the user ID matches the same NMKR account."
+
+                        else
+                            "NMKR rejected the IPFS pin request: " ++ msg
+                )
         , JD.map IpfsError
             (JD.field "detail" JD.string)
         , JD.map (\json -> IpfsError <| JE.encode 2 json)
