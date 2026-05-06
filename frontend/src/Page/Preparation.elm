@@ -888,8 +888,24 @@ innerUpdate ctx msg model =
                     )
 
                 Ok drepInfo ->
-                    ( updateVoterForm (\form -> { form | drepInfo = RemoteData.Success drepInfo }) model
-                    , Cmd.none
+                    let
+                        updatedModel =
+                            updateVoterForm (\form -> { form | drepInfo = RemoteData.Success drepInfo }) model
+
+                        autoConfirmCmd =
+                            case updatedModel.voterStep of
+                                Preparing form ->
+                                    if shouldAutoConfirmDrep ctx form then
+                                        Cmd.map ctx.wrapMsg <| Cmd.Extra.perform ValidateVoterFormButtonClicked
+
+                                    else
+                                        Cmd.none
+
+                                _ ->
+                                    Cmd.none
+                    in
+                    ( updatedModel
+                    , autoConfirmCmd
                     , Just <| CacheDrepInfo drepInfo
                     )
 
@@ -1765,6 +1781,24 @@ updateVoterForm f ({ voterStep } as model) =
 
         Done form done ->
             { model | voterStep = Done (f form) done }
+
+
+{-| Decide whether to auto-confirm the voter form for a DRep.
+
+We auto-confirm only when the connected wallet is the very same DRep
+the user is trying to vote with (matching credential hash) and that
+DRep has a non-null voting power. This avoids interfering with users
+that connect a different wallet just to pay the transaction fees.
+
+-}
+shouldAutoConfirmDrep : UpdateContext msg -> VoterPreparationForm -> Bool
+shouldAutoConfirmDrep ctx form =
+    case ( form.govId, ctx.drepId, form.drepInfo ) of
+        ( Just (Gov.DrepId (VKeyHash hash)), Just walletDrepHash, RemoteData.Success { votingPower } ) ->
+            (hash == walletDrepHash) && votingPower > 0
+
+        _ ->
+            False
 
 
 {-| Check if the voter is using a public key and not a script.
