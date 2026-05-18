@@ -2,7 +2,7 @@ module Helper exposing
     ( actionIdToBech32, actionIdFromBech32
     , ipfsToHttpsUrl, ipfsToGatewaySelectorUrl, shortenedHex, prettyAdaLovelace
     , textFieldInline, textInputField
-    , formContainer, boxContainer, viewGrid, cardContainer, cardHeader, cardContent
+    , formContainer, boxContainer, viewGrid, cardContainer, cardHeader, cardContent, nestedSurface
     , viewButton, viewWalletButton, externalLink, externalLinkButton, trashButton
     , applyDropdownContainerStyle, applyDropdownItemStyle, applyMobileDropdownContainerStyle, applyWalletIconContainerStyle, applyWalletIconStyle
     , viewActionTypeIcon
@@ -12,7 +12,7 @@ module Helper exposing
     , PreconfAuthor, PreconfVoter, viewVoterGrid, viewVoterCard, voterCustomCard, votingPowerDisplay, scriptInfoContainer, viewVoterCredDetails, viewVoterDetailsItem, viewCredInfo
     , viewUtxoRefForm, scriptSignerSection, scriptSignerCheckbox, viewIdentifiedVoterCard, viewVoterInfoItem
     , proposalListContainer, showMoreButton, proposalCard, selectedProposalCard, proposalDetailsItem, viewProposalsListInCart
-    , storageConfigCard, storageMethodOption, storageProviderForm, storageProviderCard, storageConfigItem, addHeaderButton
+    , storageConfigCard, storageMethodOption, storageMethodCheckbox, storageProviderForm, storageProviderCard, storageConfigItem, storageProviderHeader, addHeaderButton
     , storageHeaderForm, storageInfoGrid, storageNotAvailableCard, storageUploadCard, uploadingSpinner, storageSuccessCard, fileInfoItem, externalLinkDisplay
     , rationaleCard, checkbox, rationaleMarkdownInput, rationaleTextArea, pdfAutogenCheckbox, voteNumberInput, referenceCard, referenceForm
     , rationaleCompletedCard, viewPartialFailuresWithIntro, optionalSection, formattedInternalVote, formattedReferences
@@ -44,7 +44,7 @@ and are potentially useful in multiple places.
 
 # Containers
 
-@docs formContainer, boxContainer, viewGrid, cardContainer, cardHeader, cardContent
+@docs formContainer, boxContainer, viewGrid, cardContainer, cardHeader, cardContent, nestedSurface
 
 
 # Buttons
@@ -90,7 +90,7 @@ and are potentially useful in multiple places.
 
 # Storage Configuration Components
 
-@docs storageConfigCard, storageMethodOption, storageProviderForm, storageProviderCard, storageConfigItem, addHeaderButton
+@docs storageConfigCard, storageMethodOption, storageMethodCheckbox, storageProviderForm, storageProviderCard, storageConfigItem, storageProviderHeader, addHeaderButton
 @docs storageHeaderForm, storageInfoGrid, storageNotAvailableCard, storageUploadCard, uploadingSpinner, storageSuccessCard, fileInfoItem, externalLinkDisplay
 
 
@@ -614,6 +614,41 @@ cardContent attributes content =
     div
         (HA.style "padding" "1.25rem" :: attributes)
         content
+
+
+{-| Inset surface for grouping a sub-step inside an existing card.
+Renders with the project's secondary surface tokens (#F7FAFC / #EDF2F7).
+The `sub` line is rendered only when non-empty.
+-}
+nestedSurface : { heading : String, sub : String } -> List (Html msg) -> Html msg
+nestedSurface { heading, sub } children =
+    div
+        [ HA.style "background-color" "#F7FAFC"
+        , HA.style "border" "1px solid #EDF2F7"
+        , HA.style "border-radius" "0.5rem"
+        , HA.style "padding" "0.85rem"
+        , HA.style "margin-top" "0.75rem"
+        ]
+        (Html.div
+            [ HA.style "font-weight" "600"
+            , HA.style "font-size" "0.9rem"
+            , HA.style "color" "#1A202C"
+            , HA.style "margin-bottom" "0.3rem"
+            ]
+            [ text heading ]
+            :: (if sub == "" then
+                    children
+
+                else
+                    Html.div
+                        [ HA.style "font-size" "0.78rem"
+                        , HA.style "color" "#4A5568"
+                        , HA.style "margin-bottom" "0.65rem"
+                        ]
+                        [ text sub ]
+                        :: children
+               )
+        )
 
 
 
@@ -1788,6 +1823,26 @@ storageConfigItem label content =
         ]
 
 
+{-| Title + description header used at the top of a provider config block.
+Matches the inline h4 + p block that's repeated across `viewPublishProviderInfo`
+branches in `Page/Preparation.elm`.
+-}
+storageProviderHeader : String -> String -> Html msg
+storageProviderHeader title description =
+    div []
+        [ Html.h4
+            [ HA.style "font-weight" "600"
+            , HA.style "margin-bottom" "0.5rem"
+            ]
+            [ text title ]
+        , Html.p
+            [ HA.style "color" "#4A5568"
+            , HA.style "font-size" "0.875rem"
+            ]
+            [ text description ]
+        ]
+
+
 {-| Helper button to add an HTTP header in custom IPFS configs.
 -}
 addHeaderButton : msg -> Html msg
@@ -1957,6 +2012,60 @@ storageMethodOption label isSelected selectMsg =
                 , HA.style "width" "1rem"
                 , HA.style "height" "1rem"
                 , HA.style "border-radius" "9999px"
+                , HA.style "background-color" "#272727"
+                , HA.style "color" "white"
+                , HA.style "display" "flex"
+                , HA.style "align-items" "center"
+                , HA.style "justify-content" "center"
+                , HA.style "font-size" "0.75rem"
+                ]
+                [ text "✓" ]
+
+          else
+            text ""
+        ]
+
+
+{-| Twin of `storageMethodOption` for multi-select groups: identical
+tile shape, but the selected-state chip in the top-right corner is a
+square checkbox glyph instead of a round radio chip.
+-}
+storageMethodCheckbox : String -> Bool -> msg -> Html msg
+storageMethodCheckbox label isSelected selectMsg =
+    div
+        [ HA.style "border"
+            (if isSelected then
+                "2px solid #272727"
+
+             else
+                "1px solid #E2E8F0"
+            )
+        , HA.style "border-radius" "0.5rem"
+        , HA.style "padding" "0.75rem"
+        , HA.style "cursor" "pointer"
+        , HA.style "background-color"
+            (if isSelected then
+                "#F1F5F9"
+
+             else
+                "#FFFFFF"
+            )
+        , HA.style "position" "relative"
+        , onClick selectMsg
+        ]
+        [ div
+            [ HA.style "font-weight" "500"
+            , HA.style "font-size" "0.9375rem"
+            ]
+            [ text label ]
+        , if isSelected then
+            div
+                [ HA.style "position" "absolute"
+                , HA.style "top" "0.5rem"
+                , HA.style "right" "0.5rem"
+                , HA.style "width" "1rem"
+                , HA.style "height" "1rem"
+                , HA.style "border-radius" "0.2rem"
                 , HA.style "background-color" "#272727"
                 , HA.style "color" "white"
                 , HA.style "display" "flex"
@@ -2258,35 +2367,34 @@ referenceForm index typeName label uri deleteMsg typeChangeMsg labelChangeMsg ur
 
 {-| Card for completed rationale
 -}
-rationaleCompletedCard : String -> List (Html msg) -> List (Html msg) -> msg -> Html msg
-rationaleCompletedCard summary content belowCard editMsg =
+rationaleCompletedCard : String -> List (Html msg) -> msg -> Html msg
+rationaleCompletedCard summary content editMsg =
     div []
-        (sectionTitle "Vote Rationale"
-            :: cardContainer []
-                [ cardHeader [] "Rationale Summary" "" []
-                , cardContent []
-                    [ div [ HA.style "display" "grid", HA.style "gap" "1.5rem" ]
-                        (div []
-                            [ Html.p
-                                [ HA.style "font-size" "0.9375rem"
-                                , HA.style "line-height" "1.6"
-                                , HA.style "color" "#4A5568"
-                                ]
-                                [ text summary ]
+        [ sectionTitle "Vote Rationale"
+        , cardContainer []
+            [ cardHeader [] "Rationale Summary" "" []
+            , cardContent []
+                [ div [ HA.style "display" "grid", HA.style "gap" "1.5rem" ]
+                    (div []
+                        [ Html.p
+                            [ HA.style "font-size" "0.9375rem"
+                            , HA.style "line-height" "1.6"
+                            , HA.style "color" "#4A5568"
                             ]
-                            :: content
-                        )
-                    ]
+                            [ text summary ]
+                        ]
+                        :: content
+                    )
                 ]
-            :: belowCard
-            ++ [ Html.p [ HA.style "margin-top" "1rem" ]
-                    [ viewButton "Edit rationale" editMsg ]
-               ]
-        )
+            ]
+        , Html.p [ HA.style "margin-top" "1rem" ]
+            [ viewButton "Edit rationale" editMsg ]
+        ]
 
 
-{-| Amber callout listing labeled failures under an intro line. Renders nothing
-when the list is empty.
+{-| Red callout listing labeled failures under an intro line. Renders nothing
+when the list is empty. Uses the same alert tokens as `viewError` so partial
+failures and full errors share one visual language.
 -}
 viewPartialFailuresWithIntro : String -> List ( String, String ) -> Html msg
 viewPartialFailuresWithIntro intro failures =
@@ -2295,17 +2403,37 @@ viewPartialFailuresWithIntro intro failures =
 
     else
         div
-            [ HA.style "margin" "1rem 0"
-            , HA.style "padding" "0.75rem 1rem"
-            , HA.style "border" "1px solid #FCD34D"
+            [ HA.style "background-color" "#FEF2F2"
+            , HA.style "border" "1px solid #FEE2E2"
             , HA.style "border-radius" "0.5rem"
-            , HA.style "background-color" "#FFFBEB"
-            , HA.style "color" "#92400E"
-            , HA.style "font-size" "0.875rem"
+            , HA.style "padding" "1rem"
+            , HA.style "margin-top" "1rem"
             ]
-            [ Html.p [ HA.style "font-weight" "600", HA.style "margin-bottom" "0.5rem" ]
-                [ text intro ]
-            , Html.ul [ HA.style "padding-left" "1.25rem", HA.style "margin" "0" ]
+            [ Html.div
+                [ HA.style "display" "flex"
+                , HA.style "align-items" "center"
+                , HA.style "margin-bottom" "0.5rem"
+                ]
+                [ Html.span
+                    [ HA.style "color" "#DC2626"
+                    , HA.style "font-weight" "bold"
+                    , HA.style "margin-right" "0.5rem"
+                    , HA.style "font-size" "1.25rem"
+                    ]
+                    [ text "!" ]
+                , Html.p
+                    [ HA.style "color" "#DC2626"
+                    , HA.style "font-weight" "600"
+                    , HA.style "margin" "0"
+                    ]
+                    [ text intro ]
+                ]
+            , Html.ul
+                [ HA.style "padding-left" "1.25rem"
+                , HA.style "margin" "0"
+                , HA.style "color" "#991B1B"
+                , HA.style "font-size" "0.875rem"
+                ]
                 (List.map
                     (\( label, err ) ->
                         Html.li [ HA.style "margin-bottom" "0.25rem" ]
