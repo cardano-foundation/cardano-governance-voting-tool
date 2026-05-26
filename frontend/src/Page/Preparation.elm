@@ -293,11 +293,6 @@ recordUploadResult kind result progress =
             { progress | remaining = remaining, failed = ( kind, transportErr ) :: progress.failed }
 
 
-uploadProgressIsDone : IpfsUploadProgress -> Bool
-uploadProgressIsDone progress =
-    List.isEmpty progress.remaining
-
-
 providerKindLabel : IpfsPreconfig -> ProviderKind -> String
 providerKindLabel ipfsPreconfig kind =
     case kind of
@@ -3296,7 +3291,7 @@ handlePdfIpfsAnswer ctx model form validating kind result =
         rationale =
             validating.rationale
     in
-    if not (uploadProgressIsDone newProgress) then
+    if not (List.isEmpty newProgress.remaining) then
         ( { model | rationaleCreationStep = Validating form { validating | uploads = newProgress } }
         , Cmd.none
         , Nothing
@@ -3377,7 +3372,7 @@ handleRationaleIpfsAnswer ipfsPreconfig model form progress kind result =
         newProgress =
             recordUploadResult kind result progress
     in
-    if not (uploadProgressIsDone newProgress) then
+    if not (List.isEmpty newProgress.remaining) then
         ( { model | permanentStorageStep = Validating form newProgress }
         , Cmd.none
         , Nothing
