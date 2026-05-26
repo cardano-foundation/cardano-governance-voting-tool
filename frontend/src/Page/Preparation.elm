@@ -276,6 +276,9 @@ initUploadProgress kinds =
 recordUploadResult : ProviderKind -> Result String IpfsAnswer -> UploadProgress -> UploadProgress
 recordUploadResult kind result progress =
     let
+        -- Assumes a single entry per ProviderKind in `remaining`. The form
+        -- enforces this today (one toggle per kind); if that ever changes,
+        -- this filter would clear all duplicates at once.
         remaining =
             List.filter ((/=) kind) progress.remaining
     in
@@ -4838,7 +4841,7 @@ viewPublishProviderInfo provider =
                         [ HA.style "font-family" "monospace"
                         , HA.style "word-break" "break-all"
                         ]
-                        [ text (maskToken apiToken) ]
+                        [ text (String.left 4 apiToken ++ "…" ++ String.right 4 apiToken) ]
                     )
                 ]
 
@@ -4857,14 +4860,6 @@ viewPublishProviderInfo provider =
                     )
                 ]
 
-
-maskToken : String -> String
-maskToken token =
-    if String.length token <= 12 then
-        String.repeat (String.length token) "•"
-
-    else
-        String.left 4 token ++ "…" ++ String.right 4 token
 
 
 
