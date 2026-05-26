@@ -1027,7 +1027,7 @@ handleUrlChange route model =
                 newModel =
                     { model
                         | errors = []
-                        , page = PreparationPage <| Page.Preparation.init model.ipfsPreconfig
+                        , page = PreparationPage Page.Preparation.init
                         , appUrl = appUrl
                         , pendingProposalId = proposalId
                     }
@@ -1043,7 +1043,7 @@ handleUrlChange route model =
                 reloadLatestStorageConfigTask : ConcurrentTask String StorageConfig
                 reloadLatestStorageConfigTask =
                     Storage.read { db = model.db, storeName = "app" } Page.Preparation.storageConfigDecoder { key = "lastStorageConfig" }
-                        |> ConcurrentTask.onError (\_ -> ConcurrentTask.succeed <| Page.Preparation.initStorageConfig model.ipfsPreconfig)
+                        |> ConcurrentTask.onError (\_ -> ConcurrentTask.succeed Page.Preparation.initStorageConfig)
 
                 ( newTaskPool, taskCmds ) =
                     ConcurrentTask.attemptEach { pool = model.taskPool, send = sendTask, onComplete = OnTaskComplete }

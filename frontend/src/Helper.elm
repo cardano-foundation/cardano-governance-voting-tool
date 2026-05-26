@@ -2,7 +2,7 @@ module Helper exposing
     ( actionIdToBech32, actionIdFromBech32
     , ipfsToHttpsUrl, ipfsToGatewaySelectorUrl, shortenedHex, prettyAdaLovelace
     , textFieldInline, textInputField
-    , formContainer, boxContainer, viewGrid, cardContainer, cardHeader, cardContent, nestedSurface
+    , formContainer, boxContainer, viewGrid, cardContainer, cardHeader, cardContent, nestedCard
     , viewButton, viewWalletButton, externalLink, externalLinkButton, trashButton
     , applyDropdownContainerStyle, applyDropdownItemStyle, applyMobileDropdownContainerStyle, applyWalletIconContainerStyle, applyWalletIconStyle
     , viewActionTypeIcon
@@ -44,7 +44,7 @@ and are potentially useful in multiple places.
 
 # Containers
 
-@docs formContainer, boxContainer, viewGrid, cardContainer, cardHeader, cardContent, nestedSurface
+@docs formContainer, boxContainer, viewGrid, cardContainer, cardHeader, cardContent, nestedCard
 
 
 # Buttons
@@ -616,12 +616,11 @@ cardContent attributes content =
         content
 
 
-{-| Inset surface for grouping a sub-step inside an existing card.
-Renders with the project's secondary surface tokens (#F7FAFC / #EDF2F7).
+{-| Inset card for grouping a sub-step inside an existing card.
 The `sub` line is rendered only when non-empty.
 -}
-nestedSurface : { heading : String, sub : String } -> List (Html msg) -> Html msg
-nestedSurface { heading, sub } children =
+nestedCard : { heading : String, sub : String } -> List (Html msg) -> Html msg
+nestedCard { heading, sub } children =
     div
         [ HA.style "background-color" "#F7FAFC"
         , HA.style "border" "1px solid #EDF2F7"
