@@ -94,7 +94,7 @@ type alias InnerModel =
     , storageConfigStep : Step StorageConfigForm {} StorageConfig
     , rationaleCreationStep : Step RationaleForm RationaleValidating Rationale
     , rationaleSignatureStep : Step RationaleSignatureForm {} RationaleSignature
-    , permanentStorageStep : Step StorageForm UploadProgress Storage
+    , permanentStorageStep : Step StorageForm IpfsUploadProgress Storage
     , buildTxStep : Step BuildTxPrep {} {}
     , visibleProposalCount : Int
     , showCartToast : Bool
@@ -256,24 +256,24 @@ type alias Rationale =
 
 {-| Tracks the progress of fan-out IPFS uploads across multiple publish providers.
 -}
-type alias UploadProgress =
+type alias IpfsUploadProgress =
     { remaining : List ProviderKind
     , succeeded : List ( ProviderKind, IpfsFile )
     , failed : List ( ProviderKind, String )
     }
 
 
-emptyUploadProgress : UploadProgress
+emptyUploadProgress : IpfsUploadProgress
 emptyUploadProgress =
     { remaining = [], succeeded = [], failed = [] }
 
 
-initUploadProgress : List ProviderKind -> UploadProgress
+initUploadProgress : List ProviderKind -> IpfsUploadProgress
 initUploadProgress kinds =
     { remaining = kinds, succeeded = [], failed = [] }
 
 
-recordUploadResult : ProviderKind -> Result String IpfsAnswer -> UploadProgress -> UploadProgress
+recordUploadResult : ProviderKind -> Result String IpfsAnswer -> IpfsUploadProgress -> IpfsUploadProgress
 recordUploadResult kind result progress =
     let
         -- Assumes a single entry per ProviderKind in `remaining`. The form
@@ -293,7 +293,7 @@ recordUploadResult kind result progress =
             { progress | remaining = remaining, failed = ( kind, transportErr ) :: progress.failed }
 
 
-uploadProgressIsDone : UploadProgress -> Bool
+uploadProgressIsDone : IpfsUploadProgress -> Bool
 uploadProgressIsDone progress =
     List.isEmpty progress.remaining
 
@@ -378,7 +378,7 @@ and the per-provider upload progress.
 -}
 type alias RationaleValidating =
     { rationale : Rationale
-    , uploads : UploadProgress
+    , uploads : IpfsUploadProgress
     }
 
 
@@ -3371,7 +3371,7 @@ handlePdfIpfsAnswer ctx model form validating kind result =
                 ( model, Cmd.none, Nothing )
 
 
-handleRationaleIpfsAnswer : IpfsPreconfig -> InnerModel -> StorageForm -> UploadProgress -> ProviderKind -> Result String IpfsAnswer -> ( InnerModel, Cmd msg, Maybe MsgToParent )
+handleRationaleIpfsAnswer : IpfsPreconfig -> InnerModel -> StorageForm -> IpfsUploadProgress -> ProviderKind -> Result String IpfsAnswer -> ( InnerModel, Cmd msg, Maybe MsgToParent )
 handleRationaleIpfsAnswer ipfsPreconfig model form progress kind result =
     let
         newProgress =
@@ -5372,7 +5372,7 @@ viewPermanentStorageStep :
     -> Step {} {} ActiveProposal
     -> Step RationaleSignatureForm {} RationaleSignature
     -> Step StorageConfigForm {} StorageConfig
-    -> Step StorageForm UploadProgress Storage
+    -> Step StorageForm IpfsUploadProgress Storage
     -> Html msg
 viewPermanentStorageStep ctx pickProposalStep rationaleSignatureStep storageConfigStep step =
     Html.map ctx.wrapMsg <|
