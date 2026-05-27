@@ -4528,7 +4528,23 @@ viewIpfsProviderSelection ctx form =
                 _ ->
                     Nothing
     in
-    div [] (providerCards :: List.filterMap providerConfig form.publishSet)
+    div [] (providerCards :: (List.filterMap providerConfig <| List.sortBy ipfsProviderOrder form.publishSet))
+
+
+ipfsProviderOrder : ProviderKind -> Int
+ipfsProviderOrder kind =
+    case kind of
+        BlockfrostKind ->
+            0
+
+        NmkrKind ->
+            1
+
+        CustomIpfsKind ->
+            2
+
+        _ ->
+            -1
 
 
 viewBlockfrostForm : StorageConfigForm -> Html Msg
