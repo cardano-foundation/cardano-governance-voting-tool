@@ -608,16 +608,6 @@ type StorageConfig
     | StorageNoRationale
 
 
-storedProviders : StorageConfig -> List IpfsProvider
-storedProviders config =
-    case config of
-        StorageIpfs providers ->
-            providers
-
-        _ ->
-            []
-
-
 {-| Initialize the default storage config.
 -}
 initStorageConfig : StorageConfig
@@ -691,7 +681,14 @@ storageConfigDecoder =
                 case kind of
                     "StorageIpfs" ->
                         JD.field "providers" (JD.list ipfsProviderDecoder)
-                            |> JD.map StorageIpfs
+                            |> JD.andThen
+                                (\providers ->
+                                    if List.isEmpty providers then
+                                        JD.fail "StorageIpfs requires at least one provider"
+
+                                    else
+                                        JD.succeed (StorageIpfs providers)
+                                )
 
                     "StorageCustomHosting" ->
                         JD.succeed StorageCustomHosting
@@ -2775,31 +2772,15 @@ pinPdfFile fileAsValue (Model model) =
             , Cmd.none
             )
 
-        ( Ok file, Done _ storageConfig, Validating form validating ) ->
-            let
-                providers =
-                    storedProviders storageConfig
-
-                kinds =
-                    List.map providerKind providers
-            in
-            if List.isEmpty providers then
-                ( Model
-                    { model
-                        | rationaleCreationStep =
-                            Preparing { form | error = Just "No IPFS provider selected to upload the PDF to." }
-                    }
-                , Cmd.none
-                )
-
-            else
-                ( Model
-                    { model
-                        | rationaleCreationStep =
-                            Validating form { validating | uploads = initUploadProgress kinds }
-                    }
-                , Cmd.batch (List.map (uploadFileCmd file) providers)
-                )
+        ( Ok file, Done _ (StorageIpfs providers), Validating form validating ) ->
+            ( Model
+                { model
+                    | rationaleCreationStep =
+                        Validating form
+                            { validating | uploads = initUploadProgress (List.map providerKind providers) }
+                }
+            , Cmd.batch (List.map (uploadFileCmd file) providers)
+            )
 
         -- Ignore if we aren't validating the rationale storage step
         _ ->
@@ -3213,31 +3194,14 @@ pinRationaleFile fileAsValue (Model model) =
             , Cmd.none
             )
 
-        ( Ok file, Done _ storageConfig, Validating form _ ) ->
-            let
-                providers =
-                    storedProviders storageConfig
-
-                kinds =
-                    List.map providerKind providers
-            in
-            if List.isEmpty providers then
-                ( Model
-                    { model
-                        | permanentStorageStep =
-                            Preparing { form | error = Just "No IPFS provider selected to upload the rationale to." }
-                    }
-                , Cmd.none
-                )
-
-            else
-                ( Model
-                    { model
-                        | permanentStorageStep =
-                            Validating form (initUploadProgress kinds)
-                    }
-                , Cmd.batch (List.map (uploadFileCmd file) providers)
-                )
+        ( Ok file, Done _ (StorageIpfs providers), Validating form _ ) ->
+            ( Model
+                { model
+                    | permanentStorageStep =
+                        Validating form (initUploadProgress (List.map providerKind providers))
+                }
+            , Cmd.batch (List.map (uploadFileCmd file) providers)
+            )
 
         -- Ignore if we aren't validating the rationale storage step
         _ ->
