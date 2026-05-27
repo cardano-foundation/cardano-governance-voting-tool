@@ -487,44 +487,20 @@ type ProviderKind
     | CustomIpfsKind
 
 
-{-| The set of IPFS providers selected by the user, as boolean flags.
+{-| The set of IPFS providers selected by the user. Membership-tested via
+`List.member`; small (one entry per `ProviderKind`) so the linear scan is fine.
 -}
 type alias PublishSet =
-    { preconfig : Bool
-    , blockfrost : Bool
-    , nmkr : Bool
-    , customIpfs : Bool
-    }
+    List ProviderKind
 
 
-emptyPublishSet : PublishSet
-emptyPublishSet =
-    { preconfig = False
-    , blockfrost = False
-    , nmkr = False
-    , customIpfs = False
-    }
+toggleIpfsProvider : ProviderKind -> PublishSet -> PublishSet
+toggleIpfsProvider kind publishSet =
+    if List.member kind publishSet then
+        List.filter (\k -> k /= kind) publishSet
 
-
-publishSetIsEmpty : PublishSet -> Bool
-publishSetIsEmpty s =
-    not (s.preconfig || s.blockfrost || s.nmkr || s.customIpfs)
-
-
-publishSetSet : ProviderKind -> Bool -> PublishSet -> PublishSet
-publishSetSet kind value s =
-    case kind of
-        PreconfigKind ->
-            { s | preconfig = value }
-
-        BlockfrostKind ->
-            { s | blockfrost = value }
-
-        NmkrKind ->
-            { s | nmkr = value }
-
-        CustomIpfsKind ->
-            { s | customIpfs = value }
+    else
+        kind :: publishSet
 
 
 type alias StorageConfigForm =
@@ -542,7 +518,7 @@ type alias StorageConfigForm =
 initStorageConfigForm : StorageConfigForm
 initStorageConfigForm =
     { mode = ModeIpfs
-    , publishSet = { emptyPublishSet | preconfig = True }
+    , publishSet = [ PreconfigKind ]
     , nmkrUserId = ""
     , nmkrApiToken = ""
     , blockfrostProjectId = ""
@@ -557,41 +533,41 @@ formFromStorageConfig config =
     case config of
         StorageIpfs providers ->
             List.foldl applyProviderToForm
-                { initStorageConfigForm | mode = ModeIpfs, publishSet = emptyPublishSet }
+                { initStorageConfigForm | mode = ModeIpfs, publishSet = [] }
                 providers
 
         StorageCustomHosting ->
-            { initStorageConfigForm | mode = ModeCustomHosting, publishSet = emptyPublishSet }
+            { initStorageConfigForm | mode = ModeCustomHosting, publishSet = [] }
 
         StoragePrepublished ->
-            { initStorageConfigForm | mode = ModePrepublished, publishSet = emptyPublishSet }
+            { initStorageConfigForm | mode = ModePrepublished, publishSet = [] }
 
         StorageNoRationale ->
-            { initStorageConfigForm | mode = ModeNoStorage, publishSet = emptyPublishSet }
+            { initStorageConfigForm | mode = ModeNoStorage, publishSet = [] }
 
 
 applyProviderToForm : IpfsProvider -> StorageConfigForm -> StorageConfigForm
 applyProviderToForm provider form =
     case provider of
         PreconfigIpfs ->
-            { form | publishSet = publishSetSet PreconfigKind True form.publishSet }
+            { form | publishSet = PreconfigKind :: form.publishSet }
 
         BlockfrostIpfs { projectId } ->
             { form
-                | publishSet = publishSetSet BlockfrostKind True form.publishSet
+                | publishSet = BlockfrostKind :: form.publishSet
                 , blockfrostProjectId = projectId
             }
 
         NmkrIpfs { userId, apiToken } ->
             { form
-                | publishSet = publishSetSet NmkrKind True form.publishSet
+                | publishSet = NmkrKind :: form.publishSet
                 , nmkrUserId = userId
                 , nmkrApiToken = apiToken
             }
 
         CustomIpfsProvider { ipfsServer, headers } ->
             { form
-                | publishSet = publishSetSet CustomIpfsKind True form.publishSet
+                | publishSet = CustomIpfsKind :: form.publishSet
                 , ipfsServer = ipfsServer
                 , headers = headers
             }
@@ -898,7 +874,7 @@ type Msg
     | GotCip100Verification String (Result Http.Error Api.Cip100VerificationResponse)
       -- Storage Config Step
     | StorageModeSelected StorageMode
-    | IpfsProviderToggled ProviderKind Bool
+    | IpfsProviderToggled ProviderKind
     | BlockfrostProjectIdChange String
     | NmkrUserIdChange String
     | NmkrApiTokenChange String
@@ -1282,9 +1258,9 @@ innerUpdate ctx msg model =
             , Nothing
             )
 
-        IpfsProviderToggled kind value ->
+        IpfsProviderToggled kind ->
             ( updateStorageConfigForm
-                (\form -> { form | publishSet = publishSetSet kind value form.publishSet })
+                (\form -> { form | publishSet = toggleIpfsProvider kind form.publishSet })
                 model
             , Cmd.none
             , Nothing
@@ -2498,8 +2474,8 @@ validateIpfsForm form =
             Ok StorageNoRationale
 
         ModeIpfs ->
-            if publishSetIsEmpty form.publishSet then
-                Err "Please select at least one IPFS provider, or pick another mode."
+            if List.isEmpty form.publishSet then
+                Err "Please select at least one IPFS provider, or pick another kind of rationale storage."
 
             else
                 buildIpfsProviders form
@@ -2509,77 +2485,63 @@ validateIpfsForm form =
 buildIpfsProviders : StorageConfigForm -> Result String (List IpfsProvider)
 buildIpfsProviders form =
     let
-        s =
-            form.publishSet
+        buildProvider kind =
+            case kind of
+                PreconfigKind ->
+                    Ok PreconfigIpfs
 
-        addPreconfig acc =
-            if s.preconfig then
-                Ok (PreconfigIpfs :: acc)
+                BlockfrostKind ->
+                    case String.trim form.blockfrostProjectId of
+                        "" ->
+                            Err "Missing blockfrost project id"
 
-            else
-                Ok acc
+                        projectId ->
+                            Ok (BlockfrostIpfs { projectId = projectId })
 
-        addBlockfrost acc =
-            if s.blockfrost then
-                case String.trim form.blockfrostProjectId of
-                    "" ->
-                        Err "Missing blockfrost project id"
+                NmkrKind ->
+                    case String.trim form.nmkrUserId of
+                        "" ->
+                            Err "Missing nmkr user id"
 
-                    projectId ->
-                        Ok (BlockfrostIpfs { projectId = projectId } :: acc)
+                        userId ->
+                            Ok (NmkrIpfs { userId = userId, apiToken = form.nmkrApiToken })
 
-            else
-                Ok acc
-
-        addNmkr acc =
-            if s.nmkr then
-                case String.trim form.nmkrUserId of
-                    "" ->
-                        Err "Missing nmkr user id"
-
-                    userId ->
-                        Ok (NmkrIpfs { userId = userId, apiToken = form.nmkrApiToken } :: acc)
-
-            else
-                Ok acc
-
-        addCustomIpfs acc =
-            if s.customIpfs then
-                let
-                    ipfsServerUrlSeemsLegit =
-                        case Url.fromString form.ipfsServer of
-                            Just _ ->
-                                Ok ()
-
-                            Nothing ->
-                                Err ("This url seems incorrect, it must look like this: https://subdomain.domain.org, instead I got this: " ++ form.ipfsServer)
-
-                    nonEmptyHeadersResult =
-                        if List.any (\( f, _ ) -> String.isEmpty f) form.headers then
-                            Err "Empty header fields are forbidden."
-
-                        else
-                            Ok ()
-                in
-                ipfsServerUrlSeemsLegit
-                    |> Result.andThen (\_ -> nonEmptyHeadersResult)
-                    |> Result.map
-                        (\_ ->
-                            CustomIpfsProvider
-                                { ipfsServer = form.ipfsServer
-                                , headers = form.headers
-                                }
-                                :: acc
-                        )
-
-            else
-                Ok acc
+                CustomIpfsKind ->
+                    buildCustomIpfsProvider form
     in
-    addPreconfig []
-        |> Result.andThen addBlockfrost
-        |> Result.andThen addNmkr
-        |> Result.andThen addCustomIpfs
-        |> Result.map List.reverse
+    List.foldr
+        (\kind acc -> Result.map2 (::) (buildProvider kind) acc)
+        (Ok [])
+        form.publishSet
+
+
+buildCustomIpfsProvider : StorageConfigForm -> Result String IpfsProvider
+buildCustomIpfsProvider form =
+    let
+        urlOk =
+            case Url.fromString form.ipfsServer of
+                Just _ ->
+                    Ok ()
+
+                Nothing ->
+                    Err ("This url seems incorrect, it must look like this: https://subdomain.domain.org, instead I got this: " ++ form.ipfsServer)
+
+        headersOk =
+            if List.any (\( f, _ ) -> String.isEmpty f) form.headers then
+                Err "Empty header fields are forbidden."
+
+            else
+                Ok ()
+    in
+    Result.map2
+        (\_ _ ->
+            CustomIpfsProvider
+                { ipfsServer = form.ipfsServer
+                , headers = form.headers
+                }
+        )
+        urlOk
+        headersOk
 
 
 
@@ -4640,37 +4602,36 @@ viewStorageConfigStep ctx step =
 viewIpfsProviderSelection : ViewContext msg -> StorageConfigForm -> Html Msg
 viewIpfsProviderSelection ctx form =
     let
-        s =
-            form.publishSet
-    in
-    div []
-        [ Helper.nestedCard
-            { heading = "IPFS providers"
-            , sub = "Pick one or more. We upload to each; the step passes if any succeed."
-            }
-            [ Helper.viewGrid 240
-                [ Helper.storageMethodCheckbox (providerKindLabel ctx.ipfsPreconfig PreconfigKind) s.preconfig (IpfsProviderToggled PreconfigKind (not s.preconfig))
-                , Helper.storageMethodCheckbox (providerKindLabel ctx.ipfsPreconfig BlockfrostKind) s.blockfrost (IpfsProviderToggled BlockfrostKind (not s.blockfrost))
-                , Helper.storageMethodCheckbox (providerKindLabel ctx.ipfsPreconfig NmkrKind) s.nmkr (IpfsProviderToggled NmkrKind (not s.nmkr))
-                , Helper.storageMethodCheckbox (providerKindLabel ctx.ipfsPreconfig CustomIpfsKind) s.customIpfs (IpfsProviderToggled CustomIpfsKind (not s.customIpfs))
+        checkbox kind =
+            Helper.storageMethodCheckbox
+                (providerKindLabel ctx.ipfsPreconfig kind)
+                (List.member kind form.publishSet)
+                (IpfsProviderToggled kind)
+
+        providerCards =
+            Helper.nestedCard
+                { heading = "IPFS providers"
+                , sub = "Pick one or more. We upload to each. The step passes if any succeed."
+                }
+                [ Helper.viewGrid 240 <|
+                    List.map checkbox [ PreconfigKind, BlockfrostKind, NmkrKind, CustomIpfsKind ]
                 ]
-            ]
-        , if s.blockfrost then
-            viewBlockfrostForm form
 
-          else
-            text ""
-        , if s.nmkr then
-            viewNmkrForm form
+        providerConfig kind =
+            case kind of
+                BlockfrostKind ->
+                    Just <| viewBlockfrostForm form
 
-          else
-            text ""
-        , if s.customIpfs then
-            viewCustomIpfsForm form
+                NmkrKind ->
+                    Just <| viewNmkrForm form
 
-          else
-            text ""
-        ]
+                CustomIpfsKind ->
+                    Just <| viewCustomIpfsForm form
+
+                _ ->
+                    Nothing
+    in
+    div [] (providerCards :: List.filterMap providerConfig form.publishSet)
 
 
 viewBlockfrostForm : StorageConfigForm -> Html Msg
