@@ -1,23 +1,23 @@
+import base64
 import json
 import logging
+import mimetypes
 import os
 import shutil
-import base64
 import subprocess
 import tempfile
-import mimetypes
+from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import List, Optional, Tuple, Dict
+from typing import Dict, List, Optional, Tuple
 
 import httpx
-from pydantic import BaseModel
+from brotli_asgi import BrotliMiddleware
 from dotenv import load_dotenv
-from fastapi import Body, FastAPI, HTTPException, UploadFile, Request
-from fastapi.responses import HTMLResponse, Response, FileResponse
+from fastapi import Body, FastAPI, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from contextlib import asynccontextmanager
-from brotli_asgi import BrotliMiddleware
+from pydantic import BaseModel
 
 TIMEOUT_SECONDS = 10
 MAX_CONCURRENT_REQUESTS = 100
@@ -29,55 +29,90 @@ logger = logging.getLogger(__name__)
 # Load environment variables from .env file
 load_dotenv()
 
-# Check for basic auth format completeness
-basic_auth_vars = ["IPFS_RPC_URL", "IPFS_USER_ID", "IPFS_PASSWORD"]
-basic_auth_missing = [var for var in basic_auth_vars if not os.getenv(var)]
-basic_auth_complete = len(basic_auth_missing) == 0
-
-# Check for nmkr format completeness
-nmkr_auth_vars = ["IPFS_RPC_URL", "IPFS_USER_ID", "IPFS_BEARER_TOKEN"]
-nmkr_auth_missing = [var for var in nmkr_auth_vars if not os.getenv(var)]
-nmkr_auth_complete = len(nmkr_auth_missing) == 0
-
-# Only show warnings if both formats are incomplete
-if not basic_auth_complete and not nmkr_auth_complete:
-    logger.warning(
-        "Neither basic nor nmkr IPFS authentication is completely configured."
-    )
-    if basic_auth_missing:
-        logger.warning(f"Basic auth missing: {', '.join(basic_auth_missing)}")
-    if nmkr_auth_missing:
-        logger.warning(f"Nmkr auth missing: {', '.join(nmkr_auth_missing)}")
-    logger.warning("All IPFS requests will need to provide RPC config or will fail")
-
 # Check for NETWORK_ID
 NETWORK_ID = os.getenv("NETWORK_ID", "0")  # defaults to 0 if not set
 if not os.getenv("NETWORK_ID"):
     logger.warning("NETWORK_ID not set, using default value of 0 (Preview)")
 
-# Check if using Nmkr format - default to basic if both are available
-IPFS_FORMAT = os.getenv("IPFS_FORMAT", "basic").lower()
-if IPFS_FORMAT not in ["basic", "nmkr"]:
-    logger.warning(f"Unknown IPFS_FORMAT '{IPFS_FORMAT}', defaulting to 'basic'")
-    IPFS_FORMAT = "basic"
 
-# If the configured format is incomplete but the other one is complete, use the complete one
-if IPFS_FORMAT == "basic" and not basic_auth_complete and nmkr_auth_complete:
-    logger.info("Basic auth incomplete but nmkr auth complete. Using nmkr format.")
-    IPFS_FORMAT = "nmkr"
-elif IPFS_FORMAT == "nmkr" and not nmkr_auth_complete and basic_auth_complete:
-    logger.info("Nmkr auth incomplete but basic auth complete. Using basic format.")
-    IPFS_FORMAT = "basic"
+BLOCKFROST_DEFAULT_RPC_URL = "https://ipfs.blockfrost.io/api/v0"
 
-# Set variables for selected format
-IPFS_USER_ID = os.getenv("IPFS_USER_ID", "")
-IPFS_PASSWORD = os.getenv("IPFS_PASSWORD", "")
-IPFS_BEARER_TOKEN = os.getenv("IPFS_BEARER_TOKEN", "")
 
-# Set variables for the IPFS server textual description
-IPFS_LABEL = os.getenv("IPFS_LABEL", "Pre-configured IPFS server")
-IPFS_DESCRIPTION = os.getenv(
-    "IPFS_DESCRIPTION", "Files will be pinned using the pre-configured IPFS server."
+# Build the list of pre-configured IPFS providers.
+#
+# IPFS_PRECONFIGS_JSON contains a JSON list of objects.
+# Common fields: id, label, description, format ("basic" | "nmkr" | "blockfrost").
+# Per-format additional fields:
+#   basic      : rpcUrl, userId, password
+#   nmkr       : rpcUrl, userId, bearerToken
+#   blockfrost : projectId (rpcUrl optional; defaults to Blockfrost's public host)
+def _validate_preconfig(entry: dict, index: int) -> dict:
+    common = ["id", "label", "description", "format"]
+    for key in common:
+        if not entry.get(key):
+            raise Exception(f"IPFS preconfig #{index}: missing or empty field '{key}'")
+    fmt = entry["format"].lower()
+    if fmt not in ("basic", "nmkr", "blockfrost"):
+        raise Exception(
+            f"IPFS preconfig #{index} ('{entry['id']}'): unknown format '{fmt}'"
+        )
+    entry["format"] = fmt
+
+    def _require(key: str) -> None:
+        if not entry.get(key):
+            raise Exception(
+                f"IPFS preconfig #{index} ('{entry['id']}'): "
+                f"format '{fmt}' requires '{key}'"
+            )
+
+    if fmt == "basic":
+        for key in ("rpcUrl", "userId", "password"):
+            _require(key)
+    elif fmt == "nmkr":
+        for key in ("rpcUrl", "userId", "bearerToken"):
+            _require(key)
+    elif fmt == "blockfrost":
+        _require("projectId")
+        # rpcUrl is optional for blockfrost — fall back to the public endpoint.
+        if not entry.get("rpcUrl"):
+            entry["rpcUrl"] = BLOCKFROST_DEFAULT_RPC_URL
+    return entry
+
+
+IPFS_PRECONFIGS_JSON_RAW = os.getenv("IPFS_PRECONFIGS_JSON", "").strip()
+IPFS_PRECONFIGS: List[dict] = []
+if IPFS_PRECONFIGS_JSON_RAW:
+    try:
+        parsed = json.loads(IPFS_PRECONFIGS_JSON_RAW)
+    except Exception as e:
+        raise Exception(f"Invalid JSON for IPFS_PRECONFIGS_JSON: {e}")
+    if not isinstance(parsed, list):
+        raise Exception("IPFS_PRECONFIGS_JSON must be a JSON array")
+    for index, entry in enumerate(parsed):
+        if not isinstance(entry, dict):
+            raise Exception(f"IPFS preconfig #{index} must be an object")
+        IPFS_PRECONFIGS.append(_validate_preconfig(entry, index))
+    seen_ids: set = set()
+    for entry in IPFS_PRECONFIGS:
+        if entry["id"] in seen_ids:
+            raise Exception(f"Duplicate IPFS preconfig id: '{entry['id']}'")
+        seen_ids.add(entry["id"])
+
+if not IPFS_PRECONFIGS:
+    logger.warning(
+        "No IPFS preconfig available (IPFS_PRECONFIGS_JSON is unset or empty). "
+        "All IPFS requests will need to provide a custom RPC config or will fail."
+    )
+
+# Indexed by id for fast lookup during pin requests.
+IPFS_PRECONFIGS_BY_ID: Dict[str, dict] = {p["id"]: p for p in IPFS_PRECONFIGS}
+
+# Public view exposed to the frontend (never includes secrets).
+IPFS_PRECONFIGS_PUBLIC_JSON = json.dumps(
+    [
+        {"id": p["id"], "label": p["label"], "description": p["description"]}
+        for p in IPFS_PRECONFIGS
+    ]
 )
 
 # Matomo Analytics
@@ -116,7 +151,7 @@ async def lifespan(app: FastAPI):
         timeout=httpx.Timeout(TIMEOUT_SECONDS),
         limits=httpx.Limits(max_connections=MAX_CONCURRENT_REQUESTS),
     ) as client:
-        app.async_client = client  # pyright: ignore
+        app.async_client = client  # type: ignore
         yield
 
 
@@ -138,8 +173,7 @@ async def read_root(request: Request):
         {
             "request": request,
             "network_id": NETWORK_ID,
-            "ipfs_label": IPFS_LABEL,
-            "ipfs_description": IPFS_DESCRIPTION,
+            "ipfs_preconfigs": IPFS_PRECONFIGS_PUBLIC_JSON,
             "preconfigured_voters": PRECONFIGURED_VOTERS_JSON,
             "preconfigured_authors": PRECONFIGURED_AUTHORS_JSON,
             "matomo_script": MATOMO_SCRIPT,
@@ -154,8 +188,7 @@ async def get_page(full_path: str, request: Request):
         {
             "request": request,
             "network_id": NETWORK_ID,
-            "ipfs_label": IPFS_LABEL,
-            "ipfs_description": IPFS_DESCRIPTION,
+            "ipfs_preconfigs": IPFS_PRECONFIGS_PUBLIC_JSON,
             "preconfigured_voters": PRECONFIGURED_VOTERS_JSON,
             "preconfigured_authors": PRECONFIGURED_AUTHORS_JSON,
             "matomo_script": MATOMO_SCRIPT,
@@ -244,7 +277,7 @@ async def create_pretty_pdf(data: dict = Body(...)):
 class IPFSPinRequest(BaseModel):
     ipfsServer: str | None = None
     headers: List[Tuple[str, str]] | None = None
-    userId: str | None = None  # user ID for both formats
+    preconfigId: str | None = None
 
 
 class IPFSPinJSONRequest(IPFSPinRequest):
@@ -252,58 +285,106 @@ class IPFSPinJSONRequest(IPFSPinRequest):
     jsonContent: str
 
 
+def _pick_preconfig(preconfig_id: Optional[str]) -> Optional[dict]:
+    if not IPFS_PRECONFIGS:
+        return None
+    if preconfig_id is None:
+        # Back-compat: when no id is supplied, use the first preconfig.
+        return IPFS_PRECONFIGS[0]
+    entry = IPFS_PRECONFIGS_BY_ID.get(preconfig_id)
+    if entry is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown IPFS preconfig id: '{preconfig_id}'",
+        )
+    return entry
+
+
 def get_ipfs_config(
-    request_user_id: Optional[str] = None,
+    preconfig_id: Optional[str] = None,
     ipfs_server: Optional[str] = None,
     custom_headers: Optional[List[Tuple[str, str]]] = None,
-) -> Tuple[str, Dict[str, str]]:
-    """Get the appropriate IPFS configuration based on request parameters or environment variables."""
+) -> Tuple[str, Dict[str, str], str]:
+    """Resolve the IPFS endpoint + auth headers and the effective format.
 
-    # Use default IPFS settings if not provided
-    server_url = ipfs_server or os.getenv("IPFS_RPC_URL") or ""
+    Precedence:
+      1. Explicit ipfs_server + custom_headers from the request (custom provider).
+      2. The named preconfig (preconfig_id).
+      3. The first available preconfig (back-compat).
+    """
 
-    # If custom headers are provided, use them (this overrides both formats)
+    # Explicit custom provider from the request: pass through as-is, format
+    # is assumed to be "basic" (kubo-style /add) for custom RPCs.
     if ipfs_server and custom_headers:
-        return server_url, dict(custom_headers)
+        return ipfs_server, dict(custom_headers), "basic"
 
-    # Handle different authentication formats
-    if IPFS_FORMAT == "nmkr":
-        # Use Nmkr format (user ID + bearer token)
-        user_id = request_user_id or IPFS_USER_ID
-        bearer_token = os.getenv("IPFS_BEARER_TOKEN", "")
+    entry = _pick_preconfig(preconfig_id)
+    if entry is None:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "No IPFS preconfig is available on the server and no custom "
+                "IPFS server was provided in the request."
+            ),
+        )
 
-        # For Nmkr, the URL ends with the user ID
+    server_url = entry["rpcUrl"]
+    fmt = entry["format"]
+
+    if fmt == "nmkr":
+        user_id = entry["userId"]
+        bearer_token = entry["bearerToken"]
         if not server_url.endswith(f"/{user_id}"):
             server_url = f"{server_url}/{user_id}"
+        return (
+            server_url,
+            {
+                "Authorization": f"Bearer {bearer_token}",
+                "Accept": "application/json",
+            },
+            fmt,
+        )
 
-        return server_url, {
-            "Authorization": f"Bearer {bearer_token}",
-            "Accept": "application/json",
-        }
+    if fmt == "blockfrost":
+        return (
+            server_url,
+            {
+                "project_id": entry["projectId"],
+                "Accept": "application/json",
+            },
+            fmt,
+        )
+
     else:
         # Default to basic auth format
-        user_id = request_user_id or IPFS_USER_ID
-        password = IPFS_PASSWORD
+        user_id = entry["userId"]
+        password = entry["password"]
         auth_string = f"{user_id}:{password}"
         token = base64.b64encode(auth_string.encode("utf-8")).decode("ascii")
-        return server_url, {
-            "Authorization": f"Basic {token}",
-            "Accept": "application/json",
-        }
+        return (
+            server_url,
+            {
+                "Authorization": f"Basic {token}",
+                "Accept": "application/json",
+            },
+            fmt,
+        )
 
 
 async def pin_to_ipfs_common(
     temp_file_path: Path,
     ipfs_server: Optional[str] = None,
     custom_headers: Optional[List[Tuple[str, str]]] = None,
-    user_id: Optional[str] = None,
+    preconfig_id: Optional[str] = None,
 ):
     """Common IPFS pinning logic used by both endpoints."""
     try:
-        server_url, headers = get_ipfs_config(user_id, ipfs_server, custom_headers)
+        server_url, headers, ipfs_format = get_ipfs_config(
+            preconfig_id, ipfs_server, custom_headers
+        )
 
         # Different handling based on format
-        if IPFS_FORMAT == "nmkr":
+        if ipfs_format == "nmkr":
             # For Nmkr format, we need to convert file to base64 and include metadata
             file_name = temp_file_path.name
 
@@ -338,6 +419,59 @@ async def pin_to_ipfs_common(
                 media_type=response.headers.get("content-type"),
             )
 
+        elif ipfs_format == "blockfrost":
+            # Blockfrost IPFS: /ipfs/add returns the CID but does not pin.
+            # We then call /ipfs/pin/add/{cid} to actually pin. The frontend's
+            # IpfsAnswer decoder reads `ipfs_hash` from the /add response, so
+            # we return that body whether or not the pin step succeeds — the
+            # status code reflects pin failure when applicable.
+            with open(temp_file_path, "rb") as f:
+                add_response = await app.async_client.post(  # type: ignore
+                    url=f"{server_url}/ipfs/add",
+                    headers=headers,
+                    files={"file": f},
+                )
+
+            if add_response.status_code != 200:
+                return Response(
+                    content=add_response.content,
+                    status_code=add_response.status_code,
+                    media_type=add_response.headers.get("content-type"),
+                )
+
+            try:
+                cid = add_response.json()["ipfs_hash"]
+            except (KeyError, json.JSONDecodeError) as e:
+                logger.error(f"Blockfrost /add returned no ipfs_hash: {e}")
+                raise HTTPException(
+                    status_code=502,
+                    detail="Blockfrost IPFS add response missing ipfs_hash",
+                )
+
+            pin_response = await app.async_client.post(  # type: ignore
+                url=f"{server_url}/ipfs/pin/add/{cid}",
+                headers=headers,
+            )
+
+            if pin_response.status_code != 200:
+                logger.warning(
+                    "Blockfrost pin/add failed for CID %s (status %s): %s",
+                    cid,
+                    pin_response.status_code,
+                    pin_response.text,
+                )
+                return Response(
+                    content=pin_response.content,
+                    status_code=pin_response.status_code,
+                    media_type=pin_response.headers.get("content-type"),
+                )
+
+            return Response(
+                content=add_response.content,
+                status_code=add_response.status_code,
+                media_type=add_response.headers.get("content-type"),
+            )
+
         else:
             # Basic format - uses /add endpoint with file upload
             with open(temp_file_path, "rb") as f:
@@ -362,6 +496,8 @@ async def pin_to_ipfs_common(
                     media_type=add_response.headers.get("content-type"),
                 )
 
+    except HTTPException:
+        raise
     except json.JSONDecodeError as e:
         logger.error(f"Failed to parse IPFS output: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to parse IPFS response")
@@ -374,10 +510,13 @@ async def pin_to_ipfs_common(
 async def pin_file_to_ipfs(
     file: UploadFile,
     ipfs_server: Optional[str] = None,
-    headers: Optional[List[Tuple[str, str]]] = None,
-    user_id: Optional[str] = None,
+    preconfig_id: Optional[str] = None,
 ):
-    """Pin a file to IPFS and return the hash."""
+    """Pin a file to IPFS and return the hash.
+
+    When `ipfs_server` is not provided, `preconfig_id` selects which
+    pre-configured IPFS provider to use (defaults to the first one).
+    """
     logger.info("IPFS file pin attempt")
 
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -387,7 +526,12 @@ async def pin_file_to_ipfs(
         with open(temp_file_path, "wb") as f:
             f.write(content)
 
-        return await pin_to_ipfs_common(temp_file_path, ipfs_server, headers, user_id)
+        return await pin_to_ipfs_common(
+            temp_file_path,
+            ipfs_server=ipfs_server,
+            custom_headers=None,
+            preconfig_id=preconfig_id,
+        )
 
 
 @app.post("/ipfs-pin/json")
@@ -403,9 +547,9 @@ async def pin_json_to_ipfs(request: IPFSPinJSONRequest):
 
         return await pin_to_ipfs_common(
             temp_file_path,
-            request.ipfsServer,
-            request.headers,
-            request.userId,
+            ipfs_server=request.ipfsServer,
+            custom_headers=request.headers,
+            preconfig_id=request.preconfigId,
         )
 
 
@@ -430,7 +574,7 @@ async def proxy_request(request: ProxyRequest):
         }
 
         # Make the request
-        response = await app.async_client.request(  # pyright: ignore
+        response = await app.async_client.request(  # type: ignore
             method=request.method,
             url=request.url,
             headers={**default_headers, **request.headers},
@@ -459,7 +603,7 @@ class CompressedStaticFiles(StaticFiles):
                 accept_encoding = value.decode()
                 break
 
-        full_path = os.path.join(self.directory, path)  # pyright: ignore
+        full_path = os.path.join(self.directory, path)  # type: ignore
 
         # Serve Brotli (.br) if supported and available
         if "br" in accept_encoding and os.path.exists(full_path + ".br"):

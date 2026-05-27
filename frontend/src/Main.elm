@@ -78,7 +78,7 @@ import Page.Cart
 import Page.Disclaimer
 import Page.MultisigRegistration
 import Page.Pdf
-import Page.Preparation exposing (JsonLdContexts, StorageConfig)
+import Page.Preparation exposing (IpfsPreconfig, JsonLdContexts, StorageConfig)
 import Page.Signing
 import Platform.Cmd as Cmd
 import ProposalMetadata exposing (ProposalMetadata)
@@ -94,7 +94,7 @@ type alias Flags =
     , jsonLdContexts : JsonLdContexts
     , db : Value
     , networkId : Int
-    , ipfsPreconfig : { label : String, description : String }
+    , ipfsPreconfig : IpfsPreconfig
     , voterPreconfig : List PreconfVoter
     , authorPreconfig : List PreconfAuthor
     }
@@ -199,7 +199,7 @@ type alias Model =
     , taskPool : ConcurrentTask.Pool Msg
     , db : Value
     , networkId : NetworkId
-    , ipfsPreconfig : { label : String, description : String }
+    , ipfsPreconfig : IpfsPreconfig
     , voterPreconfig : List PreconfVoter
     , authorPreconfig : List PreconfAuthor
     , cart : Page.Cart.Model
@@ -282,7 +282,7 @@ type alias ModelConfig =
     { jsonLdContexts : JsonLdContexts
     , db : Value
     , networkId : NetworkId
-    , ipfsPreconfig : { label : String, description : String }
+    , ipfsPreconfig : IpfsPreconfig
     , voterPreconfig : List PreconfVoter
     , authorPreconfig : List PreconfAuthor
     }
@@ -1027,7 +1027,7 @@ handleUrlChange route model =
                 newModel =
                     { model
                         | errors = []
-                        , page = PreparationPage Page.Preparation.init
+                        , page = PreparationPage (Page.Preparation.init model.ipfsPreconfig)
                         , appUrl = appUrl
                         , pendingProposalId = proposalId
                     }
@@ -1042,8 +1042,8 @@ handleUrlChange route model =
 
                 reloadLatestStorageConfigTask : ConcurrentTask String StorageConfig
                 reloadLatestStorageConfigTask =
-                    Storage.read { db = model.db, storeName = "app" } Page.Preparation.storageConfigDecoder { key = "lastStorageConfig" }
-                        |> ConcurrentTask.onError (\_ -> ConcurrentTask.succeed Page.Preparation.initStorageConfig)
+                    Storage.read { db = model.db, storeName = "app" } (Page.Preparation.storageConfigDecoder model.ipfsPreconfig) { key = "lastStorageConfig" }
+                        |> ConcurrentTask.onError (\_ -> ConcurrentTask.succeed (Page.Preparation.initStorageConfig model.ipfsPreconfig))
 
                 ( newTaskPool, taskCmds ) =
                     ConcurrentTask.attemptEach { pool = model.taskPool, send = sendTask, onComplete = OnTaskComplete }

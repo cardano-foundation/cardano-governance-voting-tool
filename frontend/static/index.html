@@ -68,10 +68,7 @@
                 jsonLdContexts,
                 db,
                 networkId: {{network_id}}, // 0: Preview, 1: Mainnet
-                ipfsPreconfig: {
-                    label: {{ipfs_label|tojson}},
-                    description: {{ipfs_description|tojson}},
-                },
+                ipfsPreconfig: JSON.parse({{ipfs_preconfigs|tojson}}),
                 voterPreconfig: JSON.parse({{preconfigured_voters|tojson}}),
                 authorPreconfig: JSON.parse({{preconfigured_authors|tojson}}),
             },

@@ -128,14 +128,26 @@ type Cip100VerificationState
     | VerificationError String
 
 
-init : Model
-init =
+init : IpfsPreconfig -> Model
+init ipfsPreconfig =
+    let
+        -- When at least one preconfig is available, mark the step Done so the
+        -- user can skip storage configuration. Without any preconfig there's
+        -- no sensible default and we force the user through the form.
+        initialStorageStep =
+            case ipfsPreconfig of
+                _ :: _ ->
+                    Done initStorageConfigForm (initStorageConfig ipfsPreconfig)
+
+                [] ->
+                    Preparing initStorageConfigForm
+    in
     Model
         { someRefUtxos = Utxo.emptyRefDict
         , reloadedLastVoter = False
         , voterStep = Preparing initVoterForm
         , pickProposalStep = Preparing {}
-        , storageConfigStep = Done initStorageConfigForm (StorageIpfs [ PreconfigIpfs ])
+        , storageConfigStep = initialStorageStep
         , rationaleCreationStep = Preparing initRationaleForm
         , rationaleSignatureStep = Preparing initRationaleSignatureForm
         , permanentStorageStep = Preparing initStorageForm
@@ -385,9 +397,14 @@ type StorageMode
 
 {-| Identifies an IPFS publish provider. Used as a key for tracking selection,
 upload progress, and per-provider error reporting.
+
+For `PreconfigKind` we carry the preconfig id so multiple pre-configured
+servers stay distinct in the publish set, upload-progress lists, and the
+per-provider error reporting.
+
 -}
 type ProviderKind
-    = PreconfigKind
+    = PreconfigKind String
     | BlockfrostKind
     | NmkrKind
     | CustomIpfsKind
@@ -424,7 +441,7 @@ type alias StorageConfigForm =
 initStorageConfigForm : StorageConfigForm
 initStorageConfigForm =
     { mode = ModeIpfs
-    , publishSet = [ PreconfigKind ]
+    , publishSet = []
     , nmkrUserId = ""
     , nmkrApiToken = ""
     , blockfrostProjectId = ""
@@ -455,8 +472,8 @@ formFromStorageConfig config =
 applyProviderToForm : IpfsProvider -> StorageConfigForm -> StorageConfigForm
 applyProviderToForm provider form =
     case provider of
-        PreconfigIpfs ->
-            { form | publishSet = PreconfigKind :: form.publishSet }
+        PreconfigIpfs { id } ->
+            { form | publishSet = PreconfigKind id :: form.publishSet }
 
         BlockfrostIpfs { projectId } ->
             { form
@@ -482,10 +499,10 @@ applyProviderToForm provider form =
 {-| One of the IPFS providers the rationale can be published to.
 The user-facing label and description for each variant are not stored
 on the variant itself; they are derived at view time from `ProviderKind`
-(and, for `PreconfigIpfs`, from the app-init `IpfsPreconfig`).
+(and, for `PreconfigIpfs`, from the app-init `IpfsPreconfig` list).
 -}
 type IpfsProvider
-    = PreconfigIpfs
+    = PreconfigIpfs { id : String }
     | BlockfrostIpfs { projectId : String }
     | NmkrIpfs { userId : String, apiToken : String }
     | CustomIpfsProvider { ipfsServer : String, headers : List ( String, String ) }
@@ -494,8 +511,8 @@ type IpfsProvider
 providerKind : IpfsProvider -> ProviderKind
 providerKind provider =
     case provider of
-        PreconfigIpfs ->
-            PreconfigKind
+        PreconfigIpfs { id } ->
+            PreconfigKind id
 
         BlockfrostIpfs _ ->
             BlockfrostKind
@@ -514,11 +531,15 @@ type StorageConfig
     | StorageNoRationale
 
 
-{-| Initialize the default storage config.
+{-| Initialize the default storage config: publish to every available IPFS preconfig.
+
+If the preconfig list is empty, the resulting `StorageIpfs []` is treated by
+the form-build step as "no provider selected".
+
 -}
-initStorageConfig : StorageConfig
-initStorageConfig =
-    StorageIpfs [ PreconfigIpfs ]
+initStorageConfig : IpfsPreconfig -> StorageConfig
+initStorageConfig ipfsPreconfig =
+    StorageIpfs (List.map (\{ id } -> PreconfigIpfs { id = id }) ipfsPreconfig)
 
 
 encodeStorageConfig : StorageConfig -> JE.Value
@@ -543,8 +564,11 @@ encodeStorageConfig config =
 encodeIpfsProvider : IpfsProvider -> JE.Value
 encodeIpfsProvider provider =
     case provider of
-        PreconfigIpfs ->
-            JE.object [ ( "type", JE.string "PreconfigIpfs" ) ]
+        PreconfigIpfs { id } ->
+            JE.object
+                [ ( "type", JE.string "PreconfigIpfs" )
+                , ( "id", JE.string id )
+                ]
 
         BlockfrostIpfs { projectId } ->
             JE.object
@@ -579,14 +603,19 @@ httpHeaderDecoder =
         (JD.field "value" JD.string)
 
 
-storageConfigDecoder : JD.Decoder StorageConfig
-storageConfigDecoder =
+{-| Decode a persisted `StorageConfig`. Needs the current `IpfsPreconfig` list
+to validate that `PreconfigIpfs` entries still match an available preconfig.
+The whole decoder fails if any provider can't be resolved; the caller falls
+back to `initStorageConfig` in that case.
+-}
+storageConfigDecoder : IpfsPreconfig -> JD.Decoder StorageConfig
+storageConfigDecoder ipfsPreconfig =
     JD.field "kind" JD.string
         |> JD.andThen
             (\kind ->
                 case kind of
                     "StorageIpfs" ->
-                        JD.field "providers" (JD.list ipfsProviderDecoder)
+                        JD.field "providers" (JD.list (ipfsProviderDecoder ipfsPreconfig))
                             |> JD.andThen
                                 (\providers ->
                                     if List.isEmpty providers then
@@ -610,14 +639,29 @@ storageConfigDecoder =
             )
 
 
-ipfsProviderDecoder : JD.Decoder IpfsProvider
-ipfsProviderDecoder =
+{-| Decode a single `IpfsProvider`. Fails if a `PreconfigIpfs` entry references
+an id that no longer matches any available preconfig.
+-}
+ipfsProviderDecoder : IpfsPreconfig -> JD.Decoder IpfsProvider
+ipfsProviderDecoder ipfsPreconfig =
+    let
+        knownIds =
+            List.map .id ipfsPreconfig
+    in
     JD.field "type" JD.string
         |> JD.andThen
             (\providerType ->
                 case providerType of
                     "PreconfigIpfs" ->
-                        JD.succeed PreconfigIpfs
+                        JD.field "id" JD.string
+                            |> JD.andThen
+                                (\id ->
+                                    if List.member id knownIds then
+                                        JD.succeed (PreconfigIpfs { id = id })
+
+                                    else
+                                        JD.fail ("Unknown IPFS preconfig id: " ++ id)
+                                )
 
                     "BlockfrostIpfs" ->
                         JD.map (\projectId -> BlockfrostIpfs { projectId = projectId })
@@ -835,8 +879,15 @@ type Msg
     | EndFlyAnim
 
 
+{-| The set of pre-configured IPFS providers exposed by the server.
+
+Each entry is identified by a stable `id` (a slug from the backend config).
+Only public metadata (label, description) is included; secrets such as API
+tokens stay on the backend and are looked up by id at upload time.
+
+-}
 type alias IpfsPreconfig =
-    { label : String, description : String }
+    List { id : String, label : String, description : String }
 
 
 {-| Configuration required by the update function.
@@ -2390,8 +2441,8 @@ buildIpfsProviders form =
     let
         buildProvider kind =
             case kind of
-                PreconfigKind ->
-                    Ok PreconfigIpfs
+                PreconfigKind id ->
+                    Ok (PreconfigIpfs { id = id })
 
                 BlockfrostKind ->
                     case String.trim form.blockfrostProjectId of
@@ -2696,10 +2747,10 @@ pinPdfFile fileAsValue (Model model) =
 uploadFileCmd : File -> IpfsProvider -> Cmd Msg
 uploadFileCmd file provider =
     case provider of
-        PreconfigIpfs ->
+        PreconfigIpfs { id } ->
             Api.defaultApiProvider.ipfsAddFile
-                { file = file }
-                (GotIpfsAnswer PreconfigKind)
+                { id = id, file = file }
+                (GotIpfsAnswer (PreconfigKind id))
 
         BlockfrostIpfs { projectId } ->
             Api.defaultApiProvider.ipfsAddFileBlockfrost
@@ -4505,13 +4556,16 @@ viewIpfsProviderSelection ctx form =
                 (List.member kind form.publishSet)
                 (IpfsProviderToggled kind)
 
+        preconfigKinds =
+            List.map (PreconfigKind << .id) ctx.ipfsPreconfig
+
         providerCards =
             Helper.nestedCard
                 { heading = "IPFS providers"
                 , sub = "Pick one or more. We upload to each. The step passes if any succeed."
                 }
                 [ Helper.viewGrid 240 <|
-                    List.map checkbox [ PreconfigKind, BlockfrostKind, NmkrKind, CustomIpfsKind ]
+                    List.map checkbox (preconfigKinds ++ [ BlockfrostKind, NmkrKind, CustomIpfsKind ])
                 ]
 
         providerConfig kind =
@@ -4525,26 +4579,31 @@ viewIpfsProviderSelection ctx form =
                 CustomIpfsKind ->
                     Just <| viewCustomIpfsForm form
 
-                _ ->
+                PreconfigKind _ ->
                     Nothing
     in
     div [] (providerCards :: (List.filterMap providerConfig <| List.sortBy ipfsProviderOrder form.publishSet))
 
 
-ipfsProviderOrder : ProviderKind -> Int
+{-| Order in which selected providers' config blocks render. Preconfigs are
+configured server-side and have no per-provider form, so they sort first
+(negative) to keep the layout stable when several are picked; the three
+external providers follow.
+-}
+ipfsProviderOrder : ProviderKind -> ( Int, String )
 ipfsProviderOrder kind =
     case kind of
+        PreconfigKind id ->
+            ( -1, id )
+
         BlockfrostKind ->
-            0
+            ( 0, "" )
 
         NmkrKind ->
-            1
+            ( 1, "" )
 
         CustomIpfsKind ->
-            2
-
-        _ ->
-            -1
+            ( 2, "" )
 
 
 viewBlockfrostForm : StorageConfigForm -> Html Msg
@@ -4678,7 +4737,7 @@ viewIpfsProviderInfo ipfsPreconfig provider =
             providerKindDescription ipfsPreconfig kind
     in
     case provider of
-        PreconfigIpfs ->
+        PreconfigIpfs _ ->
             defaultStorageConfigInfo label description
 
         BlockfrostIpfs { projectId } ->
@@ -4731,8 +4790,10 @@ viewIpfsProviderInfo ipfsPreconfig provider =
 providerKindLabel : IpfsPreconfig -> ProviderKind -> String
 providerKindLabel ipfsPreconfig kind =
     case kind of
-        PreconfigKind ->
-            ipfsPreconfig.label
+        PreconfigKind id ->
+            lookupPreconfig ipfsPreconfig id
+                |> Maybe.map .label
+                |> Maybe.withDefault ("Pre-configured IPFS (" ++ id ++ ")")
 
         BlockfrostKind ->
             "Blockfrost"
@@ -4747,8 +4808,10 @@ providerKindLabel ipfsPreconfig kind =
 providerKindDescription : IpfsPreconfig -> ProviderKind -> String
 providerKindDescription ipfsPreconfig kind =
     case kind of
-        PreconfigKind ->
-            ipfsPreconfig.description
+        PreconfigKind id ->
+            lookupPreconfig ipfsPreconfig id
+                |> Maybe.map .description
+                |> Maybe.withDefault "Pre-configured IPFS server (no longer available)."
 
         BlockfrostKind ->
             "Using Blockfrost IPFS server to store your files."
@@ -4758,6 +4821,11 @@ providerKindDescription ipfsPreconfig kind =
 
         CustomIpfsKind ->
             "Using a custom IPFS server configuration to store your files. The RPC should provide the /add?pin=true endpoint with answers equivalent to those described in the official kubo IPFS RPC docs: https://docs.ipfs.tech/reference/kubo/rpc/#api-v0-add"
+
+
+lookupPreconfig : IpfsPreconfig -> String -> Maybe { id : String, label : String, description : String }
+lookupPreconfig ipfsPreconfig id =
+    List.Extra.find (\p -> p.id == id) ipfsPreconfig
 
 
 

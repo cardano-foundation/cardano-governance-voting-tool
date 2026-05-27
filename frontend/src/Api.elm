@@ -64,7 +64,7 @@ type alias ApiProvider msg =
     , ipfsAddFileCustom : { rpc : String, headers : List ( String, String ), file : File } -> (Result String IpfsAnswer -> msg) -> Cmd msg
     , ipfsAddFileNmkr : { userId : String, apiToken : String, file : File } -> (Result String IpfsAnswer -> msg) -> Cmd msg
     , ipfsAddFileBlockfrost : { projectId : String, file : File } -> (Result String IpfsAnswer -> msg) -> Cmd msg
-    , ipfsAddFile : { file : File } -> (Result String IpfsAnswer -> msg) -> Cmd msg
+    , ipfsAddFile : { id : String, file : File } -> (Result String IpfsAnswer -> msg) -> Cmd msg
     , convertToPdf : String -> (Result Http.Error ElmBytes.Bytes -> msg) -> Cmd msg
     , getFromIpfsGateway : (Result Http.Error String -> msg) -> String -> String -> Cmd msg
     , verifyCip100Metadata : String -> (Result Http.Error Cip100VerificationResponse -> msg) -> Cmd msg
@@ -866,13 +866,14 @@ defaultApiProvider =
                 |> Task.andThen (pinRequest projectId)
                 |> Task.attempt toMsg
 
-    -- Make a request to the pre-configured IPFS RPC via the server
+    -- Make a request to the pre-configured IPFS RPC via the server.
+    -- `id` selects which pre-configured provider on the backend to use.
     , ipfsAddFile =
-        \{ file } toMsg ->
+        \{ id, file } toMsg ->
             Http.request
                 { method = "POST"
                 , headers = []
-                , url = "/ipfs-pin/file"
+                , url = "/ipfs-pin/file?preconfig_id=" ++ Url.percentEncode id
                 , body = Http.multipartBody [ Http.filePart "file" file ]
                 , expect = Http.expectStringResponse toMsg responseToIpfsAnswer
                 , timeout = Nothing
