@@ -76,6 +76,8 @@ def _validate_preconfig(entry: dict, index: int) -> dict:
         # rpcUrl is optional for blockfrost — fall back to the public endpoint.
         if not entry.get("rpcUrl"):
             entry["rpcUrl"] = BLOCKFROST_DEFAULT_RPC_URL
+        # filecoin is optional; admin opt-in for Filecoin pinning of rationale JSON.
+        entry["filecoin"] = bool(entry.get("filecoin", False))
     return entry
 
 
@@ -107,13 +109,20 @@ if not IPFS_PRECONFIGS:
 # Indexed by id for fast lookup during pin requests.
 IPFS_PRECONFIGS_BY_ID: Dict[str, dict] = {p["id"]: p for p in IPFS_PRECONFIGS}
 
+
 # Public view exposed to the frontend (never includes secrets).
-IPFS_PRECONFIGS_PUBLIC_JSON = json.dumps(
-    [
-        {"id": p["id"], "label": p["label"], "description": p["description"]}
-        for p in IPFS_PRECONFIGS
-    ]
-)
+# `supportsFilecoin` is always included (default false) so the Elm flag
+# decoder can rely on the field being present.
+def _public_view(p: dict) -> dict:
+    return {
+        "id": p["id"],
+        "label": p["label"],
+        "description": p["description"],
+        "supportsFilecoin": bool(p.get("format") == "blockfrost" and p.get("filecoin")),
+    }
+
+
+IPFS_PRECONFIGS_PUBLIC_JSON = json.dumps([_public_view(p) for p in IPFS_PRECONFIGS])
 
 # Matomo Analytics
 MATOMO_URL = os.getenv("MATOMO_URL")
@@ -278,6 +287,7 @@ class IPFSPinRequest(BaseModel):
     ipfsServer: str | None = None
     headers: List[Tuple[str, str]] | None = None
     preconfigId: str | None = None
+    filecoin: bool = False
 
 
 class IPFSPinJSONRequest(IPFSPinRequest):
@@ -304,19 +314,23 @@ def get_ipfs_config(
     preconfig_id: Optional[str] = None,
     ipfs_server: Optional[str] = None,
     custom_headers: Optional[List[Tuple[str, str]]] = None,
-) -> Tuple[str, Dict[str, str], str]:
-    """Resolve the IPFS endpoint + auth headers and the effective format.
+    filecoin_requested: bool = False,
+) -> Tuple[str, Dict[str, str], str, bool]:
+    """Resolve the IPFS endpoint + auth headers, format, and effective Filecoin flag.
 
     Precedence:
       1. Explicit ipfs_server + custom_headers from the request (custom provider).
       2. The named preconfig (preconfig_id).
       3. The first available preconfig (back-compat).
+
+    The effective Filecoin flag is `True` only when the caller asks for it AND
+    the resolved provider is a Blockfrost preconfig that opted in via `filecoin: true`.
     """
 
     # Explicit custom provider from the request: pass through as-is, format
     # is assumed to be "basic" (kubo-style /add) for custom RPCs.
     if ipfs_server and custom_headers:
-        return ipfs_server, dict(custom_headers), "basic"
+        return ipfs_server, dict(custom_headers), "basic", False
 
     entry = _pick_preconfig(preconfig_id)
     if entry is None:
@@ -343,9 +357,11 @@ def get_ipfs_config(
                 "Accept": "application/json",
             },
             fmt,
+            False,
         )
 
     if fmt == "blockfrost":
+        use_filecoin = bool(filecoin_requested and entry.get("filecoin"))
         return (
             server_url,
             {
@@ -353,6 +369,7 @@ def get_ipfs_config(
                 "Accept": "application/json",
             },
             fmt,
+            use_filecoin,
         )
 
     else:
@@ -368,6 +385,7 @@ def get_ipfs_config(
                 "Accept": "application/json",
             },
             fmt,
+            False,
         )
 
 
@@ -376,11 +394,12 @@ async def pin_to_ipfs_common(
     ipfs_server: Optional[str] = None,
     custom_headers: Optional[List[Tuple[str, str]]] = None,
     preconfig_id: Optional[str] = None,
+    filecoin: bool = False,
 ):
     """Common IPFS pinning logic used by both endpoints."""
     try:
-        server_url, headers, ipfs_format = get_ipfs_config(
-            preconfig_id, ipfs_server, custom_headers
+        server_url, headers, ipfs_format, use_filecoin = get_ipfs_config(
+            preconfig_id, ipfs_server, custom_headers, filecoin_requested=filecoin
         )
 
         # Different handling based on format
@@ -448,9 +467,19 @@ async def pin_to_ipfs_common(
                     detail="Blockfrost IPFS add response missing ipfs_hash",
                 )
 
+            # Blockfrost expects both the query param and the JSON body.
+            # See https://blockfrost.dev/start-building/ipfs/
+            pin_url = f"{server_url}/ipfs/pin/add/{cid}"
+            if use_filecoin:
+                pin_url += "?filecoin=true"
             pin_response = await app.async_client.post(  # type: ignore
-                url=f"{server_url}/ipfs/pin/add/{cid}",
+                url=pin_url,
                 headers=headers,
+                json={
+                    "ipfs_hash": cid,
+                    "state": "queued",
+                    "filecoin": use_filecoin,
+                },
             )
 
             if pin_response.status_code != 200:
@@ -511,11 +540,14 @@ async def pin_file_to_ipfs(
     file: UploadFile,
     ipfs_server: Optional[str] = None,
     preconfig_id: Optional[str] = None,
+    filecoin: bool = False,
 ):
     """Pin a file to IPFS and return the hash.
 
     When `ipfs_server` is not provided, `preconfig_id` selects which
     pre-configured IPFS provider to use (defaults to the first one).
+    `filecoin=true` additionally pins to Filecoin via Blockfrost, but only
+    when the resolved preconfig is Blockfrost and was admin-opted-in.
     """
     logger.info("IPFS file pin attempt")
 
@@ -531,6 +563,7 @@ async def pin_file_to_ipfs(
             ipfs_server=ipfs_server,
             custom_headers=None,
             preconfig_id=preconfig_id,
+            filecoin=filecoin,
         )
 
 
@@ -550,6 +583,7 @@ async def pin_json_to_ipfs(request: IPFSPinJSONRequest):
             ipfs_server=request.ipfsServer,
             custom_headers=request.headers,
             preconfig_id=request.preconfigId,
+            filecoin=request.filecoin,
         )
 
 

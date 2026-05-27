@@ -63,8 +63,8 @@ type alias ApiProvider msg =
     , getVotes : NetworkId -> Gov.Id -> (Result Http.Error (List OnchainVote) -> msg) -> Cmd msg
     , ipfsAddFileCustom : { rpc : String, headers : List ( String, String ), file : File } -> (Result String IpfsAnswer -> msg) -> Cmd msg
     , ipfsAddFileNmkr : { userId : String, apiToken : String, file : File } -> (Result String IpfsAnswer -> msg) -> Cmd msg
-    , ipfsAddFileBlockfrost : { projectId : String, file : File } -> (Result String IpfsAnswer -> msg) -> Cmd msg
-    , ipfsAddFile : { id : String, file : File } -> (Result String IpfsAnswer -> msg) -> Cmd msg
+    , ipfsAddFileBlockfrost : { projectId : String, filecoin : Bool, file : File } -> (Result String IpfsAnswer -> msg) -> Cmd msg
+    , ipfsAddFile : { id : String, filecoin : Bool, file : File } -> (Result String IpfsAnswer -> msg) -> Cmd msg
     , convertToPdf : String -> (Result Http.Error ElmBytes.Bytes -> msg) -> Cmd msg
     , getFromIpfsGateway : (Result Http.Error String -> msg) -> String -> String -> Cmd msg
     , verifyCip100Metadata : String -> (Result Http.Error Cip100VerificationResponse -> msg) -> Cmd msg
@@ -820,8 +820,8 @@ defaultApiProvider =
                     , timeout = Nothing
                     }
 
-            pinRequest : String -> IpfsAnswer -> Task String IpfsAnswer
-            pinRequest projectId ipfsAnswer =
+            pinRequest : String -> Bool -> IpfsAnswer -> Task String IpfsAnswer
+            pinRequest projectId filecoin ipfsAnswer =
                 case ipfsAnswer of
                     IpfsError _ ->
                         Task.succeed ipfsAnswer
@@ -830,13 +830,21 @@ defaultApiProvider =
                         Http.task
                             { method = "POST"
                             , headers = [ Http.header "project_id" projectId ]
-                            , url = "https://ipfs.blockfrost.io/api/v0/ipfs/pin/add/" ++ cid
+                            , url =
+                                "https://ipfs.blockfrost.io/api/v0/ipfs/pin/add/"
+                                    ++ cid
+                                    ++ (if filecoin then
+                                            "?filecoin=true"
+
+                                        else
+                                            ""
+                                       )
                             , body =
                                 Http.jsonBody <|
                                     JE.object
                                         [ ( "ipfs_hash", JE.string cid )
                                         , ( "state", JE.string "queued" )
-                                        , ( "filecoin", JE.bool False )
+                                        , ( "filecoin", JE.bool filecoin )
                                         ]
                             , resolver =
                                 Http.stringResolver
@@ -861,19 +869,29 @@ defaultApiProvider =
                             , timeout = Nothing
                             }
         in
-        \{ projectId, file } toMsg ->
+        \{ projectId, filecoin, file } toMsg ->
             addRequest projectId file
-                |> Task.andThen (pinRequest projectId)
+                |> Task.andThen (pinRequest projectId filecoin)
                 |> Task.attempt toMsg
 
     -- Make a request to the pre-configured IPFS RPC via the server.
     -- `id` selects which pre-configured provider on the backend to use.
+    -- `filecoin` asks the server to also pin to Filecoin; only honored when
+    -- the preconfig is Blockfrost and was admin-opted-in to Filecoin.
     , ipfsAddFile =
-        \{ id, file } toMsg ->
+        \{ id, filecoin, file } toMsg ->
             Http.request
                 { method = "POST"
                 , headers = []
-                , url = "/ipfs-pin/file?preconfig_id=" ++ Url.percentEncode id
+                , url =
+                    "/ipfs-pin/file?preconfig_id="
+                        ++ Url.percentEncode id
+                        ++ (if filecoin then
+                                "&filecoin=true"
+
+                            else
+                                ""
+                           )
                 , body = Http.multipartBody [ Http.filePart "file" file ]
                 , expect = Http.expectStringResponse toMsg responseToIpfsAnswer
                 , timeout = Nothing
