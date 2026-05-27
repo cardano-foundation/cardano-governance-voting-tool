@@ -4461,7 +4461,7 @@ viewStorageConfigStep ctx step =
                     , Html.p [ HA.class "mb-4" ]
                         [ text "Only a link to your rationale is stored on Cardano,"
                         , text " so it's recommended to store the actual file containing the text in a permanent storage solution."
-                        , text " Pick one of the modes below."
+                        , text " Pick one of the below options for storing your rationale."
                         ]
                     , Helper.storageConfigCard "Storage Mode"
                         [ Helper.viewGrid 240
