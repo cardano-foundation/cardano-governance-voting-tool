@@ -467,19 +467,12 @@ async def pin_to_ipfs_common(
                     detail="Blockfrost IPFS add response missing ipfs_hash",
                 )
 
-            # Blockfrost expects both the query param and the JSON body.
-            # See https://blockfrost.dev/start-building/ipfs/
             pin_url = f"{server_url}/ipfs/pin/add/{cid}"
             if use_filecoin:
                 pin_url += "?filecoin=true"
             pin_response = await app.async_client.post(  # type: ignore
                 url=pin_url,
                 headers=headers,
-                json={
-                    "ipfs_hash": cid,
-                    "state": "queued",
-                    "filecoin": use_filecoin,
-                },
             )
 
             if pin_response.status_code != 200:
