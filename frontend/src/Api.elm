@@ -839,13 +839,7 @@ defaultApiProvider =
                                         else
                                             ""
                                        )
-                            , body =
-                                Http.jsonBody <|
-                                    JE.object
-                                        [ ( "ipfs_hash", JE.string cid )
-                                        , ( "state", JE.string "queued" )
-                                        , ( "filecoin", JE.bool filecoin )
-                                        ]
+                            , body = Http.emptyBody
                             , resolver =
                                 Http.stringResolver
                                     (\pinResponse ->
