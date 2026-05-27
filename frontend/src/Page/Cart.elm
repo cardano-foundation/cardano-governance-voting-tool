@@ -951,7 +951,7 @@ buildTx costModels localStateUtxos walletAddress votersIntents hlabsIncentive =
             Dict.fromList (feePayer ++ voterKeys)
 
         message =
-            case List.length allVoteIntents of
+            case countAllVotersVotes votersIntents of
                 1 ->
                     "cfvt: 1 vote"
 
