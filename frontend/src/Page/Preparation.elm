@@ -273,100 +273,6 @@ initUploadProgress kinds =
     { remaining = kinds, succeeded = [], failed = [] }
 
 
-recordUploadResult : ProviderKind -> Result String IpfsAnswer -> IpfsUploadProgress -> IpfsUploadProgress
-recordUploadResult kind result progress =
-    let
-        -- Assumes a single entry per ProviderKind in `remaining`. The form
-        -- enforces this today (one toggle per kind); if that ever changes,
-        -- this filter would clear all duplicates at once.
-        remaining =
-            List.filter ((/=) kind) progress.remaining
-    in
-    case result of
-        Ok (IpfsAddSuccessful file) ->
-            { progress | remaining = remaining, succeeded = ( kind, file ) :: progress.succeeded }
-
-        Ok (IpfsError msg) ->
-            { progress | remaining = remaining, failed = ( kind, msg ) :: progress.failed }
-
-        Err transportErr ->
-            { progress | remaining = remaining, failed = ( kind, transportErr ) :: progress.failed }
-
-
-providerKindLabel : IpfsPreconfig -> ProviderKind -> String
-providerKindLabel ipfsPreconfig kind =
-    case kind of
-        PreconfigKind ->
-            ipfsPreconfig.label
-
-        BlockfrostKind ->
-            "Blockfrost"
-
-        NmkrKind ->
-            "NMKR"
-
-        CustomIpfsKind ->
-            "Custom IPFS"
-
-
-providerKindDescription : IpfsPreconfig -> ProviderKind -> String
-providerKindDescription ipfsPreconfig kind =
-    case kind of
-        PreconfigKind ->
-            ipfsPreconfig.description
-
-        BlockfrostKind ->
-            "Using Blockfrost IPFS server to store your files."
-
-        NmkrKind ->
-            "Using NMKR IPFS server to store your files. Remark that using NMKR own gateway will be faster to access pinned files: https://c-ipfs-gw.nmkr.io/ipfs/{file-hash-here}"
-
-        CustomIpfsKind ->
-            "Using a custom IPFS server configuration to store your files. The RPC should provide the /add?pin=true endpoint with answers equivalent to those described in the official kubo IPFS RPC docs: https://docs.ipfs.tech/reference/kubo/rpc/#api-v0-add"
-
-
-{-| User-facing label/description for the three non-publish storage modes.
-Returns `Nothing` for `StorageIpfs`, whose info is derived per-provider.
--}
-storageConfigInfo : StorageConfig -> Maybe { label : String, description : String }
-storageConfigInfo config =
-    case config of
-        StorageIpfs _ ->
-            Nothing
-
-        StorageCustomHosting ->
-            Just
-                { label = "Custom Storage"
-                , description = "Prepare the rationale with this app, but store it on a custom solution (e.g. on GitHub via permanent links). It is your responsibility to make sure your storage solution is immutable and sustainable."
-                }
-
-        StoragePrepublished ->
-            Just
-                { label = "Custom Storage - Prepublished"
-                , description = "Your rationale is already published, we'll just link to it. It is your responsibility to ensure your storage solution is immutable and sustainable."
-                }
-
-        StorageNoRationale ->
-            Just
-                { label = "No Rationale"
-                , description = "Are you REALLY sure you don’t want to add a rationale? This is NOT RECOMMENDED because proposers, reviewers, and delegators cannot understand the reasoning behind your decision."
-                }
-
-
-storageConfigDescription : StorageConfig -> String
-storageConfigDescription config =
-    storageConfigInfo config
-        |> Maybe.map .description
-        |> Maybe.withDefault ""
-
-
-formatUploadFailures : IpfsPreconfig -> List ( ProviderKind, String ) -> String
-formatUploadFailures ipfsPreconfig failures =
-    failures
-        |> List.map (\( kind, err ) -> providerKindLabel ipfsPreconfig kind ++ ": " ++ err)
-        |> String.join "\n"
-
-
 {-| Validating state for the rationale creation step. While the PDF is being
 auto-generated and uploaded, we keep both the rationale being validated
 and the per-provider upload progress.
@@ -3359,6 +3265,33 @@ handleRationaleIpfsAnswer ipfsPreconfig model form progress kind result =
                 ( model, Cmd.none, Nothing )
 
 
+recordUploadResult : ProviderKind -> Result String IpfsAnswer -> IpfsUploadProgress -> IpfsUploadProgress
+recordUploadResult kind result progress =
+    let
+        -- Assumes a single entry per ProviderKind in `remaining`. The form
+        -- enforces this today (one toggle per kind); if that ever changes,
+        -- this filter would clear all duplicates at once.
+        remaining =
+            List.filter ((/=) kind) progress.remaining
+    in
+    case result of
+        Ok (IpfsAddSuccessful file) ->
+            { progress | remaining = remaining, succeeded = ( kind, file ) :: progress.succeeded }
+
+        Ok (IpfsError msg) ->
+            { progress | remaining = remaining, failed = ( kind, msg ) :: progress.failed }
+
+        Err transportErr ->
+            { progress | remaining = remaining, failed = ( kind, transportErr ) :: progress.failed }
+
+
+formatUploadFailures : IpfsPreconfig -> List ( ProviderKind, String ) -> String
+formatUploadFailures ipfsPreconfig failures =
+    failures
+        |> List.map (\( kind, err ) -> providerKindLabel ipfsPreconfig kind ++ ": " ++ err)
+        |> String.join "\n"
+
+
 
 -- Build Tx Step
 
@@ -4779,6 +4712,38 @@ viewIpfsProviderInfo ipfsPreconfig provider =
                 ]
 
 
+providerKindLabel : IpfsPreconfig -> ProviderKind -> String
+providerKindLabel ipfsPreconfig kind =
+    case kind of
+        PreconfigKind ->
+            ipfsPreconfig.label
+
+        BlockfrostKind ->
+            "Blockfrost"
+
+        NmkrKind ->
+            "NMKR"
+
+        CustomIpfsKind ->
+            "Custom IPFS"
+
+
+providerKindDescription : IpfsPreconfig -> ProviderKind -> String
+providerKindDescription ipfsPreconfig kind =
+    case kind of
+        PreconfigKind ->
+            ipfsPreconfig.description
+
+        BlockfrostKind ->
+            "Using Blockfrost IPFS server to store your files."
+
+        NmkrKind ->
+            "Using NMKR IPFS server to store your files. Remark that using NMKR own gateway will be faster to access pinned files: https://c-ipfs-gw.nmkr.io/ipfs/{file-hash-here}"
+
+        CustomIpfsKind ->
+            "Using a custom IPFS server configuration to store your files. The RPC should provide the /add?pin=true endpoint with answers equivalent to those described in the official kubo IPFS RPC docs: https://docs.ipfs.tech/reference/kubo/rpc/#api-v0-add"
+
+
 
 --
 -- Rationale Step
@@ -4838,6 +4803,41 @@ viewRationaleStep ctx pickProposalStep storageConfigStep step =
                     [ Helper.sectionTitle "Vote Rationale"
                     , Helper.stepNotAvailableCard [ text "Please pick a proposal and validate the storage config step first." ]
                     ]
+
+
+storageConfigDescription : StorageConfig -> String
+storageConfigDescription config =
+    storageConfigInfo config
+        |> Maybe.map .description
+        |> Maybe.withDefault ""
+
+
+{-| User-facing label/description for the three non-publish storage modes.
+Returns `Nothing` for `StorageIpfs`, whose info is derived per-provider.
+-}
+storageConfigInfo : StorageConfig -> Maybe { label : String, description : String }
+storageConfigInfo config =
+    case config of
+        StorageIpfs _ ->
+            Nothing
+
+        StorageCustomHosting ->
+            Just
+                { label = "Custom Storage"
+                , description = "Prepare the rationale with this app, but store it on a custom solution (e.g. on GitHub via permanent links). It is your responsibility to make sure your storage solution is immutable and sustainable."
+                }
+
+        StoragePrepublished ->
+            Just
+                { label = "Custom Storage - Prepublished"
+                , description = "Your rationale is already published, we'll just link to it. It is your responsibility to ensure your storage solution is immutable and sustainable."
+                }
+
+        StorageNoRationale ->
+            Just
+                { label = "No Rationale"
+                , description = "Are you REALLY sure you don’t want to add a rationale? This is NOT RECOMMENDED because proposers, reviewers, and delegators cannot understand the reasoning behind your decision."
+                }
 
 
 isHostingAppControlled : StorageConfig -> Bool
