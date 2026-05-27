@@ -1823,7 +1823,7 @@ storageConfigItem label content =
 
 
 {-| Title + description header used at the top of a provider config block.
-Matches the inline h4 + p block that's repeated across `viewPublishProviderInfo`
+Matches the inline h4 + p block that's repeated across `viewIpfsProviderInfo`
 branches in `Page/Preparation.elm`.
 -}
 storageProviderHeader : String -> String -> Html msg

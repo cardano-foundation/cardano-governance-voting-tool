@@ -135,7 +135,7 @@ init =
         , reloadedLastVoter = False
         , voterStep = Preparing initVoterForm
         , pickProposalStep = Preparing {}
-        , storageConfigStep = Done initStorageConfigForm (StoragePublish [ PreconfigIpfs ])
+        , storageConfigStep = Done initStorageConfigForm (StorageIpfs [ PreconfigIpfs ])
         , rationaleCreationStep = Preparing initRationaleForm
         , rationaleSignatureStep = Preparing initRationaleSignatureForm
         , permanentStorageStep = Preparing initStorageForm
@@ -326,12 +326,12 @@ providerKindDescription ipfsPreconfig kind =
 
 
 {-| User-facing label/description for the three non-publish storage modes.
-Returns `Nothing` for `StoragePublish`, whose info is derived per-provider.
+Returns `Nothing` for `StorageIpfs`, whose info is derived per-provider.
 -}
 storageConfigInfo : StorageConfig -> Maybe { label : String, description : String }
 storageConfigInfo config =
     case config of
-        StoragePublish _ ->
+        StorageIpfs _ ->
             Nothing
 
         StorageCustomHosting ->
@@ -471,7 +471,7 @@ the rationale is either published to IPFS, hosted manually by the user,
 already published, or absent.
 -}
 type StorageMode
-    = ModePublish
+    = ModeIpfs
     | ModeCustomHosting
     | ModePrepublished
     | ModeNoStorage
@@ -541,7 +541,7 @@ type alias StorageConfigForm =
 
 initStorageConfigForm : StorageConfigForm
 initStorageConfigForm =
-    { mode = ModePublish
+    { mode = ModeIpfs
     , publishSet = { emptyPublishSet | preconfig = True }
     , nmkrUserId = ""
     , nmkrApiToken = ""
@@ -555,9 +555,9 @@ initStorageConfigForm =
 formFromStorageConfig : StorageConfig -> StorageConfigForm
 formFromStorageConfig config =
     case config of
-        StoragePublish providers ->
+        StorageIpfs providers ->
             List.foldl applyProviderToForm
-                { initStorageConfigForm | mode = ModePublish, publishSet = emptyPublishSet }
+                { initStorageConfigForm | mode = ModeIpfs, publishSet = emptyPublishSet }
                 providers
 
         StorageCustomHosting ->
@@ -570,7 +570,7 @@ formFromStorageConfig config =
             { initStorageConfigForm | mode = ModeNoStorage, publishSet = emptyPublishSet }
 
 
-applyProviderToForm : PublishProvider -> StorageConfigForm -> StorageConfigForm
+applyProviderToForm : IpfsProvider -> StorageConfigForm -> StorageConfigForm
 applyProviderToForm provider form =
     case provider of
         PreconfigIpfs ->
@@ -602,14 +602,14 @@ The user-facing label and description for each variant are not stored
 on the variant itself; they are derived at view time from `ProviderKind`
 (and, for `PreconfigIpfs`, from the app-init `IpfsPreconfig`).
 -}
-type PublishProvider
+type IpfsProvider
     = PreconfigIpfs
     | BlockfrostIpfs { projectId : String }
     | NmkrIpfs { userId : String, apiToken : String }
     | CustomIpfsProvider { ipfsServer : String, headers : List ( String, String ) }
 
 
-providerKind : PublishProvider -> ProviderKind
+providerKind : IpfsProvider -> ProviderKind
 providerKind provider =
     case provider of
         PreconfigIpfs ->
@@ -626,16 +626,16 @@ providerKind provider =
 
 
 type StorageConfig
-    = StoragePublish (List PublishProvider)
+    = StorageIpfs (List IpfsProvider)
     | StorageCustomHosting
     | StoragePrepublished
     | StorageNoRationale
 
 
-storedProviders : StorageConfig -> List PublishProvider
+storedProviders : StorageConfig -> List IpfsProvider
 storedProviders config =
     case config of
-        StoragePublish providers ->
+        StorageIpfs providers ->
             providers
 
         _ ->
@@ -646,16 +646,16 @@ storedProviders config =
 -}
 initStorageConfig : StorageConfig
 initStorageConfig =
-    StoragePublish [ PreconfigIpfs ]
+    StorageIpfs [ PreconfigIpfs ]
 
 
 encodeStorageConfig : StorageConfig -> JE.Value
 encodeStorageConfig config =
     case config of
-        StoragePublish providers ->
+        StorageIpfs providers ->
             JE.object
-                [ ( "kind", JE.string "StoragePublish" )
-                , ( "providers", JE.list encodePublishProvider providers )
+                [ ( "kind", JE.string "StorageIpfs" )
+                , ( "providers", JE.list encodeIpfsProvider providers )
                 ]
 
         StorageCustomHosting ->
@@ -668,8 +668,8 @@ encodeStorageConfig config =
             JE.object [ ( "kind", JE.string "StorageNoRationale" ) ]
 
 
-encodePublishProvider : PublishProvider -> JE.Value
-encodePublishProvider provider =
+encodeIpfsProvider : IpfsProvider -> JE.Value
+encodeIpfsProvider provider =
     case provider of
         PreconfigIpfs ->
             JE.object [ ( "type", JE.string "PreconfigIpfs" ) ]
@@ -713,9 +713,9 @@ storageConfigDecoder =
         |> JD.andThen
             (\kind ->
                 case kind of
-                    "StoragePublish" ->
-                        JD.field "providers" (JD.list publishProviderDecoder)
-                            |> JD.map StoragePublish
+                    "StorageIpfs" ->
+                        JD.field "providers" (JD.list ipfsProviderDecoder)
+                            |> JD.map StorageIpfs
 
                     "StorageCustomHosting" ->
                         JD.succeed StorageCustomHosting
@@ -731,8 +731,8 @@ storageConfigDecoder =
             )
 
 
-publishProviderDecoder : JD.Decoder PublishProvider
-publishProviderDecoder =
+ipfsProviderDecoder : JD.Decoder IpfsProvider
+ipfsProviderDecoder =
     JD.field "type" JD.string
         |> JD.andThen
             (\providerType ->
@@ -898,7 +898,7 @@ type Msg
     | GotCip100Verification String (Result Http.Error Api.Cip100VerificationResponse)
       -- Storage Config Step
     | StorageModeSelected StorageMode
-    | PublishProviderToggled ProviderKind Bool
+    | IpfsProviderToggled ProviderKind Bool
     | BlockfrostProjectIdChange String
     | NmkrUserIdChange String
     | NmkrApiTokenChange String
@@ -1282,7 +1282,7 @@ innerUpdate ctx msg model =
             , Nothing
             )
 
-        PublishProviderToggled kind value ->
+        IpfsProviderToggled kind value ->
             ( updateStorageConfigForm
                 (\form -> { form | publishSet = publishSetSet kind value form.publishSet })
                 model
@@ -2497,17 +2497,17 @@ validateIpfsForm form =
         ModeNoStorage ->
             Ok StorageNoRationale
 
-        ModePublish ->
+        ModeIpfs ->
             if publishSetIsEmpty form.publishSet then
                 Err "Please select at least one IPFS provider, or pick another mode."
 
             else
-                buildPublishProviders form
-                    |> Result.map StoragePublish
+                buildIpfsProviders form
+                    |> Result.map StorageIpfs
 
 
-buildPublishProviders : StorageConfigForm -> Result String (List PublishProvider)
-buildPublishProviders form =
+buildIpfsProviders : StorageConfigForm -> Result String (List IpfsProvider)
+buildIpfsProviders form =
     let
         s =
             form.publishSet
@@ -2844,7 +2844,7 @@ pinPdfFile fileAsValue (Model model) =
             ( Model model, Cmd.none )
 
 
-uploadFileCmd : File -> PublishProvider -> Cmd Msg
+uploadFileCmd : File -> IpfsProvider -> Cmd Msg
 uploadFileCmd file provider =
     case provider of
         PreconfigIpfs ->
@@ -4606,13 +4606,13 @@ viewStorageConfigStep ctx step =
                         ]
                     , Helper.storageConfigCard "Storage Mode"
                         [ Helper.viewGrid 240
-                            [ Helper.storageMethodOption "Publish to IPFS" (form.mode == ModePublish) (StorageModeSelected ModePublish)
+                            [ Helper.storageMethodOption "Publish to IPFS" (form.mode == ModeIpfs) (StorageModeSelected ModeIpfs)
                             , Helper.storageMethodOption "No Rationale" (form.mode == ModeNoStorage) (StorageModeSelected ModeNoStorage)
                             , Helper.storageMethodOption "Custom Storage" (form.mode == ModeCustomHosting) (StorageModeSelected ModeCustomHosting)
                             , Helper.storageMethodOption "Custom Storage - Prepublished" (form.mode == ModePrepublished) (StorageModeSelected ModePrepublished)
                             ]
-                        , if form.mode == ModePublish then
-                            viewPublishProviderSelection ctx form
+                        , if form.mode == ModeIpfs then
+                            viewIpfsProviderSelection ctx form
 
                           else
                             text ""
@@ -4637,8 +4637,8 @@ viewStorageConfigStep ctx step =
                 ]
 
 
-viewPublishProviderSelection : ViewContext msg -> StorageConfigForm -> Html Msg
-viewPublishProviderSelection ctx form =
+viewIpfsProviderSelection : ViewContext msg -> StorageConfigForm -> Html Msg
+viewIpfsProviderSelection ctx form =
     let
         s =
             form.publishSet
@@ -4649,10 +4649,10 @@ viewPublishProviderSelection ctx form =
             , sub = "Pick one or more. We upload to each; the step passes if any succeed."
             }
             [ Helper.viewGrid 240
-                [ Helper.storageMethodCheckbox (providerKindLabel ctx.ipfsPreconfig PreconfigKind) s.preconfig (PublishProviderToggled PreconfigKind (not s.preconfig))
-                , Helper.storageMethodCheckbox (providerKindLabel ctx.ipfsPreconfig BlockfrostKind) s.blockfrost (PublishProviderToggled BlockfrostKind (not s.blockfrost))
-                , Helper.storageMethodCheckbox (providerKindLabel ctx.ipfsPreconfig NmkrKind) s.nmkr (PublishProviderToggled NmkrKind (not s.nmkr))
-                , Helper.storageMethodCheckbox (providerKindLabel ctx.ipfsPreconfig CustomIpfsKind) s.customIpfs (PublishProviderToggled CustomIpfsKind (not s.customIpfs))
+                [ Helper.storageMethodCheckbox (providerKindLabel ctx.ipfsPreconfig PreconfigKind) s.preconfig (IpfsProviderToggled PreconfigKind (not s.preconfig))
+                , Helper.storageMethodCheckbox (providerKindLabel ctx.ipfsPreconfig BlockfrostKind) s.blockfrost (IpfsProviderToggled BlockfrostKind (not s.blockfrost))
+                , Helper.storageMethodCheckbox (providerKindLabel ctx.ipfsPreconfig NmkrKind) s.nmkr (IpfsProviderToggled NmkrKind (not s.nmkr))
+                , Helper.storageMethodCheckbox (providerKindLabel ctx.ipfsPreconfig CustomIpfsKind) s.customIpfs (IpfsProviderToggled CustomIpfsKind (not s.customIpfs))
                 ]
             ]
         , if s.blockfrost then
@@ -4758,13 +4758,13 @@ viewCustomIpfsForm form =
 viewStorageConfigInfo : IpfsPreconfig -> StorageConfig -> Html msg
 viewStorageConfigInfo ipfsPreconfig config =
     case config of
-        StoragePublish providers ->
+        StorageIpfs providers ->
             div
                 [ HA.style "display" "flex"
                 , HA.style "flex-direction" "column"
                 , HA.style "gap" "1rem"
                 ]
-                (List.map (viewPublishProviderInfo ipfsPreconfig) providers)
+                (List.map (viewIpfsProviderInfo ipfsPreconfig) providers)
 
         _ ->
             case storageConfigInfo config of
@@ -4791,8 +4791,8 @@ defaultStorageConfigInfo label description =
         ]
 
 
-viewPublishProviderInfo : IpfsPreconfig -> PublishProvider -> Html msg
-viewPublishProviderInfo ipfsPreconfig provider =
+viewIpfsProviderInfo : IpfsPreconfig -> IpfsProvider -> Html msg
+viewIpfsProviderInfo ipfsPreconfig provider =
     let
         kind =
             providerKind provider
@@ -4918,7 +4918,7 @@ viewRationaleStep ctx pickProposalStep storageConfigStep step =
 isHostingAppControlled : StorageConfig -> Bool
 isHostingAppControlled storageConfig =
     case storageConfig of
-        StoragePublish _ ->
+        StorageIpfs _ ->
             True
 
         _ ->
