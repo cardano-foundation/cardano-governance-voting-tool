@@ -2096,9 +2096,17 @@ governanceTools =
       , url = "https://tempo.vote"
       , description = "An alternative comprehensive platform aiming to support all aspects of Cardano governance."
       }
+    , { name = "DAVEgov"
+      , url = "https://governance.cardano-visualisation.com/"
+      , description = "Gov-related data analysis and visualization, focused on DRep activity."
+      }
     , { name = "CardanoCube Governance"
       , url = "https://www.cardanocube.com/governance"
       , description = "Governance activity feed & browse DReps and proposals."
+      }
+    , { name = "DRep.fun"
+      , url = "https://www.drep.fun/"
+      , description = "Minimalist tool for DReps to vote on proposals."
       }
     , { name = "governancespace.com"
       , url = "https://governancespace.com"
