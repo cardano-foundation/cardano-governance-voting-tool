@@ -109,6 +109,7 @@ if not IPFS_PRECONFIGS:
 # Indexed by id for fast lookup during pin requests.
 IPFS_PRECONFIGS_BY_ID: Dict[str, dict] = {p["id"]: p for p in IPFS_PRECONFIGS}
 
+
 # Public view exposed to the frontend (never includes secrets).
 # `supportsFilecoin` is always included (default false) so the Elm flag
 # decoder can rely on the field being present.
@@ -117,9 +118,7 @@ def _public_view(p: dict) -> dict:
         "id": p["id"],
         "label": p["label"],
         "description": p["description"],
-        "supportsFilecoin": bool(
-            p.get("format") == "blockfrost" and p.get("filecoin")
-        ),
+        "supportsFilecoin": bool(p.get("format") == "blockfrost" and p.get("filecoin")),
     }
 
 
