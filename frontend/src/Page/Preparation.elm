@@ -432,6 +432,7 @@ type alias StorageConfigForm =
     , nmkrUserId : String
     , nmkrApiToken : String
     , blockfrostProjectId : String
+    , blockfrostFilecoin : Bool
     , ipfsServer : String
     , headers : List ( String, String )
     , error : Maybe String
@@ -445,6 +446,7 @@ initStorageConfigForm =
     , nmkrUserId = ""
     , nmkrApiToken = ""
     , blockfrostProjectId = ""
+    , blockfrostFilecoin = False
     , ipfsServer = "https://ipfs-rpc.mycompany.org/api/v0"
     , headers = [ ( "Authorization", "Basic {token}" ) ]
     , error = Nothing
@@ -475,10 +477,11 @@ applyProviderToForm provider form =
         PreconfigIpfs { id } ->
             { form | publishSet = PreconfigKind id :: form.publishSet }
 
-        BlockfrostIpfs { projectId } ->
+        BlockfrostIpfs { projectId, filecoin } ->
             { form
                 | publishSet = BlockfrostKind :: form.publishSet
                 , blockfrostProjectId = projectId
+                , blockfrostFilecoin = filecoin
             }
 
         NmkrIpfs { userId, apiToken } ->
@@ -503,7 +506,7 @@ on the variant itself; they are derived at view time from `ProviderKind`
 -}
 type IpfsProvider
     = PreconfigIpfs { id : String }
-    | BlockfrostIpfs { projectId : String }
+    | BlockfrostIpfs { projectId : String, filecoin : Bool }
     | NmkrIpfs { userId : String, apiToken : String }
     | CustomIpfsProvider { ipfsServer : String, headers : List ( String, String ) }
 
@@ -570,10 +573,11 @@ encodeIpfsProvider provider =
                 , ( "id", JE.string id )
                 ]
 
-        BlockfrostIpfs { projectId } ->
+        BlockfrostIpfs { projectId, filecoin } ->
             JE.object
                 [ ( "type", JE.string "BlockfrostIpfs" )
                 , ( "projectId", JE.string projectId )
+                , ( "filecoin", JE.bool filecoin )
                 ]
 
         NmkrIpfs { userId, apiToken } ->
@@ -664,8 +668,9 @@ ipfsProviderDecoder ipfsPreconfig =
                                 )
 
                     "BlockfrostIpfs" ->
-                        JD.map (\projectId -> BlockfrostIpfs { projectId = projectId })
+                        JD.map2 (\projectId filecoin -> BlockfrostIpfs { projectId = projectId, filecoin = filecoin })
                             (JD.field "projectId" JD.string)
+                            (JD.oneOf [ JD.field "filecoin" JD.bool, JD.succeed False ])
 
                     "NmkrIpfs" ->
                         JD.map2 (\userId apiToken -> NmkrIpfs { userId = userId, apiToken = apiToken })
@@ -823,6 +828,7 @@ type Msg
     | StorageModeSelected StorageMode
     | IpfsProviderToggled ProviderKind
     | BlockfrostProjectIdChange String
+    | BlockfrostFilecoinToggled Bool
     | NmkrUserIdChange String
     | NmkrApiTokenChange String
     | IpfsServerChange String
@@ -882,12 +888,14 @@ type Msg
 {-| The set of pre-configured IPFS providers exposed by the server.
 
 Each entry is identified by a stable `id` (a slug from the backend config).
-Only public metadata (label, description) is included; secrets such as API
-tokens stay on the backend and are looked up by id at upload time.
+Only public metadata (label, description, supportsFilecoin) is included;
+secrets such as API tokens stay on the backend and are looked up by id at
+upload time. `supportsFilecoin` is `True` when the backend admin opted this
+preconfig in to Filecoin pinning for rationale JSON.
 
 -}
 type alias IpfsPreconfig =
-    List { id : String, label : String, description : String }
+    List { id : String, label : String, description : String, supportsFilecoin : Bool }
 
 
 {-| Configuration required by the update function.
@@ -1222,6 +1230,12 @@ innerUpdate ctx msg model =
 
         BlockfrostProjectIdChange projectId ->
             ( updateStorageConfigForm (\form -> { form | blockfrostProjectId = projectId }) model
+            , Cmd.none
+            , Nothing
+            )
+
+        BlockfrostFilecoinToggled filecoin ->
+            ( updateStorageConfigForm (\form -> { form | blockfrostFilecoin = filecoin }) model
             , Cmd.none
             , Nothing
             )
@@ -2450,7 +2464,7 @@ buildIpfsProviders form =
                             Err "Missing blockfrost project id"
 
                         projectId ->
-                            Ok (BlockfrostIpfs { projectId = projectId })
+                            Ok (BlockfrostIpfs { projectId = projectId, filecoin = form.blockfrostFilecoin })
 
                 NmkrKind ->
                     case String.trim form.nmkrUserId of
@@ -2721,8 +2735,8 @@ rationaleFromForm form =
     }
 
 
-pinPdfFile : JD.Value -> Model -> ( Model, Cmd Msg )
-pinPdfFile fileAsValue (Model model) =
+pinPdfFile : IpfsPreconfig -> JD.Value -> Model -> ( Model, Cmd Msg )
+pinPdfFile ipfsPreconfig fileAsValue (Model model) =
     case ( JD.decodeValue File.decoder fileAsValue, model.storageConfigStep, model.rationaleCreationStep ) of
         ( Err error, _, Validating form _ ) ->
             ( Model { model | rationaleCreationStep = Preparing { form | error = Just <| JD.errorToString error } }
@@ -2736,7 +2750,8 @@ pinPdfFile fileAsValue (Model model) =
                         Validating form
                             { validating | uploads = initUploadProgress (List.map providerKind providers) }
                 }
-            , Cmd.batch (List.map (uploadFileCmd file) providers)
+              -- The auto-generated PDF never goes to Filecoin; only the JSON rationale does.
+            , Cmd.batch (List.map (uploadFileCmd ipfsPreconfig { filecoinIsDesired = False } file) providers)
             )
 
         -- Ignore if we aren't validating the rationale storage step
@@ -2744,17 +2759,35 @@ pinPdfFile fileAsValue (Model model) =
             ( Model model, Cmd.none )
 
 
-uploadFileCmd : File -> IpfsProvider -> Cmd Msg
-uploadFileCmd file provider =
+{-| Upload a file to one of the configured IPFS providers.
+
+`filecoinIsDesired` is set by the caller depending on what's being uploaded:
+True for rationale JSON, False for the auto-generated PDF. It's combined with
+the per-provider opt-in (Blockfrost's `filecoin` flag, or the backend
+preconfig's `supportsFilecoin` flag from `IpfsPreconfig`) so Filecoin pinning
+is enabled only when the provider supports it AND the caller asks for it.
+
+-}
+uploadFileCmd : IpfsPreconfig -> { filecoinIsDesired : Bool } -> File -> IpfsProvider -> Cmd Msg
+uploadFileCmd ipfsPreconfig { filecoinIsDesired } file provider =
     case provider of
         PreconfigIpfs { id } ->
+            let
+                preconfigSupportsFilecoin =
+                    lookupPreconfig ipfsPreconfig id
+                        |> Maybe.map .supportsFilecoin
+                        |> Maybe.withDefault False
+            in
             Api.defaultApiProvider.ipfsAddFile
-                { id = id, file = file }
+                { id = id
+                , filecoin = filecoinIsDesired && preconfigSupportsFilecoin
+                , file = file
+                }
                 (GotIpfsAnswer (PreconfigKind id))
 
-        BlockfrostIpfs { projectId } ->
+        BlockfrostIpfs { projectId, filecoin } ->
             Api.defaultApiProvider.ipfsAddFileBlockfrost
-                { projectId = projectId, file = file }
+                { projectId = projectId, filecoin = filecoinIsDesired && filecoin, file = file }
                 (GotIpfsAnswer BlockfrostKind)
 
         NmkrIpfs { userId, apiToken } ->
@@ -3143,8 +3176,8 @@ sendPinRequest ctx form model =
             )
 
 
-pinRationaleFile : JD.Value -> Model -> ( Model, Cmd Msg )
-pinRationaleFile fileAsValue (Model model) =
+pinRationaleFile : IpfsPreconfig -> JD.Value -> Model -> ( Model, Cmd Msg )
+pinRationaleFile ipfsPreconfig fileAsValue (Model model) =
     case ( JD.decodeValue File.decoder fileAsValue, model.storageConfigStep, model.permanentStorageStep ) of
         ( Err error, _, Validating form _ ) ->
             ( Model { model | permanentStorageStep = Preparing { form | error = Just <| JD.errorToString error } }
@@ -3157,7 +3190,8 @@ pinRationaleFile fileAsValue (Model model) =
                     | permanentStorageStep =
                         Validating form (initUploadProgress (List.map providerKind providers))
                 }
-            , Cmd.batch (List.map (uploadFileCmd file) providers)
+              -- Rationale JSON: opt into Filecoin where the provider allows it.
+            , Cmd.batch (List.map (uploadFileCmd ipfsPreconfig { filecoinIsDesired = True } file) providers)
             )
 
         -- Ignore if we aren't validating the rationale storage step
@@ -4614,6 +4648,20 @@ viewBlockfrostForm form =
             , value = form.blockfrostProjectId
             , onInputMsg = BlockfrostProjectIdChange
             }
+        , div [ HA.style "margin-top" "1rem" ]
+            [ Helper.checkbox
+                { id = "blockfrost-filecoin"
+                , label = " Also pin the rationale JSON to Filecoin"
+                }
+                form.blockfrostFilecoin
+                BlockfrostFilecoinToggled
+            , Html.p
+                [ HA.style "opacity" "0.7"
+                , HA.style "font-size" "0.9em"
+                , HA.style "margin-top" "0.25rem"
+                ]
+                [ text "Note: Filecoin pin completion can take up to 72 hours." ]
+            ]
         ]
 
 
@@ -4740,7 +4788,7 @@ viewIpfsProviderInfo ipfsPreconfig provider =
         PreconfigIpfs _ ->
             defaultStorageConfigInfo label description
 
-        BlockfrostIpfs { projectId } ->
+        BlockfrostIpfs { projectId, filecoin } ->
             Helper.storageProviderCard
                 [ Helper.storageProviderHeader label description
                 , Helper.storageConfigItem "Project ID"
@@ -4749,6 +4797,17 @@ viewIpfsProviderInfo ipfsPreconfig provider =
                         , HA.style "word-break" "break-all"
                         ]
                         [ text (String.left 10 projectId ++ "..." ++ String.right 6 projectId) ]
+                    )
+                , Helper.storageConfigItem "Filecoin pinning"
+                    (Html.p []
+                        [ text
+                            (if filecoin then
+                                "Enabled (rationale JSON only)"
+
+                             else
+                                "Disabled"
+                            )
+                        ]
                     )
                 ]
 
@@ -4791,9 +4850,16 @@ providerKindLabel : IpfsPreconfig -> ProviderKind -> String
 providerKindLabel ipfsPreconfig kind =
     case kind of
         PreconfigKind id ->
-            lookupPreconfig ipfsPreconfig id
-                |> Maybe.map .label
-                |> Maybe.withDefault ("Pre-configured IPFS (" ++ id ++ ")")
+            case lookupPreconfig ipfsPreconfig id of
+                Just preconfig ->
+                    if preconfig.supportsFilecoin then
+                        preconfig.label ++ " (with Filecoin)"
+
+                    else
+                        preconfig.label
+
+                Nothing ->
+                    "Pre-configured IPFS (" ++ id ++ ")"
 
         BlockfrostKind ->
             "Blockfrost"
@@ -4809,9 +4875,17 @@ providerKindDescription : IpfsPreconfig -> ProviderKind -> String
 providerKindDescription ipfsPreconfig kind =
     case kind of
         PreconfigKind id ->
-            lookupPreconfig ipfsPreconfig id
-                |> Maybe.map .description
-                |> Maybe.withDefault "Pre-configured IPFS server (no longer available)."
+            case lookupPreconfig ipfsPreconfig id of
+                Just preconfig ->
+                    if preconfig.supportsFilecoin then
+                        preconfig.description
+                            ++ " The rationale JSON is also pinned to Filecoin (completion may take up to 72 hours)."
+
+                    else
+                        preconfig.description
+
+                Nothing ->
+                    "Pre-configured IPFS server (no longer available)."
 
         BlockfrostKind ->
             "Using Blockfrost IPFS server to store your files."
@@ -4823,7 +4897,7 @@ providerKindDescription ipfsPreconfig kind =
             "Using a custom IPFS server configuration to store your files. The RPC should provide the /add?pin=true endpoint with answers equivalent to those described in the official kubo IPFS RPC docs: https://docs.ipfs.tech/reference/kubo/rpc/#api-v0-add"
 
 
-lookupPreconfig : IpfsPreconfig -> String -> Maybe { id : String, label : String, description : String }
+lookupPreconfig : IpfsPreconfig -> String -> Maybe { id : String, label : String, description : String, supportsFilecoin : Bool }
 lookupPreconfig ipfsPreconfig id =
     List.Extra.find (\p -> p.id == id) ipfsPreconfig
 

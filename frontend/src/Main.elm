@@ -689,7 +689,7 @@ update msg model =
         ( GotPdfAsFile file, { page } ) ->
             case page of
                 PreparationPage pageModel ->
-                    Page.Preparation.pinPdfFile file pageModel
+                    Page.Preparation.pinPdfFile model.ipfsPreconfig file pageModel
                         |> Tuple.mapFirst (\newPageModel -> { model | page = PreparationPage newPageModel })
                         |> Tuple.mapSecond (Cmd.map PreparationPageMsg)
 
@@ -699,7 +699,7 @@ update msg model =
         ( GotRationaleAsFile file, { page } ) ->
             case page of
                 PreparationPage pageModel ->
-                    Page.Preparation.pinRationaleFile file pageModel
+                    Page.Preparation.pinRationaleFile model.ipfsPreconfig file pageModel
                         |> Tuple.mapFirst (\newPageModel -> { model | page = PreparationPage newPageModel })
                         |> Tuple.mapSecond (Cmd.map PreparationPageMsg)
 
