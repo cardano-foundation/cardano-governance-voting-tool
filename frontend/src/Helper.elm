@@ -2899,8 +2899,30 @@ storageNotAvailableCard =
 
 {-| Card for the initial upload state
 -}
-storageUploadCard : msg -> Html msg -> Html msg
-storageUploadCard uploadMsg errorDisplay =
+storageUploadCard : Maybe { isChecked : Bool, onToggle : Bool -> msg } -> msg -> Html msg -> Html msg
+storageUploadCard filecoinCheckbox uploadMsg errorDisplay =
+    let
+        filecoinSection =
+            case filecoinCheckbox of
+                Just { isChecked, onToggle } ->
+                    div [ HA.style "margin-bottom" "1.5rem" ]
+                        [ checkbox
+                            { id = "storage-filecoin"
+                            , label = " Also pin the rationale JSON to Filecoin"
+                            }
+                            isChecked
+                            onToggle
+                        , Html.p
+                            [ HA.style "opacity" "0.7"
+                            , HA.style "font-size" "0.9em"
+                            , HA.style "margin-top" "0.25rem"
+                            ]
+                            [ text "Uncheck this if you don't want to waste a Filecoin pin. Note: Filecoin pin completion can take up to 72 hours." ]
+                        ]
+
+                Nothing ->
+                    text ""
+    in
     div []
         [ storageStepCard
             "Store on IPFS"
@@ -2910,6 +2932,7 @@ storageUploadCard uploadMsg errorDisplay =
                 , HA.style "color" "#4A5568"
                 ]
                 [ text "Your document will be stored using the configuration you selected earlier. The CID (content identifier) will be included with your vote transaction." ]
+            , filecoinSection
             , errorDisplay
             ]
         , viewButton "📤 Upload to IPFS" uploadMsg
