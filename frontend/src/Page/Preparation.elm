@@ -2447,7 +2447,8 @@ validateIpfsForm form =
 
             else
                 buildIpfsProviders form
-                    |> Result.map StorageIpfs
+                    -- Sort the IPFS providers with pre-configured ones first
+                    |> Result.map (List.sortBy (providerKind >> ipfsProviderOrder) >> StorageIpfs)
 
 
 buildIpfsProviders : StorageConfigForm -> Result String (List IpfsProvider)
@@ -4745,6 +4746,7 @@ viewStorageConfigInfo ipfsPreconfig config =
                 , HA.style "flex-direction" "column"
                 , HA.style "gap" "1rem"
                 ]
+                -- ipfsProviderOrder
                 (List.map (viewIpfsProviderInfo ipfsPreconfig) providers)
 
         _ ->
@@ -4853,22 +4855,22 @@ providerKindLabel ipfsPreconfig kind =
             case lookupPreconfig ipfsPreconfig id of
                 Just preconfig ->
                     if preconfig.supportsFilecoin then
-                        preconfig.label ++ " (with Filecoin)"
+                        preconfig.label ++ " (with optional Filecoin)"
 
                     else
                         preconfig.label
 
                 Nothing ->
-                    "Pre-configured IPFS (" ++ id ++ ")"
+                    "IPFS, Pre-configured (" ++ id ++ ")"
 
         BlockfrostKind ->
-            "Blockfrost"
+            "IPFS, Own Blockfrost"
 
         NmkrKind ->
-            "NMKR"
+            "IPFS, Own NMKR"
 
         CustomIpfsKind ->
-            "Custom IPFS"
+            "IPFS, Custom"
 
 
 providerKindDescription : IpfsPreconfig -> ProviderKind -> String
@@ -4877,21 +4879,16 @@ providerKindDescription ipfsPreconfig kind =
         PreconfigKind id ->
             case lookupPreconfig ipfsPreconfig id of
                 Just preconfig ->
-                    if preconfig.supportsFilecoin then
-                        preconfig.description
-                            ++ " The rationale JSON is also pinned to Filecoin (completion may take up to 72 hours)."
-
-                    else
-                        preconfig.description
+                    preconfig.description
 
                 Nothing ->
-                    "Pre-configured IPFS server (no longer available)."
+                    "Pre-configured IPFS server (unavailable)."
 
         BlockfrostKind ->
-            "Using Blockfrost IPFS server to store your files."
+            "Using your own Blockfrost account to upload your vote rationale to IPFS."
 
         NmkrKind ->
-            "Using NMKR IPFS server to store your files. Remark that using NMKR own gateway will be faster to access pinned files: https://c-ipfs-gw.nmkr.io/ipfs/{file-hash-here}"
+            "Using your own NMKR account to upload your vote rationale to IPFS."
 
         CustomIpfsKind ->
             "Using a custom IPFS server configuration to store your files. The RPC should provide the /add?pin=true endpoint with answers equivalent to those described in the official kubo IPFS RPC docs: https://docs.ipfs.tech/reference/kubo/rpc/#api-v0-add"
