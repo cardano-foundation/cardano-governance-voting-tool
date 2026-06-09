@@ -2806,7 +2806,7 @@ uploadFileCmd ipfsPreconfig { filecoinIsDesired } file provider =
 
 
 {-| Whether at least one of the configured providers can pin the rationale JSON
-to Filecoin (Blockfrost with its Filecoin flag on, or a backend preconfig that
+to Filecoin (Blockfrost, which is always capable, or a backend preconfig that
 opted in). When this is `False`, there is no Filecoin choice to offer the user.
 -}
 providersAllowFilecoin : IpfsPreconfig -> List IpfsProvider -> Bool
@@ -5503,19 +5503,14 @@ viewPermanentStorageStep ctx pickProposalStep rationaleSignatureStep storageConf
                             [ Helper.viewButton "Check Rationale URI" CheckRationaleUrlButtonClicked ]
                         ]
 
-                ( Done _ storageConfig, Done _ _, Preparing form ) ->
+                ( Done _ (StorageIpfs providers), Done _ _, Preparing form ) ->
                     let
                         filecoinCheckbox =
-                            case storageConfig of
-                                StorageIpfs providers ->
-                                    if providersAllowFilecoin ctx.ipfsPreconfig providers then
-                                        Just { isChecked = form.filecoinDesired, onToggle = StorageFilecoinToggled }
+                            if providersAllowFilecoin ctx.ipfsPreconfig providers then
+                                Just { isChecked = form.filecoinDesired, onToggle = StorageFilecoinToggled }
 
-                                    else
-                                        Nothing
-
-                                _ ->
-                                    Nothing
+                            else
+                                Nothing
                     in
                     Helper.storageUploadCard filecoinCheckbox PinJsonIpfsButtonClicked (viewError form.error)
 
