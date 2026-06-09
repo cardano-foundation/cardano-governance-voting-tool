@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import json
 import logging
@@ -16,7 +17,7 @@ import httpx
 from brotli_asgi import BrotliMiddleware
 from dotenv import load_dotenv
 from fastapi import Body, FastAPI, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
@@ -154,6 +155,28 @@ DEFAULT_OG_DESCRIPTION = (
 PROPOSAL_OG_DESCRIPTION = "Vote on this proposal at voting.cardanofoundation.org."
 OG_IMAGE_URL = "https://voting.cardanofoundation.org/logo/og-image.jpg"
 
+# Absolute base for the (dynamic) per-proposal card URL injected into og:image.
+# Crawlers fetch this URL, so it must be public and absolute.
+OG_BASE_URL = os.getenv("OG_BASE_URL", "https://voting.cardanofoundation.org")
+
+# Per-proposal cards are rendered once, then cached on disk. Proposal off-chain
+# metadata is immutable, so a rendered card never goes stale and repeat crawls
+# become plain static-file serves. Pillow is optional: if it (or a usable font)
+# is missing, we degrade gracefully to the generic static image.
+OG_CARD_CACHE_DIR = Path(os.getenv("OG_CARD_CACHE_DIR", tempfile.gettempdir())) / "og-cards"
+try:
+    from og_card import render_proposal_card
+
+    OG_CARD_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    _OG_CARD_AVAILABLE = True
+except Exception as e:  # pragma: no cover - depends on optional Pillow install
+    logger.warning(f"OG card rendering unavailable ({e}); using static image")
+    _OG_CARD_AVAILABLE = False
+
+
+def _og_network_slug(network_id: Optional[str]) -> str:
+    return "mainnet" if network_id == "Mainnet" else "preview"
+
 # Koios endpoints used to resolve a proposal's off-chain title
 # (meta_json.body.title). The network comes from the request's `networkId`
 # query param ("Mainnet"/"Preview"), since a proposal id is network-specific.
@@ -256,13 +279,13 @@ async def fetch_proposal_title(
     return title
 
 
-def _og_context(title: Optional[str]) -> dict:
+def _og_context(title: Optional[str], image_url: Optional[str] = None) -> dict:
     """Open Graph template variables: proposal-specific when a title is known."""
     if title:
         return {
             "og_title": title,
             "og_description": PROPOSAL_OG_DESCRIPTION,
-            "og_image": OG_IMAGE_URL,
+            "og_image": image_url or OG_IMAGE_URL,
         }
     return {
         "og_title": DEFAULT_OG_TITLE,
@@ -334,9 +357,45 @@ async def get_page(full_path: str, request: Request):
     proposal_id = request.query_params.get("proposalId")
     network_id = request.query_params.get("networkId")
     title = await fetch_proposal_title(proposal_id, network_id) if proposal_id else None
+
+    # Point og:image at the dynamic per-proposal card when we have a title and
+    # the renderer is available; otherwise fall back to the generic image.
+    image_url = None
+    if title and _OG_CARD_AVAILABLE:
+        # Pass the original networkId ("Mainnet"/"Preview") through unchanged so
+        # the card route resolves the title on the same network we just did.
+        image_url = f"{OG_BASE_URL}/og/proposal/{proposal_id}.jpg?networkId={network_id}"
+
     return templates.TemplateResponse(
         "index.html",
-        {**_base_context(request), **_og_context(title)},
+        {**_base_context(request), **_og_context(title, image_url)},
+    )
+
+
+@app.get("/og/proposal/{proposal_id}.jpg")
+async def og_proposal_card(proposal_id: str, request: Request):
+    """Serve the per-proposal social card, rendering+caching it on first hit."""
+    network_id = request.query_params.get("networkId")
+    title = await fetch_proposal_title(proposal_id, network_id) if _OG_CARD_AVAILABLE else None
+    if not title:
+        return RedirectResponse(OG_IMAGE_URL, status_code=302)
+
+    net = _og_network_slug(network_id)
+    path = OG_CARD_CACHE_DIR / f"{net}-{proposal_id}.jpg"
+    if not path.exists():
+        try:
+            data = await asyncio.to_thread(render_proposal_card, title)
+            tmp = path.with_suffix(".jpg.tmp")
+            tmp.write_bytes(data)
+            tmp.replace(path)  # atomic publish
+        except Exception as e:
+            logger.warning(f"OG: card render failed for {proposal_id}: {e}")
+            return RedirectResponse(OG_IMAGE_URL, status_code=302)
+
+    return FileResponse(
+        path,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "public, max-age=86400, immutable"},
     )
 
 

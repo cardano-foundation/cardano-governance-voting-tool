@@ -8,6 +8,7 @@ dependencies = [
     "brotli-asgi>=1.4.0",
     "fastapi[standard]>=0.115.5",
     "httpx>=0.28.1",
+    "pillow>=10.0.0",
     "python-dotenv>=1.0.1",
     "python-multipart>=0.0.17",
     "uvicorn>=0.32.1",
