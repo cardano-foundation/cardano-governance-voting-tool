@@ -1,11 +1,14 @@
+import asyncio
 import base64
 import json
 import logging
 import mimetypes
 import os
+import re
 import shutil
 import subprocess
 import tempfile
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -14,7 +17,7 @@ import httpx
 from brotli_asgi import BrotliMiddleware
 from dotenv import load_dotenv
 from fastapi import Body, FastAPI, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
@@ -138,6 +141,186 @@ if MATOMO_SCRIPT and MATOMO_URL and MATOMO_SITE_ID and MATOMO_JS_URL:
 else:
     MATOMO_SCRIPT = None
 
+# Open Graph (social share card) configuration.
+#
+# Social crawlers (Facebook, X, Slack, Discord, ...) do not run the JS app, so
+# they only ever see the meta tags in the server-rendered HTML. We inject the
+# proposal title server-side when a link pre-selects a proposal, falling back to
+# the generic card otherwise.
+DEFAULT_OG_TITLE = "Cardano Governance Voting Tool"
+DEFAULT_OG_DESCRIPTION = (
+    "A simple tool to help every Cardano stakeholder participate in "
+    "on-chain governance with confidence."
+)
+PROPOSAL_OG_DESCRIPTION = "Vote on this proposal at voting.cardanofoundation.org."
+# Path (served from the static frontend build) to the generic fallback card.
+OG_IMAGE_PATH = "/logo/og-image.jpg"
+
+# og:image URLs must be absolute and public, since crawlers fetch them. By
+# default we derive the origin (scheme + host) from the incoming request, so the
+# tool works on whatever domain it's deployed to without configuration. Set
+# OG_BASE_URL to force a specific origin (e.g. a CDN host distinct from the app).
+OG_BASE_URL = os.getenv("OG_BASE_URL", "").strip()
+
+
+def _request_base_url(request: Request) -> str:
+    """Absolute origin (scheme://host) to build og: URLs from.
+
+    Crawlers fetch og:image from wherever they loaded the page, so we derive the
+    origin from the request rather than hardcoding a domain — this keeps every
+    self-hosted deployment correct with no config. Behind a reverse proxy the
+    original scheme/host arrive via X-Forwarded-*. OG_BASE_URL overrides all.
+    """
+    if OG_BASE_URL:
+        return OG_BASE_URL
+    proto = request.headers.get("x-forwarded-proto", "").split(",")[0].strip()
+    host = (
+        request.headers.get("x-forwarded-host", "").split(",")[0].strip()
+        or request.headers.get("host", "").strip()
+    )
+    if not host:
+        return str(request.base_url).rstrip("/")
+    return f"{proto or request.url.scheme}://{host}"
+
+
+# Per-proposal cards are rendered once, then cached on disk. Proposal off-chain
+# metadata is immutable, so a rendered card never goes stale and repeat crawls
+# become plain static-file serves. Pillow is optional: if it (or a usable font)
+# is missing, we degrade gracefully to the generic static image.
+OG_CARD_CACHE_DIR = (
+    Path(os.getenv("OG_CARD_CACHE_DIR", tempfile.gettempdir())) / "og-cards"
+)
+try:
+    from og_card import render_proposal_card
+
+    OG_CARD_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    _OG_CARD_AVAILABLE = True
+except Exception as e:  # pragma: no cover - depends on optional Pillow install
+    logger.warning(f"OG card rendering unavailable ({e}); using static image")
+    _OG_CARD_AVAILABLE = False
+
+
+def _og_network_slug(network_id: Optional[str]) -> str:
+    return "mainnet" if network_id == "Mainnet" else "preview"
+
+
+# Koios endpoints used to resolve a proposal's off-chain title
+# (meta_json.body.title). The network comes from the request's `networkId`
+# query param ("Mainnet"/"Preview"), since a proposal id is network-specific.
+KOIOS_MAINNET_URL = "https://api.koios.rest/api/v1"
+KOIOS_PREVIEW_URL = "https://preview.koios.rest/api/v1"
+
+
+def _koios_api_url(network_id: Optional[str]) -> str:
+    return KOIOS_MAINNET_URL if network_id == "Mainnet" else KOIOS_PREVIEW_URL
+
+
+# Same free-tier token the frontend ships with (already public). Overridable.
+KOIOS_API_TOKEN = os.getenv(
+    "KOIOS_API_TOKEN",
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhZGRyIjoic3Rha2UxdXljY3J5MzZwcXB0aGV4cmw5eW4zZDN6azJrbGR3N3lhdG0wM2gwcHU1eXdjMHFqMzYyNzQiLCJleHAiOjE4MDI5NDcwMTIsInRpZXIiOjEsInByb2pJRCI6Ind5Wk1Sb0ZmYnBKdmNuYncifQ.JMJNKGGXo_yDBottzKUB34D1afR6-2j3vtxw70k1Les",
+)
+
+# Aggressive caching: proposal off-chain metadata is immutable once submitted,
+# so a successful (or stably-empty) lookup is cached for an hour. A failed
+# lookup is cached only briefly so a transient Koios outage recovers quickly.
+OG_CACHE_TTL_SECONDS = 3600
+OG_CACHE_FAILURE_TTL_SECONDS = 60
+OG_CACHE_MAX_ENTRIES = 5000
+# Short timeout so a slow Koios never blocks a crawler — we fall back to the
+# generic card instead. A failed lookup is only briefly negative-cached, so the
+# next crawl retries; a success is cached for an hour.
+OG_FETCH_TIMEOUT_SECONDS = 4
+
+# proposal_id -> (monotonic_expiry, title_or_None)
+_og_title_cache: Dict[str, Tuple[float, Optional[str]]] = {}
+
+# Bech32 CIP-129 governance action id (e.g. "gov_action1..."). Validating the
+# shape before hitting Koios blocks junk query params from unbounded fetches.
+_PROPOSAL_ID_RE = re.compile(r"^gov_action1[02-9ac-hj-np-z]{50,70}$")
+
+
+def _og_cache_get(proposal_id: str) -> Tuple[bool, Optional[str]]:
+    entry = _og_title_cache.get(proposal_id)
+    if entry is not None and time.monotonic() < entry[0]:
+        return True, entry[1]
+    return False, None
+
+
+def _og_cache_set(proposal_id: str, title: Optional[str], ttl: float) -> None:
+    if len(_og_title_cache) >= OG_CACHE_MAX_ENTRIES:
+        now = time.monotonic()
+        for key in [k for k, v in _og_title_cache.items() if v[0] <= now]:
+            del _og_title_cache[key]
+        if len(_og_title_cache) >= OG_CACHE_MAX_ENTRIES:
+            _og_title_cache.clear()
+    _og_title_cache[proposal_id] = (time.monotonic() + ttl, title)
+
+
+async def fetch_proposal_title(
+    proposal_id: str, network_id: Optional[str]
+) -> Optional[str]:
+    """Return the off-chain title for a proposal, or None. Cached aggressively.
+
+    The Koios network is chosen from the request's `networkId` param, since a
+    proposal id only exists on its own network.
+    """
+    if not _PROPOSAL_ID_RE.match(proposal_id):
+        return None
+
+    api_url = _koios_api_url(network_id)
+    cache_key = f"{api_url}|{proposal_id}"
+    cached, title = _og_cache_get(cache_key)
+    if cached:
+        return title
+
+    try:
+        response = await app.async_client.get(  # type: ignore
+            f"{api_url}/proposal_list",
+            params={
+                "proposal_id": f"eq.{proposal_id}",
+                "select": "meta_json,proposal_id",
+            },
+            headers={
+                "accept": "application/json",
+                "Authorization": f"Bearer {KOIOS_API_TOKEN}",
+            },
+            timeout=OG_FETCH_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+        rows = response.json()
+    except Exception as e:
+        logger.warning(f"OG: failed to fetch title for {proposal_id}: {e}")
+        _og_cache_set(cache_key, None, OG_CACHE_FAILURE_TTL_SECONDS)
+        return None
+
+    try:
+        raw_title = rows[0]["meta_json"]["body"]["title"]
+    except (IndexError, KeyError, TypeError):
+        raw_title = None
+    title = (
+        raw_title.strip() if isinstance(raw_title, str) and raw_title.strip() else None
+    )
+
+    _og_cache_set(cache_key, title, OG_CACHE_TTL_SECONDS)
+    return title
+
+
+def _og_context(title: Optional[str], image_url: str) -> dict:
+    """Open Graph template variables: proposal-specific when a title is known."""
+    if title:
+        return {
+            "og_title": title,
+            "og_description": PROPOSAL_OG_DESCRIPTION,
+            "og_image": image_url,
+        }
+    return {
+        "og_title": DEFAULT_OG_TITLE,
+        "og_description": DEFAULT_OG_DESCRIPTION,
+        "og_image": image_url,
+    }
+
+
 # Preconfigured voter templates
 PRECONFIGURED_VOTERS_JSON = os.getenv("PRECONFIGURED_VOTERS_JSON", "[]")
 try:
@@ -175,33 +358,78 @@ static_dir = Path("../frontend/static")
 templates = Jinja2Templates(directory=static_dir)
 
 
+def _base_context(request: Request) -> dict:
+    return {
+        "request": request,
+        "network_id": NETWORK_ID,
+        "ipfs_preconfigs": IPFS_PRECONFIGS_PUBLIC_JSON,
+        "preconfigured_voters": PRECONFIGURED_VOTERS_JSON,
+        "preconfigured_authors": PRECONFIGURED_AUTHORS_JSON,
+        "matomo_script": MATOMO_SCRIPT,
+    }
+
+
 @app.get("/", response_class=HTMLResponse)
 async def read_root(request: Request):
+    image_url = f"{_request_base_url(request)}{OG_IMAGE_PATH}"
     return templates.TemplateResponse(
         "index.html",
-        {
-            "request": request,
-            "network_id": NETWORK_ID,
-            "ipfs_preconfigs": IPFS_PRECONFIGS_PUBLIC_JSON,
-            "preconfigured_voters": PRECONFIGURED_VOTERS_JSON,
-            "preconfigured_authors": PRECONFIGURED_AUTHORS_JSON,
-            "matomo_script": MATOMO_SCRIPT,
-        },
+        {**_base_context(request), **_og_context(None, image_url)},
     )
 
 
 @app.get("/page/{full_path:path}", response_class=HTMLResponse)
 async def get_page(full_path: str, request: Request):
+    # When a link pre-selects a proposal, inject its title into the OG card so
+    # shared links show the proposal rather than the generic tool card.
+    proposal_id = request.query_params.get("proposalId")
+    network_id = request.query_params.get("networkId")
+    title = await fetch_proposal_title(proposal_id, network_id) if proposal_id else None
+
+    # Point og:image at the dynamic per-proposal card when we have a title and
+    # the renderer is available; otherwise fall back to the generic image.
+    base_url = _request_base_url(request)
+    image_url = f"{base_url}{OG_IMAGE_PATH}"
+    if title and _OG_CARD_AVAILABLE:
+        # Pass the original networkId ("Mainnet"/"Preview") through unchanged so
+        # the card route resolves the title on the same network we just did.
+        image_url = f"{base_url}/og/proposal/{proposal_id}.jpg?networkId={network_id}"
+
     return templates.TemplateResponse(
         "index.html",
-        {
-            "request": request,
-            "network_id": NETWORK_ID,
-            "ipfs_preconfigs": IPFS_PRECONFIGS_PUBLIC_JSON,
-            "preconfigured_voters": PRECONFIGURED_VOTERS_JSON,
-            "preconfigured_authors": PRECONFIGURED_AUTHORS_JSON,
-            "matomo_script": MATOMO_SCRIPT,
-        },
+        {**_base_context(request), **_og_context(title, image_url)},
+    )
+
+
+@app.get("/og/proposal/{proposal_id}.jpg")
+async def og_proposal_card(proposal_id: str, request: Request):
+    """Serve the per-proposal social card, rendering+caching it on first hit."""
+    network_id = request.query_params.get("networkId")
+    fallback_url = f"{_request_base_url(request)}{OG_IMAGE_PATH}"
+    title = (
+        await fetch_proposal_title(proposal_id, network_id)
+        if _OG_CARD_AVAILABLE
+        else None
+    )
+    if not title:
+        return RedirectResponse(fallback_url, status_code=302)
+
+    net = _og_network_slug(network_id)
+    path = OG_CARD_CACHE_DIR / f"{net}-{proposal_id}.jpg"
+    if not path.exists():
+        try:
+            data = await asyncio.to_thread(render_proposal_card, title)
+            tmp = path.with_suffix(".jpg.tmp")
+            tmp.write_bytes(data)
+            tmp.replace(path)  # atomic publish
+        except Exception as e:
+            logger.warning(f"OG: card render failed for {proposal_id}: {e}")
+            return RedirectResponse(fallback_url, status_code=302)
+
+    return FileResponse(
+        path,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "public, max-age=86400, immutable"},
     )
 
 

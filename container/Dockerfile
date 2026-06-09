@@ -71,9 +71,16 @@ FROM python:3.10-alpine
 # It is important to use the image that matches the builder,
 # as the path to the Python executable must be the same.
 
+# Fonts for the generated Open Graph proposal cards (Pillow needs a real TTF).
+RUN apk add --no-cache font-dejavu
+
 # Copy the python server code
 COPY --from=backend-builder --chown=backend:backend /backend/.venv /backend/.venv
 COPY --from=backend-builder /backend/server.py /backend/server.py
+COPY --from=backend-builder /backend/og_card.py /backend/og_card.py
+
+# Static assets for the Open Graph card renderer (background + optional fonts)
+COPY --from=backend-builder /backend/assets /backend/assets
 
 # Copy the typst compiler and template
 COPY --from=backend-builder /backend/typst /backend/.venv/bin/typst

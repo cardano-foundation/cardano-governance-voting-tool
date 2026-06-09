@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Static Open Graph card background (1200x630), mirroring the home-page hero:
+  a white canvas with two blurred brand gradient blobs in the top-right.
+
+  This SVG is the source of truth. After editing, re-render the WebP that the
+  server actually loads at runtime (WebP keeps a smooth gradient at ~7kB, vs
+  ~230kB as PNG):
+
+    rsvg-convert -w 1200 -h 630 card-bg.svg -o /tmp/card-bg.png
+    magick /tmp/card-bg.png -quality 80 -define webp:method=6 card-bg.webp
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <defs>
+    <!-- Blue: linear-gradient(270deg, #00e0ff, #0084ff) -->
+    <linearGradient id="blue" x1="1" y1="0" x2="0" y2="0">
+      <stop offset="0" stop-color="#00e0ff"/>
+      <stop offset="1" stop-color="#0084ff"/>
+    </linearGradient>
+    <!-- Warm: linear-gradient(90deg, #d1085c, #ffad0f) -->
+    <linearGradient id="warm" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#d1085c"/>
+      <stop offset="0.55" stop-color="#ffad0f"/>
+    </linearGradient>
+    <filter id="softBlur" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="70"/>
+    </filter>
+    <filter id="softBlurSmall" x="-80%" y="-80%" width="260%" height="260%">
+      <feGaussianBlur stdDeviation="42"/>
+    </filter>
+  </defs>
+
+  <rect width="1200" height="630" fill="#ffffff"/>
+
+  <g opacity="0.8">
+    <!-- Large blue presence sweeping from the top-right across most of the card -->
+    <ellipse cx="820" cy="0" rx="780" ry="540" fill="url(#blue)" filter="url(#softBlur)"/>
+    <circle cx="1020" cy="250" r="150" fill="url(#warm)" filter="url(#softBlurSmall)"/>
+  </g>
+</svg>

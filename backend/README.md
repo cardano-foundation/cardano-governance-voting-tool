@@ -3,9 +3,10 @@ Minimalist server for Cardano governance uses
 ## Getting Started
 
 First create and modify the `.env` file containing the IPFS node access config.
-You can start by copying the `.env.example`.
-You can either configure it as a regular IPFS RPC server with basic auth,
-or as NMKR server.
+You can start by copying the `.env.example`, which documents every variable.
+IPFS providers are configured through `IPFS_PRECONFIGS_JSON`, a JSON array of
+pre-configured providers offered to users; each entry's `format` can be
+`basic` (RPC + basic auth), `nmkr`, or `blockfrost`.
 
 > Remark: This is required for direct usage of this server endpoints.
 > However, if you use the frontend web app to communicate with this server,
@@ -13,21 +14,24 @@ or as NMKR server.
 > since IPFS RPC config can be done directly in the frontend.
 
 ```env
-# Regular IPFS RPC config with basic auth
-IPFS_FORMAT=basic
-IPFS_RPC_URL=https://ipfs-rpc.mycompany.org/api/v0
-IPFS_USER_ID=user
-IPFS_PASSWORD=password
-IPFS_LABEL="Pre-configured IPFS server"
-IPFS_DESCRIPTION="Files will be stored using the pre-configured IPFS servers."
-
-# Alternative IPFS config using NMKR servers
-# IPFS_FORMAT=nmkr
-# IPFS_RPC_URL=https://studio-api.nmkr.io/v2/UploadToIpfs
-# IPFS_USER_ID=000000
-# IPFS_BEARER_TOKEN=ffffffffffffffffffffffffffffffff
-# IPFS_LABEL="Pre-configured IPFS server (sponsored by NMKR)"
-# IPFS_DESCRIPTION="Files will be stored using NMKR's IPFS servers."
+# IPFS preconfigs: a JSON array of pre-configured IPFS providers the frontend
+# will offer to users. Each entry needs id, label, description, and format
+# ("basic" | "nmkr" | "blockfrost"); per-format fields:
+#   basic      : rpcUrl, userId, password
+#   nmkr       : rpcUrl, userId, bearerToken
+#   blockfrost : projectId (rpcUrl optional; filecoin optional)
+# Only id/label/description reach the frontend; secrets stay server-side.
+# See .env.example for a multi-provider example.
+IPFS_PRECONFIGS_JSON="[
+  { \"id\": \"default\"
+  , \"label\": \"Pre-configured IPFS server\"
+  , \"description\": \"Files will be stored using the pre-configured IPFS servers.\"
+  , \"format\": \"basic\"
+  , \"rpcUrl\": \"https://ipfs-rpc.mycompany.org/api/v0\"
+  , \"userId\": \"user\"
+  , \"password\": \"password\"
+  }
+]"
 
 # Network config: 0 for Preview, 1 for Mainnet
 NETWORK_ID=0
@@ -85,6 +89,33 @@ The application includes optional Matomo analytics integration. All Matomo-relat
 The placeholders in `MATOMO_SCRIPT` (`MATOMO_URL_PLACEHOLDER`, `MATOMO_SITE_ID_PLACEHOLDER`, `MATOMO_JS_URL_PLACEHOLDER`) will be automatically replaced with the corresponding environment variable values.
 
 If any of these variables are not set, analytics will be disabled.
+
+### Open Graph Social Cards
+
+When a shared link pre-selects a proposal (`/page/...?proposalId=...&networkId=...`),
+the server injects Open Graph / Twitter meta tags so the link unfurls with the
+proposal title and a generated image. The image is a 1200×630 JPEG drawing the
+proposal title over the brand-gradient background; it is rendered once with
+Pillow and cached on disk, then served as a static file on repeat crawls. When
+the title can't be resolved (or rendering is unavailable) it falls back to the
+generic `/logo/og-image.jpg` card.
+
+`og:image` URLs must be absolute. By default the server derives the origin
+(scheme + host) from the incoming request — honoring `X-Forwarded-Proto` /
+`X-Forwarded-Host` behind a reverse proxy — so a self-hosted deployment works on
+its own domain with no configuration. All related variables are optional:
+
+- `OG_BASE_URL`: force a specific origin for `og:` URLs (e.g. `https://votes.example.org`).
+  Only needed when the public origin differs from what the app sees (e.g. a CDN
+  host distinct from the app's own host). Leave unset to auto-derive per request.
+- `OG_CARD_CACHE_DIR`: directory for the rendered card cache (default: a
+  `og-cards/` folder under the system temp dir).
+- `KOIOS_API_TOKEN`: override the Koios token used to resolve proposal titles
+  (a public free-tier token is used by default).
+
+Rendering needs Pillow (a project dependency) and a TrueType font. The Docker
+image bundles one via the `font-dejavu` package; without a usable font the
+server logs a warning and serves the generic image instead.
 
 ## Running the Server
 
