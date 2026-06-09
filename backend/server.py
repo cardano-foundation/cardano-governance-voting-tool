@@ -227,7 +227,10 @@ async def fetch_proposal_title(
     try:
         response = await app.async_client.get(  # type: ignore
             f"{api_url}/proposal_list",
-            params={"select": "meta_json", "proposal_id": f"eq.{proposal_id}"},
+            params={
+                "proposal_id": f"eq.{proposal_id}",
+                "select": "meta_json,proposal_id",
+            },
             headers={
                 "accept": "application/json",
                 "Authorization": f"Bearer {KOIOS_API_TOKEN}",
