@@ -153,11 +153,35 @@ DEFAULT_OG_DESCRIPTION = (
     "on-chain governance with confidence."
 )
 PROPOSAL_OG_DESCRIPTION = "Vote on this proposal at voting.cardanofoundation.org."
-OG_IMAGE_URL = "https://voting.cardanofoundation.org/logo/og-image.jpg"
+# Path (served from the static frontend build) to the generic fallback card.
+OG_IMAGE_PATH = "/logo/og-image.jpg"
 
-# Absolute base for the (dynamic) per-proposal card URL injected into og:image.
-# Crawlers fetch this URL, so it must be public and absolute.
-OG_BASE_URL = os.getenv("OG_BASE_URL", "https://voting.cardanofoundation.org")
+# og:image URLs must be absolute and public, since crawlers fetch them. By
+# default we derive the origin (scheme + host) from the incoming request, so the
+# tool works on whatever domain it's deployed to without configuration. Set
+# OG_BASE_URL to force a specific origin (e.g. a CDN host distinct from the app).
+OG_BASE_URL = os.getenv("OG_BASE_URL", "").strip()
+
+
+def _request_base_url(request: Request) -> str:
+    """Absolute origin (scheme://host) to build og: URLs from.
+
+    Crawlers fetch og:image from wherever they loaded the page, so we derive the
+    origin from the request rather than hardcoding a domain — this keeps every
+    self-hosted deployment correct with no config. Behind a reverse proxy the
+    original scheme/host arrive via X-Forwarded-*. OG_BASE_URL overrides all.
+    """
+    if OG_BASE_URL:
+        return OG_BASE_URL
+    proto = request.headers.get("x-forwarded-proto", "").split(",")[0].strip()
+    host = (
+        request.headers.get("x-forwarded-host", "").split(",")[0].strip()
+        or request.headers.get("host", "").strip()
+    )
+    if not host:
+        return str(request.base_url).rstrip("/")
+    return f"{proto or request.url.scheme}://{host}"
+
 
 # Per-proposal cards are rendered once, then cached on disk. Proposal off-chain
 # metadata is immutable, so a rendered card never goes stale and repeat crawls
@@ -282,18 +306,18 @@ async def fetch_proposal_title(
     return title
 
 
-def _og_context(title: Optional[str], image_url: Optional[str] = None) -> dict:
+def _og_context(title: Optional[str], image_url: str) -> dict:
     """Open Graph template variables: proposal-specific when a title is known."""
     if title:
         return {
             "og_title": title,
             "og_description": PROPOSAL_OG_DESCRIPTION,
-            "og_image": image_url or OG_IMAGE_URL,
+            "og_image": image_url,
         }
     return {
         "og_title": DEFAULT_OG_TITLE,
         "og_description": DEFAULT_OG_DESCRIPTION,
-        "og_image": OG_IMAGE_URL,
+        "og_image": image_url,
     }
 
 
@@ -347,9 +371,10 @@ def _base_context(request: Request) -> dict:
 
 @app.get("/", response_class=HTMLResponse)
 async def read_root(request: Request):
+    image_url = f"{_request_base_url(request)}{OG_IMAGE_PATH}"
     return templates.TemplateResponse(
         "index.html",
-        {**_base_context(request), **_og_context(None)},
+        {**_base_context(request), **_og_context(None, image_url)},
     )
 
 
@@ -363,13 +388,12 @@ async def get_page(full_path: str, request: Request):
 
     # Point og:image at the dynamic per-proposal card when we have a title and
     # the renderer is available; otherwise fall back to the generic image.
-    image_url = None
+    base_url = _request_base_url(request)
+    image_url = f"{base_url}{OG_IMAGE_PATH}"
     if title and _OG_CARD_AVAILABLE:
         # Pass the original networkId ("Mainnet"/"Preview") through unchanged so
         # the card route resolves the title on the same network we just did.
-        image_url = (
-            f"{OG_BASE_URL}/og/proposal/{proposal_id}.jpg?networkId={network_id}"
-        )
+        image_url = f"{base_url}/og/proposal/{proposal_id}.jpg?networkId={network_id}"
 
     return templates.TemplateResponse(
         "index.html",
@@ -381,13 +405,14 @@ async def get_page(full_path: str, request: Request):
 async def og_proposal_card(proposal_id: str, request: Request):
     """Serve the per-proposal social card, rendering+caching it on first hit."""
     network_id = request.query_params.get("networkId")
+    fallback_url = f"{_request_base_url(request)}{OG_IMAGE_PATH}"
     title = (
         await fetch_proposal_title(proposal_id, network_id)
         if _OG_CARD_AVAILABLE
         else None
     )
     if not title:
-        return RedirectResponse(OG_IMAGE_URL, status_code=302)
+        return RedirectResponse(fallback_url, status_code=302)
 
     net = _og_network_slug(network_id)
     path = OG_CARD_CACHE_DIR / f"{net}-{proposal_id}.jpg"
@@ -399,7 +424,7 @@ async def og_proposal_card(proposal_id: str, request: Request):
             tmp.replace(path)  # atomic publish
         except Exception as e:
             logger.warning(f"OG: card render failed for {proposal_id}: {e}")
-            return RedirectResponse(OG_IMAGE_URL, status_code=302)
+            return RedirectResponse(fallback_url, status_code=302)
 
     return FileResponse(
         path,
