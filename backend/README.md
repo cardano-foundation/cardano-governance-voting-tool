@@ -86,6 +86,33 @@ The placeholders in `MATOMO_SCRIPT` (`MATOMO_URL_PLACEHOLDER`, `MATOMO_SITE_ID_P
 
 If any of these variables are not set, analytics will be disabled.
 
+### Open Graph Social Cards
+
+When a shared link pre-selects a proposal (`/page/...?proposalId=...&networkId=...`),
+the server injects Open Graph / Twitter meta tags so the link unfurls with the
+proposal title and a generated image. The image is a 1200×630 JPEG drawing the
+proposal title over the brand-gradient background; it is rendered once with
+Pillow and cached on disk, then served as a static file on repeat crawls. When
+the title can't be resolved (or rendering is unavailable) it falls back to the
+generic `/logo/og-image.jpg` card.
+
+`og:image` URLs must be absolute. By default the server derives the origin
+(scheme + host) from the incoming request — honoring `X-Forwarded-Proto` /
+`X-Forwarded-Host` behind a reverse proxy — so a self-hosted deployment works on
+its own domain with no configuration. All related variables are optional:
+
+- `OG_BASE_URL`: force a specific origin for `og:` URLs (e.g. `https://votes.example.org`).
+  Only needed when the public origin differs from what the app sees (e.g. a CDN
+  host distinct from the app's own host). Leave unset to auto-derive per request.
+- `OG_CARD_CACHE_DIR`: directory for the rendered card cache (default: a
+  `og-cards/` folder under the system temp dir).
+- `KOIOS_API_TOKEN`: override the Koios token used to resolve proposal titles
+  (a public free-tier token is used by default).
+
+Rendering needs Pillow (a project dependency) and a TrueType font. The Docker
+image bundles one via the `font-dejavu` package; without a usable font the
+server logs a warning and serves the generic image instead.
+
 ## Running the Server
 
 Then you can start the python server.
