@@ -3,9 +3,10 @@ Minimalist server for Cardano governance uses
 ## Getting Started
 
 First create and modify the `.env` file containing the IPFS node access config.
-You can start by copying the `.env.example`.
-You can either configure it as a regular IPFS RPC server with basic auth,
-or as NMKR server.
+You can start by copying the `.env.example`, which documents every variable.
+IPFS providers are configured through `IPFS_PRECONFIGS_JSON`, a JSON array of
+pre-configured providers offered to users; each entry's `format` can be
+`basic` (RPC + basic auth), `nmkr`, or `blockfrost`.
 
 > Remark: This is required for direct usage of this server endpoints.
 > However, if you use the frontend web app to communicate with this server,
@@ -13,21 +14,24 @@ or as NMKR server.
 > since IPFS RPC config can be done directly in the frontend.
 
 ```env
-# Regular IPFS RPC config with basic auth
-IPFS_FORMAT=basic
-IPFS_RPC_URL=https://ipfs-rpc.mycompany.org/api/v0
-IPFS_USER_ID=user
-IPFS_PASSWORD=password
-IPFS_LABEL="Pre-configured IPFS server"
-IPFS_DESCRIPTION="Files will be stored using the pre-configured IPFS servers."
-
-# Alternative IPFS config using NMKR servers
-# IPFS_FORMAT=nmkr
-# IPFS_RPC_URL=https://studio-api.nmkr.io/v2/UploadToIpfs
-# IPFS_USER_ID=000000
-# IPFS_BEARER_TOKEN=ffffffffffffffffffffffffffffffff
-# IPFS_LABEL="Pre-configured IPFS server (sponsored by NMKR)"
-# IPFS_DESCRIPTION="Files will be stored using NMKR's IPFS servers."
+# IPFS preconfigs: a JSON array of pre-configured IPFS providers the frontend
+# will offer to users. Each entry needs id, label, description, and format
+# ("basic" | "nmkr" | "blockfrost"); per-format fields:
+#   basic      : rpcUrl, userId, password
+#   nmkr       : rpcUrl, userId, bearerToken
+#   blockfrost : projectId (rpcUrl optional; filecoin optional)
+# Only id/label/description reach the frontend; secrets stay server-side.
+# See .env.example for a multi-provider example.
+IPFS_PRECONFIGS_JSON="[
+  { \"id\": \"default\"
+  , \"label\": \"Pre-configured IPFS server\"
+  , \"description\": \"Files will be stored using the pre-configured IPFS servers.\"
+  , \"format\": \"basic\"
+  , \"rpcUrl\": \"https://ipfs-rpc.mycompany.org/api/v0\"
+  , \"userId\": \"user\"
+  , \"password\": \"password\"
+  }
+]"
 
 # Network config: 0 for Preview, 1 for Mainnet
 NETWORK_ID=0
