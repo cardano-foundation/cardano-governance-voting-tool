@@ -67,7 +67,9 @@ def _font(size: int, bold: bool) -> "ImageFont.FreeTypeFont | ImageFont.ImageFon
                 return ImageFont.truetype(path, size)
             except Exception:
                 continue
-    logger.warning("OG: no TTF font found; using bitmap fallback (cards will look poor)")
+    logger.warning(
+        "OG: no TTF font found; using bitmap fallback (cards will look poor)"
+    )
     return ImageFont.load_default()
 
 

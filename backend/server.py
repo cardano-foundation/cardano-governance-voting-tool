@@ -163,7 +163,9 @@ OG_BASE_URL = os.getenv("OG_BASE_URL", "https://voting.cardanofoundation.org")
 # metadata is immutable, so a rendered card never goes stale and repeat crawls
 # become plain static-file serves. Pillow is optional: if it (or a usable font)
 # is missing, we degrade gracefully to the generic static image.
-OG_CARD_CACHE_DIR = Path(os.getenv("OG_CARD_CACHE_DIR", tempfile.gettempdir())) / "og-cards"
+OG_CARD_CACHE_DIR = (
+    Path(os.getenv("OG_CARD_CACHE_DIR", tempfile.gettempdir())) / "og-cards"
+)
 try:
     from og_card import render_proposal_card
 
@@ -176,6 +178,7 @@ except Exception as e:  # pragma: no cover - depends on optional Pillow install
 
 def _og_network_slug(network_id: Optional[str]) -> str:
     return "mainnet" if network_id == "Mainnet" else "preview"
+
 
 # Koios endpoints used to resolve a proposal's off-chain title
 # (meta_json.body.title). The network comes from the request's `networkId`
@@ -364,7 +367,9 @@ async def get_page(full_path: str, request: Request):
     if title and _OG_CARD_AVAILABLE:
         # Pass the original networkId ("Mainnet"/"Preview") through unchanged so
         # the card route resolves the title on the same network we just did.
-        image_url = f"{OG_BASE_URL}/og/proposal/{proposal_id}.jpg?networkId={network_id}"
+        image_url = (
+            f"{OG_BASE_URL}/og/proposal/{proposal_id}.jpg?networkId={network_id}"
+        )
 
     return templates.TemplateResponse(
         "index.html",
@@ -376,7 +381,11 @@ async def get_page(full_path: str, request: Request):
 async def og_proposal_card(proposal_id: str, request: Request):
     """Serve the per-proposal social card, rendering+caching it on first hit."""
     network_id = request.query_params.get("networkId")
-    title = await fetch_proposal_title(proposal_id, network_id) if _OG_CARD_AVAILABLE else None
+    title = (
+        await fetch_proposal_title(proposal_id, network_id)
+        if _OG_CARD_AVAILABLE
+        else None
+    )
     if not title:
         return RedirectResponse(OG_IMAGE_URL, status_code=302)
 
