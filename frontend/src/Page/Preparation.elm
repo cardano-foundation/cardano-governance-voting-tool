@@ -4860,11 +4860,7 @@ providerKindLabel ipfsPreconfig kind =
         PreconfigKind id ->
             case lookupPreconfig ipfsPreconfig id of
                 Just preconfig ->
-                    if preconfig.supportsFilecoin then
-                        preconfig.label ++ " (with optional Filecoin)"
-
-                    else
-                        preconfig.label
+                    preconfig.label
 
                 Nothing ->
                     "IPFS, Pre-configured (" ++ id ++ ")"
