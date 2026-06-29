@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import hashlib
 import json
 import logging
 import mimetypes
@@ -215,14 +216,23 @@ def _koios_api_url(network_id: Optional[str]) -> str:
     return KOIOS_MAINNET_URL if network_id == "Mainnet" else KOIOS_PREVIEW_URL
 
 
-# Free-tier Koios API token. Used both for the server's own Koios calls and
-# threaded to the frontend via the init flags. Overridable via the env var.
-# WARNING: this is shipped to the browser in the page's JS, so it is publicly
-# viewable. Only use a token that is safe to expose (e.g. a free-tier one).
-KOIOS_API_TOKEN = os.getenv(
-    "KOIOS_API_TOKEN",
-    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhZGRyIjoic3Rha2UxdXljY3J5MzZwcXB0aGV4cmw5eW4zZDN6azJrbGR3N3lhdG0wM2gwcHU1eXdjMHFqMzYyNzQiLCJleHAiOjE4MDI5NDcwMTIsInRpZXIiOjEsInByb2pJRCI6Ind5Wk1Sb0ZmYnBKdmNuYncifQ.JMJNKGGXo_yDBottzKUB34D1afR6-2j3vtxw70k1Les",
-)
+# Koios API token, used server-side only: both for the server's own Koios calls
+# (e.g. resolving proposal titles) and to authenticate the Koios requests proxied
+# for the frontend through the /koios endpoint. It is never sent to the browser.
+# Set it via the env var; when unset, Koios is queried anonymously (subject to
+# stricter rate limits).
+KOIOS_API_TOKEN = os.getenv("KOIOS_API_TOKEN", "").strip()
+if not KOIOS_API_TOKEN:
+    logger.warning(
+        "KOIOS_API_TOKEN not set; Koios requests will be unauthenticated "
+        "and subject to stricter rate limits."
+    )
+
+
+def _koios_auth_headers() -> dict:
+    """Authorization header for Koios, omitted when no token is configured."""
+    return {"Authorization": f"Bearer {KOIOS_API_TOKEN}"} if KOIOS_API_TOKEN else {}
+
 
 # Aggressive caching: proposal off-chain metadata is immutable once submitted,
 # so a successful (or stably-empty) lookup is cached for an hour. A failed
@@ -286,7 +296,7 @@ async def fetch_proposal_title(
             },
             headers={
                 "accept": "application/json",
-                "Authorization": f"Bearer {KOIOS_API_TOKEN}",
+                **_koios_auth_headers(),
             },
             timeout=OG_FETCH_TIMEOUT_SECONDS,
         )
@@ -365,7 +375,6 @@ def _base_context(request: Request) -> dict:
     return {
         "request": request,
         "network_id": NETWORK_ID,
-        "koios_api_token": KOIOS_API_TOKEN,
         "ipfs_preconfigs": IPFS_PRECONFIGS_PUBLIC_JSON,
         "preconfigured_voters": PRECONFIGURED_VOTERS_JSON,
         "preconfigured_authors": PRECONFIGURED_AUTHORS_JSON,
@@ -810,6 +819,175 @@ async def pin_json_to_ipfs(request: IPFSPinJSONRequest):
             preconfig_id=request.preconfigId,
             filecoin=request.filecoin,
         )
+
+
+class KoiosRequest(BaseModel):
+    networkId: str  # "Mainnet" selects mainnet; anything else uses Preview.
+    path: str  # Koios path (with query string), e.g. "/ogmios" or "/vote_list?...".
+    method: str = "GET"
+    body: Optional[dict] = None
+
+
+# ---------------------------------------------------------------------------
+# Koios response cache
+#
+# The proxied Koios requests have very different freshness needs, so the cache
+# TTL is chosen from the request's semantics:
+#
+#   * Immutable, content-addressed lookups — a tx, script, or datum is fixed by
+#     its hash and never changes — are cached for a long time.
+#   * Epoch-scoped data (protocol params, constitution, CC members, DRep voting
+#     power, pool stake snapshot) only changes at epoch boundaries, so a few
+#     minutes of staleness is harmless.
+#   * Volatile lists (current epoch, active proposals, a voter's votes) change
+#     within an epoch as txs land, so they get a short TTL — just enough to
+#     absorb bursts of identical requests without serving stale data for long.
+#   * UTxO liveness (is_spent) is never cached: a UTxO can be spent at any time
+#     and a stale "unspent" answer would break tx building.
+# ---------------------------------------------------------------------------
+
+KOIOS_CACHE_TTL_IMMUTABLE = 24 * 3600  # tx_cbor, script_info, datum_info
+KOIOS_CACHE_TTL_EPOCH = 600  # protocol params, constitution, CC, drep, pool stake
+KOIOS_CACHE_TTL_VOLATILE = 30  # current epoch, proposal_list, vote_list
+KOIOS_CACHE_MAX_ENTRIES = 2000
+
+# cache_key -> (monotonic_expiry, status_code, media_type, content_bytes)
+_koios_cache: Dict[str, Tuple[float, int, Optional[str], bytes]] = {}
+
+
+def _koios_cache_ttl(path: str, body: Optional[dict]) -> Optional[float]:
+    """Pick a cache TTL (seconds) from the request semantics, or None to skip."""
+    # Match on the Koios resource only, ignoring the query string.
+    resource = path.split("?", 1)[0].strip("/")
+
+    if resource in ("tx_cbor", "script_info", "datum_info"):
+        return KOIOS_CACHE_TTL_IMMUTABLE
+
+    if resource == "utxo_info":
+        # Spent status is mutable; never cache it.
+        return None
+
+    if resource in ("proposal_list", "vote_list"):
+        return KOIOS_CACHE_TTL_VOLATILE
+
+    if resource == "pool_stake_snapshot":
+        return KOIOS_CACHE_TTL_EPOCH
+
+    if resource == "ogmios":
+        # The Ogmios JSON-RPC method disambiguates same-path queries.
+        method = (body or {}).get("method", "")
+        if method == "queryLedgerState/epoch":
+            return KOIOS_CACHE_TTL_VOLATILE
+        # protocolParameters, constitution, constitutionalCommittee and
+        # delegateRepresentatives are all epoch-scoped.
+        return KOIOS_CACHE_TTL_EPOCH
+
+    # Unknown endpoint: don't cache.
+    return None
+
+
+def _koios_cache_key(
+    network_id: str, method: str, path: str, body: Optional[dict]
+) -> str:
+    raw = json.dumps(
+        {"n": network_id, "m": method, "p": path, "b": body},
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _koios_cache_get(key: str) -> Optional[Tuple[int, Optional[str], bytes]]:
+    entry = _koios_cache.get(key)
+    if entry is not None and time.monotonic() < entry[0]:
+        return entry[1], entry[2], entry[3]
+    return None
+
+
+def _koios_cache_set(
+    key: str, status_code: int, media_type: Optional[str], content: bytes, ttl: float
+) -> None:
+    if len(_koios_cache) >= KOIOS_CACHE_MAX_ENTRIES:
+        now = time.monotonic()
+        for k in [k for k, v in _koios_cache.items() if v[0] <= now]:
+            del _koios_cache[k]
+        if len(_koios_cache) >= KOIOS_CACHE_MAX_ENTRIES:
+            _koios_cache.clear()
+    _koios_cache[key] = (time.monotonic() + ttl, status_code, media_type, content)
+
+
+# Bodies that carry no usable result; not worth caching (and caching an empty
+# tx/script/datum lookup for a day would wrongly pin a not-yet-indexed answer).
+_KOIOS_EMPTY_BODIES = (b"", b"[]", b"null")
+
+
+@app.post("/koios")
+async def koios_request(request: KoiosRequest):
+    """
+    Proxy a request to the Koios API, authenticated with the server's token.
+
+    The frontend hits this endpoint instead of calling Koios directly, so the
+    Koios API token stays server-side and is never exposed to the browser. The
+    base URL is derived from `networkId` here (not trusted from the client) and
+    only the relative `path` is appended, so the token is never forwarded
+    anywhere but Koios.
+
+    Successful responses are cached with a TTL derived from the request
+    semantics (see `_koios_cache_ttl`), so repeated lookups of immutable data
+    (txs, scripts, datums) and bursts of identical queries are served locally.
+    """
+    try:
+        ttl = _koios_cache_ttl(request.path, request.body)
+
+        cache_key = None
+        if ttl is not None:
+            cache_key = _koios_cache_key(
+                request.networkId, request.method, request.path, request.body
+            )
+            cached = _koios_cache_get(cache_key)
+            if cached is not None:
+                status_code, media_type, content = cached
+                return Response(
+                    content=content, status_code=status_code, media_type=media_type
+                )
+
+        api_url = _koios_api_url(request.networkId)
+        response = await app.async_client.request(  # type: ignore
+            method=request.method,
+            url=f"{api_url}{request.path}",
+            headers={
+                "accept": "application/json",
+                "content-type": "application/json",
+                **_koios_auth_headers(),
+            },
+            json=request.body,
+        )
+
+        # Only cache successful, non-empty responses; errors and empty results
+        # fall through so the next call retries against Koios.
+        if (
+            cache_key is not None
+            and ttl is not None
+            and response.status_code == 200
+            and response.content.strip() not in _KOIOS_EMPTY_BODIES
+        ):
+            _koios_cache_set(
+                cache_key,
+                response.status_code,
+                response.headers.get("content-type"),
+                response.content,
+                ttl,
+            )
+
+        return Response(
+            content=response.content,
+            status_code=response.status_code,
+            media_type=response.headers.get("content-type"),
+        )
+
+    except Exception as e:
+        logger.error(f"Unexpected error: {str(e)}")
+        raise HTTPException(status_code=500, detail="An unexpected error occurred")
 
 
 class ProxyRequest(BaseModel):

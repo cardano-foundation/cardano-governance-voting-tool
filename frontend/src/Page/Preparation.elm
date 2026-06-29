@@ -921,7 +921,6 @@ type alias UpdateContext msg =
     , costModels : Maybe CostModels
     , constitutionUri : Maybe String
     , networkId : NetworkId
-    , koiosApiToken : String
     , authorPreconfig : List PreconfAuthor
     , ipfsPreconfig : IpfsPreconfig
     }
@@ -2017,7 +2016,7 @@ checkGovId ctx str =
                         ( ccInfo, fetchCcInfo ) =
                             case Dict.get (Bytes.toHex keyHash) ctx.ccsInfo of
                                 Nothing ->
-                                    ( RemoteData.Loading, Api.defaultApiProvider.getCcInfo ctx.koiosApiToken ctx.networkId cred GotCcInfo )
+                                    ( RemoteData.Loading, Api.defaultApiProvider.getCcInfo ctx.networkId cred GotCcInfo )
 
                                 Just info ->
                                     ( RemoteData.Success info, Cmd.none )
@@ -2029,7 +2028,7 @@ checkGovId ctx str =
                         ( drepInfo, fetchDrepInfo ) =
                             case Dict.get (Bytes.toHex keyHash) ctx.drepsInfo of
                                 Nothing ->
-                                    ( RemoteData.Loading, Api.defaultApiProvider.getDrepInfo ctx.koiosApiToken ctx.networkId cred GotDrepInfo )
+                                    ( RemoteData.Loading, Api.defaultApiProvider.getDrepInfo ctx.networkId cred GotDrepInfo )
 
                                 Just info ->
                                     ( RemoteData.Success info, Cmd.none )
@@ -2041,7 +2040,7 @@ checkGovId ctx str =
                         ( poolInfo, fetchPoolInfo ) =
                             case Dict.get (Bytes.toHex poolId) ctx.poolsInfo of
                                 Nothing ->
-                                    ( RemoteData.Loading, Api.defaultApiProvider.getPoolLiveStake ctx.koiosApiToken ctx.networkId poolId GotPoolInfo )
+                                    ( RemoteData.Loading, Api.defaultApiProvider.getPoolLiveStake ctx.networkId poolId GotPoolInfo )
 
                                 Just info ->
                                     ( RemoteData.Success info, Cmd.none )
@@ -2084,7 +2083,7 @@ checkGovId ctx str =
                         ( ccInfo, fetchCcInfo ) =
                             case Dict.get (Bytes.toHex scriptHash) ctx.ccsInfo of
                                 Nothing ->
-                                    ( RemoteData.Loading, Api.defaultApiProvider.getCcInfo ctx.koiosApiToken ctx.networkId cred GotCcInfo )
+                                    ( RemoteData.Loading, Api.defaultApiProvider.getCcInfo ctx.networkId cred GotCcInfo )
 
                                 Just info ->
                                     ( RemoteData.Success info, Cmd.none )
@@ -2133,7 +2132,7 @@ checkGovId ctx str =
                         ( drepInfo, fetchDrepInfo ) =
                             case Dict.get (Bytes.toHex scriptHash) ctx.drepsInfo of
                                 Nothing ->
-                                    ( RemoteData.Loading, Api.defaultApiProvider.getDrepInfo ctx.koiosApiToken ctx.networkId cred GotDrepInfo )
+                                    ( RemoteData.Loading, Api.defaultApiProvider.getDrepInfo ctx.networkId cred GotDrepInfo )
 
                                 Just info ->
                                     ( RemoteData.Success info, Cmd.none )
@@ -2187,19 +2186,19 @@ confirmVoter ctx form loadedRefUtxos =
 
         Just ((PoolId poolId) as govId) ->
             ( Done form <| Witness.WithPoolCred poolId
-            , Cmd.map ctx.wrapMsg <| Api.defaultApiProvider.getVotes ctx.koiosApiToken ctx.networkId govId GotVotes
+            , Cmd.map ctx.wrapMsg <| Api.defaultApiProvider.getVotes ctx.networkId govId GotVotes
             , Nothing
             )
 
         Just ((DrepId (VKeyHash keyHash)) as govId) ->
             ( Done form <| Witness.WithDrepCred (Witness.WithKey keyHash)
-            , Cmd.map ctx.wrapMsg <| Api.defaultApiProvider.getVotes ctx.koiosApiToken ctx.networkId govId GotVotes
+            , Cmd.map ctx.wrapMsg <| Api.defaultApiProvider.getVotes ctx.networkId govId GotVotes
             , Nothing
             )
 
         Just ((CcHotCredId (VKeyHash keyHash)) as govId) ->
             ( Done form <| Witness.WithCommitteeHotCred (Witness.WithKey keyHash)
-            , Cmd.map ctx.wrapMsg <| Api.defaultApiProvider.getVotes ctx.koiosApiToken ctx.networkId govId GotVotes
+            , Cmd.map ctx.wrapMsg <| Api.defaultApiProvider.getVotes ctx.networkId govId GotVotes
             , Nothing
             )
 
@@ -2255,7 +2254,7 @@ validateScriptVoter ctx form loadedRefUtxos toVoter scriptInfo govId =
                                 }
                         in
                         ( Done { form | error = Nothing } <| toVoter <| Witness.WithScript scriptInfo.scriptHash <| Witness.Native witness
-                        , Cmd.map ctx.wrapMsg <| Api.defaultApiProvider.getVotes ctx.koiosApiToken ctx.networkId govId GotVotes
+                        , Cmd.map ctx.wrapMsg <| Api.defaultApiProvider.getVotes ctx.networkId govId GotVotes
                         , Nothing
                         )
 
@@ -2272,7 +2271,7 @@ validateScriptVoter ctx form loadedRefUtxos toVoter scriptInfo govId =
                             }
                     in
                     ( Done { form | error = Nothing } <| toVoter <| Witness.WithScript scriptInfo.scriptHash <| Witness.Plutus witness
-                    , Cmd.map ctx.wrapMsg <| Api.defaultApiProvider.getVotes ctx.koiosApiToken ctx.networkId govId GotVotes
+                    , Cmd.map ctx.wrapMsg <| Api.defaultApiProvider.getVotes ctx.networkId govId GotVotes
                     , Nothing
                     )
 
@@ -2294,13 +2293,13 @@ validateScriptVoter ctx form loadedRefUtxos toVoter scriptInfo govId =
                     in
                     if Dict.Any.member outputRef loadedRefUtxos then
                         ( Done { form | error = Nothing } voter
-                        , Cmd.map ctx.wrapMsg <| Api.defaultApiProvider.getVotes ctx.koiosApiToken ctx.networkId govId GotVotes
+                        , Cmd.map ctx.wrapMsg <| Api.defaultApiProvider.getVotes ctx.networkId govId GotVotes
                         , Nothing
                         )
 
                     else
                         ( Validating form voter
-                        , Cmd.map ctx.wrapMsg <| Api.defaultApiProvider.getVotes ctx.koiosApiToken ctx.networkId govId GotVotes
+                        , Cmd.map ctx.wrapMsg <| Api.defaultApiProvider.getVotes ctx.networkId govId GotVotes
                         , Api.defaultApiProvider.retrieveTx ctx.networkId outputRef.transactionId
                             |> Storage.cacheWrap
                                 { db = ctx.db, storeName = "tx" }

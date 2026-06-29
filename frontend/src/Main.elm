@@ -94,7 +94,6 @@ type alias Flags =
     , jsonLdContexts : JsonLdContexts
     , db : Value
     , networkId : Int
-    , koiosApiToken : String
     , ipfsPreconfig : IpfsPreconfig
     , voterPreconfig : List PreconfVoter
     , authorPreconfig : List PreconfAuthor
@@ -200,7 +199,6 @@ type alias Model =
     , taskPool : ConcurrentTask.Pool Msg
     , db : Value
     , networkId : NetworkId
-    , koiosApiToken : String
     , ipfsPreconfig : IpfsPreconfig
     , voterPreconfig : List PreconfVoter
     , authorPreconfig : List PreconfAuthor
@@ -232,13 +230,13 @@ type TaskCompleted
 
 
 init : Flags -> ( Model, Cmd Msg )
-init { url, jsonLdContexts, db, networkId, koiosApiToken, ipfsPreconfig, voterPreconfig, authorPreconfig } =
+init { url, jsonLdContexts, db, networkId, ipfsPreconfig, voterPreconfig, authorPreconfig } =
     let
         networkIdTyped =
             Address.networkIdFromInt networkId |> Maybe.withDefault Testnet
 
         config =
-            ModelConfig jsonLdContexts db networkIdTyped koiosApiToken ipfsPreconfig voterPreconfig authorPreconfig
+            ModelConfig jsonLdContexts db networkIdTyped ipfsPreconfig voterPreconfig authorPreconfig
     in
     initHelper (locationHrefToRoute url) config
 
@@ -273,8 +271,8 @@ initHelper route config =
     ( { model | taskPool = updatedTaskPool }
     , Cmd.batch
         [ cmd
-        , Api.defaultApiProvider.loadProtocolParams model.koiosApiToken model.networkId GotProtocolParams
-        , Api.defaultApiProvider.queryConstitution model.koiosApiToken model.networkId GotConstitution
+        , Api.defaultApiProvider.loadProtocolParams model.networkId GotProtocolParams
+        , Api.defaultApiProvider.queryConstitution model.networkId GotConstitution
         , tasksCmds
         ]
     )
@@ -284,7 +282,6 @@ type alias ModelConfig =
     { jsonLdContexts : JsonLdContexts
     , db : Value
     , networkId : NetworkId
-    , koiosApiToken : String
     , ipfsPreconfig : IpfsPreconfig
     , voterPreconfig : List PreconfVoter
     , authorPreconfig : List PreconfAuthor
@@ -292,7 +289,7 @@ type alias ModelConfig =
 
 
 initialModel : ModelConfig -> Model
-initialModel { jsonLdContexts, db, networkId, koiosApiToken, ipfsPreconfig, voterPreconfig, authorPreconfig } =
+initialModel { jsonLdContexts, db, networkId, ipfsPreconfig, voterPreconfig, authorPreconfig } =
     { page = LandingPage
     , appUrl = routeToAppUrl RouteLanding
     , mobileMenuIsOpen = False
@@ -318,7 +315,6 @@ initialModel { jsonLdContexts, db, networkId, koiosApiToken, ipfsPreconfig, vote
     , taskPool = ConcurrentTask.pool
     , db = db
     , networkId = networkId
-    , koiosApiToken = koiosApiToken
     , ipfsPreconfig = ipfsPreconfig
     , voterPreconfig = voterPreconfig
     , authorPreconfig = authorPreconfig
@@ -677,7 +673,6 @@ update msg model =
                             , costModels = Maybe.map .costModels model.protocolParams
                             , constitutionUri = model.constitutionUri
                             , networkId = model.networkId
-                            , koiosApiToken = model.koiosApiToken
                             , authorPreconfig = model.authorPreconfig
                             , ipfsPreconfig = model.ipfsPreconfig
                             }
@@ -870,7 +865,7 @@ update msg model =
 
                 Ok epoch ->
                     ( { model | epoch = RemoteData.Success epoch }
-                    , Api.defaultApiProvider.loadGovProposals model.koiosApiToken model.networkId epoch GotProposals
+                    , Api.defaultApiProvider.loadGovProposals model.networkId epoch GotProposals
                     )
 
         ( GotProposals result, _ ) ->
@@ -1061,7 +1056,6 @@ handleUrlChange route model =
                     { jsonLdContexts = model.jsonLdContexts
                     , db = model.db
                     , networkId = networkId
-                    , koiosApiToken = model.koiosApiToken
                     , ipfsPreconfig = model.ipfsPreconfig
                     , voterPreconfig = model.voterPreconfig
                     , authorPreconfig = model.authorPreconfig
@@ -1080,7 +1074,7 @@ handleUrlChange route model =
                   }
                 , Cmd.batch
                     [ pushUrlCmd
-                    , Api.defaultApiProvider.queryEpoch model.koiosApiToken model.networkId GotEpoch
+                    , Api.defaultApiProvider.queryEpoch model.networkId GotEpoch
                     , taskCmds
                     ]
                 )
@@ -1091,7 +1085,6 @@ handleUrlChange route model =
                     { jsonLdContexts = model.jsonLdContexts
                     , db = model.db
                     , networkId = networkId
-                    , koiosApiToken = model.koiosApiToken
                     , ipfsPreconfig = model.ipfsPreconfig
                     , voterPreconfig = model.voterPreconfig
                     , authorPreconfig = model.authorPreconfig
@@ -1112,7 +1105,6 @@ handleUrlChange route model =
                     { jsonLdContexts = model.jsonLdContexts
                     , db = model.db
                     , networkId = networkId
-                    , koiosApiToken = model.koiosApiToken
                     , ipfsPreconfig = model.ipfsPreconfig
                     , voterPreconfig = model.voterPreconfig
                     , authorPreconfig = model.authorPreconfig
