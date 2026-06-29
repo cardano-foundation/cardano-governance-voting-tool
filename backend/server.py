@@ -215,7 +215,10 @@ def _koios_api_url(network_id: Optional[str]) -> str:
     return KOIOS_MAINNET_URL if network_id == "Mainnet" else KOIOS_PREVIEW_URL
 
 
-# Same free-tier token the frontend ships with (already public). Overridable.
+# Free-tier Koios API token. Used both for the server's own Koios calls and
+# threaded to the frontend via the init flags. Overridable via the env var.
+# WARNING: this is shipped to the browser in the page's JS, so it is publicly
+# viewable. Only use a token that is safe to expose (e.g. a free-tier one).
 KOIOS_API_TOKEN = os.getenv(
     "KOIOS_API_TOKEN",
     "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhZGRyIjoic3Rha2UxdXljY3J5MzZwcXB0aGV4cmw5eW4zZDN6azJrbGR3N3lhdG0wM2gwcHU1eXdjMHFqMzYyNzQiLCJleHAiOjE4MDI5NDcwMTIsInRpZXIiOjEsInByb2pJRCI6Ind5Wk1Sb0ZmYnBKdmNuYncifQ.JMJNKGGXo_yDBottzKUB34D1afR6-2j3vtxw70k1Les",
@@ -362,6 +365,7 @@ def _base_context(request: Request) -> dict:
     return {
         "request": request,
         "network_id": NETWORK_ID,
+        "koios_api_token": KOIOS_API_TOKEN,
         "ipfs_preconfigs": IPFS_PRECONFIGS_PUBLIC_JSON,
         "preconfigured_voters": PRECONFIGURED_VOTERS_JSON,
         "preconfigured_authors": PRECONFIGURED_AUTHORS_JSON,

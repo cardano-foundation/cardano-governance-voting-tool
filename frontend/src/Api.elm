@@ -29,14 +29,6 @@ import Task
 import Url
 
 
-{-| Free Tier Koios API token.
-Expiration date: 2027-02-18.
--}
-koiosApiToken : String
-koiosApiToken =
-    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhZGRyIjoic3Rha2UxdXljY3J5MzZwcXB0aGV4cmw5eW4zZDN6azJrbGR3N3lhdG0wM2gwcHU1eXdjMHFqMzYyNzQiLCJleHAiOjE4MDI5NDcwMTIsInRpZXIiOjEsInByb2pJRCI6Ind5Wk1Sb0ZmYnBKdmNuYncifQ.JMJNKGGXo_yDBottzKUB34D1afR6-2j3vtxw70k1Les"
-
-
 {-| Overview of all the requests that the app may do.
 
 We could get rid of this type entirely and instead just expose individual functions.
@@ -50,17 +42,17 @@ So this is how there is a mix of regular `(...) -> Cmd msg` and `ConcurrentTask 
 
 -}
 type alias ApiProvider msg =
-    { loadProtocolParams : NetworkId -> (Result Http.Error ProtocolParams -> msg) -> Cmd msg
-    , queryEpoch : NetworkId -> (Result Http.Error Int -> msg) -> Cmd msg
-    , queryConstitution : NetworkId -> (Result Http.Error String -> msg) -> Cmd msg
-    , loadGovProposals : NetworkId -> Int -> (Result Http.Error (List ActiveProposal) -> msg) -> Cmd msg
+    { loadProtocolParams : String -> NetworkId -> (Result Http.Error ProtocolParams -> msg) -> Cmd msg
+    , queryEpoch : String -> NetworkId -> (Result Http.Error Int -> msg) -> Cmd msg
+    , queryConstitution : String -> NetworkId -> (Result Http.Error String -> msg) -> Cmd msg
+    , loadGovProposals : String -> NetworkId -> Int -> (Result Http.Error (List ActiveProposal) -> msg) -> Cmd msg
     , loadProposalMetadata : String -> ConcurrentTask String ProposalMetadata
     , retrieveTx : NetworkId -> Bytes TransactionId -> ConcurrentTask ConcurrentTask.Http.Error (Bytes Transaction)
     , getScriptInfo : NetworkId -> Bytes CredentialHash -> ConcurrentTask ConcurrentTask.Http.Error ScriptInfo
-    , getDrepInfo : NetworkId -> Credential -> (Result Http.Error DrepInfo -> msg) -> Cmd msg
-    , getCcInfo : NetworkId -> Credential -> (Result Http.Error CcInfo -> msg) -> Cmd msg
-    , getPoolLiveStake : NetworkId -> Bytes Pool.Id -> (Result Http.Error PoolInfo -> msg) -> Cmd msg
-    , getVotes : NetworkId -> Gov.Id -> (Result Http.Error (List OnchainVote) -> msg) -> Cmd msg
+    , getDrepInfo : String -> NetworkId -> Credential -> (Result Http.Error DrepInfo -> msg) -> Cmd msg
+    , getCcInfo : String -> NetworkId -> Credential -> (Result Http.Error CcInfo -> msg) -> Cmd msg
+    , getPoolLiveStake : String -> NetworkId -> Bytes Pool.Id -> (Result Http.Error PoolInfo -> msg) -> Cmd msg
+    , getVotes : String -> NetworkId -> Gov.Id -> (Result Http.Error (List OnchainVote) -> msg) -> Cmd msg
     , ipfsAddFileCustom : { rpc : String, headers : List ( String, String ), file : File } -> (Result String IpfsAnswer -> msg) -> Cmd msg
     , ipfsAddFileNmkr : { userId : String, apiToken : String, file : File } -> (Result String IpfsAnswer -> msg) -> Cmd msg
     , ipfsAddFileBlockfrost : { projectId : String, filecoin : Bool, file : File } -> (Result String IpfsAnswer -> msg) -> Cmd msg
@@ -576,7 +568,7 @@ defaultApiProvider =
     in
     -- Get protocol parameters via Koios
     { loadProtocolParams =
-        \networkId toMsg ->
+        \koiosApiToken networkId toMsg ->
             Http.request
                 { method = "POST"
                 , url = koiosUrl networkId ++ "/ogmios"
@@ -595,7 +587,7 @@ defaultApiProvider =
 
     -- Query epoch via Koios
     , queryEpoch =
-        \networkId toMsg ->
+        \koiosApiToken networkId toMsg ->
             Http.request
                 { method = "POST"
                 , url = koiosUrl networkId ++ "/ogmios"
@@ -614,7 +606,7 @@ defaultApiProvider =
 
     -- Query constitution URI via Koios
     , queryConstitution =
-        \networkId toMsg ->
+        \koiosApiToken networkId toMsg ->
             Http.request
                 { method = "POST"
                 , url = koiosUrl networkId ++ "/ogmios"
@@ -633,7 +625,7 @@ defaultApiProvider =
 
     -- Get governance proposals via Koios
     , loadGovProposals =
-        \networkId currentEpoch toMsg ->
+        \koiosApiToken networkId currentEpoch toMsg ->
             let
                 selected_rows =
                     [ "proposal_tx_hash"
@@ -669,7 +661,7 @@ defaultApiProvider =
 
     -- Retrieve DRep info via Koios using an Ogmios endpoint
     , getDrepInfo =
-        \networkId cred toMsg ->
+        \koiosApiToken networkId cred toMsg ->
             Http.request
                 { method = "POST"
                 , url = koiosUrl networkId ++ "/ogmios"
@@ -696,7 +688,7 @@ defaultApiProvider =
 
     -- Retrieve CC member info
     , getCcInfo =
-        \networkId cred toMsg ->
+        \koiosApiToken networkId cred toMsg ->
             Http.request
                 { method = "POST"
                 , url = koiosUrl networkId ++ "/ogmios"
@@ -715,7 +707,7 @@ defaultApiProvider =
 
     -- Retrieve Pool live stake
     , getPoolLiveStake =
-        \networkId poolId toMsg ->
+        \koiosApiToken networkId poolId toMsg ->
             let
                 poolIdBech32 =
                     Pool.toBech32 poolId
@@ -732,7 +724,7 @@ defaultApiProvider =
 
     -- Load past votes for a given voter
     , getVotes =
-        \networkId govId toMsg ->
+        \koiosApiToken networkId govId toMsg ->
             let
                 selected_rows =
                     [ "voter_id"
