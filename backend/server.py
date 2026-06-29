@@ -215,14 +215,22 @@ def _koios_api_url(network_id: Optional[str]) -> str:
     return KOIOS_MAINNET_URL if network_id == "Mainnet" else KOIOS_PREVIEW_URL
 
 
-# Free-tier Koios API token. Used both for the server's own Koios calls and
-# threaded to the frontend via the init flags. Overridable via the env var.
-# WARNING: this is shipped to the browser in the page's JS, so it is publicly
-# viewable. Only use a token that is safe to expose (e.g. a free-tier one).
-KOIOS_API_TOKEN = os.getenv(
-    "KOIOS_API_TOKEN",
-    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhZGRyIjoic3Rha2UxdXljY3J5MzZwcXB0aGV4cmw5eW4zZDN6azJrbGR3N3lhdG0wM2gwcHU1eXdjMHFqMzYyNzQiLCJleHAiOjE4MDI5NDcwMTIsInRpZXIiOjEsInByb2pJRCI6Ind5Wk1Sb0ZmYnBKdmNuYncifQ.JMJNKGGXo_yDBottzKUB34D1afR6-2j3vtxw70k1Les",
-)
+# Koios API token, used server-side only: both for the server's own Koios calls
+# (e.g. resolving proposal titles) and to authenticate the Koios requests proxied
+# for the frontend through the /koios endpoint. It is never sent to the browser.
+# Set it via the env var; when unset, Koios is queried anonymously (subject to
+# stricter rate limits).
+KOIOS_API_TOKEN = os.getenv("KOIOS_API_TOKEN", "").strip()
+if not KOIOS_API_TOKEN:
+    logger.warning(
+        "KOIOS_API_TOKEN not set; Koios requests will be unauthenticated "
+        "and subject to stricter rate limits."
+    )
+
+
+def _koios_auth_headers() -> dict:
+    """Authorization header for Koios, omitted when no token is configured."""
+    return {"Authorization": f"Bearer {KOIOS_API_TOKEN}"} if KOIOS_API_TOKEN else {}
 
 # Aggressive caching: proposal off-chain metadata is immutable once submitted,
 # so a successful (or stably-empty) lookup is cached for an hour. A failed
@@ -286,7 +294,7 @@ async def fetch_proposal_title(
             },
             headers={
                 "accept": "application/json",
-                "Authorization": f"Bearer {KOIOS_API_TOKEN}",
+                **_koios_auth_headers(),
             },
             timeout=OG_FETCH_TIMEOUT_SECONDS,
         )
@@ -365,7 +373,6 @@ def _base_context(request: Request) -> dict:
     return {
         "request": request,
         "network_id": NETWORK_ID,
-        "koios_api_token": KOIOS_API_TOKEN,
         "ipfs_preconfigs": IPFS_PRECONFIGS_PUBLIC_JSON,
         "preconfigured_voters": PRECONFIGURED_VOTERS_JSON,
         "preconfigured_authors": PRECONFIGURED_AUTHORS_JSON,
@@ -810,6 +817,48 @@ async def pin_json_to_ipfs(request: IPFSPinJSONRequest):
             preconfig_id=request.preconfigId,
             filecoin=request.filecoin,
         )
+
+
+class KoiosRequest(BaseModel):
+    networkId: str  # "Mainnet" selects mainnet; anything else uses Preview.
+    path: str  # Koios path (with query string), e.g. "/ogmios" or "/vote_list?...".
+    method: str = "GET"
+    body: Optional[dict] = None
+
+
+@app.post("/koios")
+async def koios_request(request: KoiosRequest):
+    """
+    Proxy a request to the Koios API, authenticated with the server's token.
+
+    The frontend hits this endpoint instead of calling Koios directly, so the
+    Koios API token stays server-side and is never exposed to the browser. The
+    base URL is derived from `networkId` here (not trusted from the client) and
+    only the relative `path` is appended, so the token is never forwarded
+    anywhere but Koios.
+    """
+    try:
+        api_url = _koios_api_url(request.networkId)
+        response = await app.async_client.request(  # type: ignore
+            method=request.method,
+            url=f"{api_url}{request.path}",
+            headers={
+                "accept": "application/json",
+                "content-type": "application/json",
+                **_koios_auth_headers(),
+            },
+            json=request.body,
+        )
+
+        return Response(
+            content=response.content,
+            status_code=response.status_code,
+            media_type=response.headers.get("content-type"),
+        )
+
+    except Exception as e:
+        logger.error(f"Unexpected error: {str(e)}")
+        raise HTTPException(status_code=500, detail="An unexpected error occurred")
 
 
 class ProxyRequest(BaseModel):

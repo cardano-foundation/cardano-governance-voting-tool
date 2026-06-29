@@ -42,17 +42,17 @@ So this is how there is a mix of regular `(...) -> Cmd msg` and `ConcurrentTask 
 
 -}
 type alias ApiProvider msg =
-    { loadProtocolParams : String -> NetworkId -> (Result Http.Error ProtocolParams -> msg) -> Cmd msg
-    , queryEpoch : String -> NetworkId -> (Result Http.Error Int -> msg) -> Cmd msg
-    , queryConstitution : String -> NetworkId -> (Result Http.Error String -> msg) -> Cmd msg
-    , loadGovProposals : String -> NetworkId -> Int -> (Result Http.Error (List ActiveProposal) -> msg) -> Cmd msg
+    { loadProtocolParams : NetworkId -> (Result Http.Error ProtocolParams -> msg) -> Cmd msg
+    , queryEpoch : NetworkId -> (Result Http.Error Int -> msg) -> Cmd msg
+    , queryConstitution : NetworkId -> (Result Http.Error String -> msg) -> Cmd msg
+    , loadGovProposals : NetworkId -> Int -> (Result Http.Error (List ActiveProposal) -> msg) -> Cmd msg
     , loadProposalMetadata : String -> ConcurrentTask String ProposalMetadata
     , retrieveTx : NetworkId -> Bytes TransactionId -> ConcurrentTask ConcurrentTask.Http.Error (Bytes Transaction)
     , getScriptInfo : NetworkId -> Bytes CredentialHash -> ConcurrentTask ConcurrentTask.Http.Error ScriptInfo
-    , getDrepInfo : String -> NetworkId -> Credential -> (Result Http.Error DrepInfo -> msg) -> Cmd msg
-    , getCcInfo : String -> NetworkId -> Credential -> (Result Http.Error CcInfo -> msg) -> Cmd msg
-    , getPoolLiveStake : String -> NetworkId -> Bytes Pool.Id -> (Result Http.Error PoolInfo -> msg) -> Cmd msg
-    , getVotes : String -> NetworkId -> Gov.Id -> (Result Http.Error (List OnchainVote) -> msg) -> Cmd msg
+    , getDrepInfo : NetworkId -> Credential -> (Result Http.Error DrepInfo -> msg) -> Cmd msg
+    , getCcInfo : NetworkId -> Credential -> (Result Http.Error CcInfo -> msg) -> Cmd msg
+    , getPoolLiveStake : NetworkId -> Bytes Pool.Id -> (Result Http.Error PoolInfo -> msg) -> Cmd msg
+    , getVotes : NetworkId -> Gov.Id -> (Result Http.Error (List OnchainVote) -> msg) -> Cmd msg
     , ipfsAddFileCustom : { rpc : String, headers : List ( String, String ), file : File } -> (Result String IpfsAnswer -> msg) -> Cmd msg
     , ipfsAddFileNmkr : { userId : String, apiToken : String, file : File } -> (Result String IpfsAnswer -> msg) -> Cmd msg
     , ipfsAddFileBlockfrost : { projectId : String, filecoin : Bool, file : File } -> (Result String IpfsAnswer -> msg) -> Cmd msg
@@ -552,80 +552,104 @@ authorVerificationDecoder =
 -- Default API Provider
 
 
+{-| Convert a NetworkId to the string expected by the server's /koios endpoint.
+-}
+networkIdToString : NetworkId -> String
+networkIdToString networkId =
+    case networkId of
+        Mainnet ->
+            "Mainnet"
+
+        Testnet ->
+            "Testnet"
+
+
+{-| Build the JSON value for a request to the server's /koios proxy endpoint.
+
+The server appends `path` to the Koios base URL (chosen from `networkId`) and
+injects the Koios API token, so the token is never exposed to the browser.
+
+-}
+koiosProxyValue : NetworkId -> String -> String -> Maybe JE.Value -> JE.Value
+koiosProxyValue networkId method path maybeBody =
+    JE.object
+        ([ ( "networkId", JE.string (networkIdToString networkId) )
+         , ( "method", JE.string method )
+         , ( "path", JE.string path )
+         ]
+            ++ (case maybeBody of
+                    Just body ->
+                        [ ( "body", body ) ]
+
+                    Nothing ->
+                        []
+               )
+        )
+
+
+{-| Same as `koiosProxyValue`, wrapped as an elm/http body.
+-}
+koiosProxyBody : NetworkId -> String -> String -> Maybe JE.Value -> Http.Body
+koiosProxyBody networkId method path maybeBody =
+    Http.jsonBody (koiosProxyValue networkId method path maybeBody)
+
+
 {-| Default implementation for each remote request that this app requires.
 Most of them are relying on Koios infrastructure.
 -}
 defaultApiProvider : ApiProvider msg
 defaultApiProvider =
-    let
-        koiosUrl networkId =
-            case networkId of
-                Testnet ->
-                    "https://preview.koios.rest/api/v1"
-
-                Mainnet ->
-                    "https://api.koios.rest/api/v1"
-    in
-    -- Get protocol parameters via Koios
+    -- Get protocol parameters via Koios (proxied through the server)
     { loadProtocolParams =
-        \koiosApiToken networkId toMsg ->
-            Http.request
-                { method = "POST"
-                , url = koiosUrl networkId ++ "/ogmios"
-                , headers = [ Http.header "Authorization" <| "Bearer " ++ koiosApiToken ]
+        \networkId toMsg ->
+            Http.post
+                { url = "/koios"
                 , body =
-                    Http.jsonBody
-                        (JE.object
-                            [ ( "jsonrpc", JE.string "2.0" )
-                            , ( "method", JE.string "queryLedgerState/protocolParameters" )
-                            ]
-                        )
+                    koiosProxyBody networkId "POST" "/ogmios" <|
+                        Just
+                            (JE.object
+                                [ ( "jsonrpc", JE.string "2.0" )
+                                , ( "method", JE.string "queryLedgerState/protocolParameters" )
+                                ]
+                            )
                 , expect = Http.expectJson toMsg protocolParamsDecoder
-                , timeout = Nothing
-                , tracker = Nothing
                 }
 
-    -- Query epoch via Koios
+    -- Query epoch via Koios (proxied through the server)
     , queryEpoch =
-        \koiosApiToken networkId toMsg ->
-            Http.request
-                { method = "POST"
-                , url = koiosUrl networkId ++ "/ogmios"
-                , headers = [ Http.header "Authorization" <| "Bearer " ++ koiosApiToken ]
+        \networkId toMsg ->
+            Http.post
+                { url = "/koios"
                 , body =
-                    Http.jsonBody
-                        (JE.object
-                            [ ( "jsonrpc", JE.string "2.0" )
-                            , ( "method", JE.string "queryLedgerState/epoch" )
-                            ]
-                        )
+                    koiosProxyBody networkId "POST" "/ogmios" <|
+                        Just
+                            (JE.object
+                                [ ( "jsonrpc", JE.string "2.0" )
+                                , ( "method", JE.string "queryLedgerState/epoch" )
+                                ]
+                            )
                 , expect = Http.expectJson toMsg ogmiosEpochDecoder
-                , timeout = Nothing
-                , tracker = Nothing
                 }
 
-    -- Query constitution URI via Koios
+    -- Query constitution URI via Koios (proxied through the server)
     , queryConstitution =
-        \koiosApiToken networkId toMsg ->
-            Http.request
-                { method = "POST"
-                , url = koiosUrl networkId ++ "/ogmios"
-                , headers = [ Http.header "Authorization" <| "Bearer " ++ koiosApiToken ]
+        \networkId toMsg ->
+            Http.post
+                { url = "/koios"
                 , body =
-                    Http.jsonBody
-                        (JE.object
-                            [ ( "jsonrpc", JE.string "2.0" )
-                            , ( "method", JE.string "queryLedgerState/constitution" )
-                            ]
-                        )
+                    koiosProxyBody networkId "POST" "/ogmios" <|
+                        Just
+                            (JE.object
+                                [ ( "jsonrpc", JE.string "2.0" )
+                                , ( "method", JE.string "queryLedgerState/constitution" )
+                                ]
+                            )
                 , expect = Http.expectJson toMsg ogmiosConstitutionDecoder
-                , timeout = Nothing
-                , tracker = Nothing
                 }
 
-    -- Get governance proposals via Koios
+    -- Get governance proposals via Koios (proxied through the server)
     , loadGovProposals =
-        \koiosApiToken networkId currentEpoch toMsg ->
+        \networkId currentEpoch toMsg ->
             let
                 selected_rows =
                     [ "proposal_tx_hash"
@@ -640,14 +664,11 @@ defaultApiProvider =
                     ]
                         |> String.join ","
             in
-            Http.request
-                { method = "GET"
-                , url = koiosUrl networkId ++ "/proposal_list?select=" ++ selected_rows ++ "&expiration=gt." ++ String.fromInt currentEpoch
-                , headers = [ Http.header "Authorization" <| "Bearer " ++ koiosApiToken ]
-                , body = Http.emptyBody
+            Http.post
+                { url = "/koios"
+                , body =
+                    koiosProxyBody networkId "GET" ("/proposal_list?select=" ++ selected_rows ++ "&expiration=gt." ++ String.fromInt currentEpoch) Nothing
                 , expect = Http.expectJson toMsg koiosGovProposalsDecoder
-                , timeout = Nothing
-                , tracker = Nothing
                 }
 
     -- Load the metadata associated with a governance proposal
@@ -659,72 +680,59 @@ defaultApiProvider =
     -- Retrieve script info via Koios by proxying with the server (to avoid CORS errors)
     , getScriptInfo = taskGetScriptInfo
 
-    -- Retrieve DRep info via Koios using an Ogmios endpoint
+    -- Retrieve DRep info via Koios using an Ogmios endpoint (proxied through the server)
     , getDrepInfo =
-        \koiosApiToken networkId cred toMsg ->
-            Http.request
-                { method = "POST"
-                , url = koiosUrl networkId ++ "/ogmios"
-                , headers = [ Http.header "Authorization" <| "Bearer " ++ koiosApiToken ]
+        \networkId cred toMsg ->
+            Http.post
+                { url = "/koios"
                 , body =
-                    Http.jsonBody
-                        (JE.object
-                            [ ( "jsonrpc", JE.string "2.0" )
-                            , ( "method", JE.string "queryLedgerState/delegateRepresentatives" )
-                            , ( "params"
-                              , case cred of
-                                    VKeyHash hash ->
-                                        JE.object [ ( "keys", JE.list JE.string <| [ Bytes.toHex hash ] ) ]
+                    koiosProxyBody networkId "POST" "/ogmios" <|
+                        Just
+                            (JE.object
+                                [ ( "jsonrpc", JE.string "2.0" )
+                                , ( "method", JE.string "queryLedgerState/delegateRepresentatives" )
+                                , ( "params"
+                                  , case cred of
+                                        VKeyHash hash ->
+                                            JE.object [ ( "keys", JE.list JE.string <| [ Bytes.toHex hash ] ) ]
 
-                                    ScriptHash hash ->
-                                        JE.object [ ( "scripts", JE.list JE.string <| [ Bytes.toHex hash ] ) ]
-                              )
-                            ]
-                        )
+                                        ScriptHash hash ->
+                                            JE.object [ ( "scripts", JE.list JE.string <| [ Bytes.toHex hash ] ) ]
+                                  )
+                                ]
+                            )
                 , expect = Http.expectJson toMsg (ogmiosSpecificDrepInfoDecoder cred)
-                , timeout = Nothing
-                , tracker = Nothing
                 }
 
-    -- Retrieve CC member info
+    -- Retrieve CC member info (proxied through the server)
     , getCcInfo =
-        \koiosApiToken networkId cred toMsg ->
-            Http.request
-                { method = "POST"
-                , url = koiosUrl networkId ++ "/ogmios"
-                , headers = [ Http.header "Authorization" <| "Bearer " ++ koiosApiToken ]
+        \networkId cred toMsg ->
+            Http.post
+                { url = "/koios"
                 , body =
-                    Http.jsonBody
-                        (JE.object
-                            [ ( "jsonrpc", JE.string "2.0" )
-                            , ( "method", JE.string "queryLedgerState/constitutionalCommittee" )
-                            ]
-                        )
+                    koiosProxyBody networkId "POST" "/ogmios" <|
+                        Just
+                            (JE.object
+                                [ ( "jsonrpc", JE.string "2.0" )
+                                , ( "method", JE.string "queryLedgerState/constitutionalCommittee" )
+                                ]
+                            )
                 , expect = Http.expectJson toMsg (ogmiosSpecificCcInfoDecoder cred)
-                , timeout = Nothing
-                , tracker = Nothing
                 }
 
-    -- Retrieve Pool live stake
+    -- Retrieve Pool live stake (proxied through the server)
     , getPoolLiveStake =
-        \koiosApiToken networkId poolId toMsg ->
-            let
-                poolIdBech32 =
-                    Pool.toBech32 poolId
-            in
-            Http.request
-                { method = "GET"
-                , url = koiosUrl networkId ++ "/pool_stake_snapshot?_pool_bech32=" ++ poolIdBech32
-                , headers = [ Http.header "Authorization" <| "Bearer " ++ koiosApiToken ]
-                , body = Http.emptyBody
+        \networkId poolId toMsg ->
+            Http.post
+                { url = "/koios"
+                , body =
+                    koiosProxyBody networkId "GET" ("/pool_stake_snapshot?_pool_bech32=" ++ Pool.toBech32 poolId) Nothing
                 , expect = Http.expectJson toMsg (koiosPoolSnapshotDecoder poolId)
-                , timeout = Nothing
-                , tracker = Nothing
                 }
 
-    -- Load past votes for a given voter
+    -- Load past votes for a given voter (proxied through the server)
     , getVotes =
-        \koiosApiToken networkId govId toMsg ->
+        \networkId govId toMsg ->
             let
                 selected_rows =
                     [ "voter_id"
@@ -734,16 +742,13 @@ defaultApiProvider =
                     ]
                         |> String.join ","
             in
-            Http.request
-                { method = "GET"
+            Http.post
+                { url = "/koios"
 
                 -- TODO: improve efficiency by filtering out old epochs
-                , url = koiosUrl networkId ++ "/vote_list?select=" ++ selected_rows ++ "&voter_id=eq." ++ Gov.idToBech32 govId
-                , headers = [ Http.header "Authorization" <| "Bearer " ++ koiosApiToken ]
-                , body = Http.emptyBody
+                , body =
+                    koiosProxyBody networkId "GET" ("/vote_list?select=" ++ selected_rows ++ "&voter_id=eq." ++ Gov.idToBech32 govId) Nothing
                 , expect = Http.expectJson toMsg onchainVotesDecoder
-                , timeout = Nothing
-                , tracker = Nothing
                 }
 
     -- Make a request to an IPFS RPC
@@ -1065,7 +1070,7 @@ httpErrorToString =
 
 
 {-| Task to retrieve the raw CBOR of a given Tx.
-It uses the Koios API, proxied through the app server (because CORS).
+It uses the Koios API, proxied through the app server (for auth and CORS).
 -}
 taskRetrieveTx : NetworkId -> Bytes TransactionId -> ConcurrentTask ConcurrentTask.Http.Error (Bytes a)
 taskRetrieveTx networkId txId =
@@ -1081,27 +1086,14 @@ taskRetrieveTx networkId txId =
                         else
                             JD.fail <| "The retrieved Tx (" ++ Bytes.toHex tx.txId ++ ") does not correspond to the expected one (" ++ Bytes.toHex txId ++ ")"
                     )
-
-        koiosUrl =
-            case networkId of
-                Testnet ->
-                    "https://preview.koios.rest/api/v1"
-
-                Mainnet ->
-                    "https://api.koios.rest/api/v1"
     in
-    -- TODO: change to authenticated free tier Koios request
     ConcurrentTask.Http.post
-        { url = "/proxy/json"
+        { url = "/koios"
         , headers = []
         , body =
-            ConcurrentTask.Http.jsonBody
-                (JE.object
-                    [ ( "url", JE.string <| koiosUrl ++ "/tx_cbor" )
-                    , ( "method", JE.string "POST" )
-                    , ( "body", JE.object [ ( "_tx_hashes", JE.list (JE.string << Bytes.toHex) [ txId ] ) ] )
-                    ]
-                )
+            ConcurrentTask.Http.jsonBody <|
+                koiosProxyValue networkId "POST" "/tx_cbor" <|
+                    Just (JE.object [ ( "_tx_hashes", JE.list (JE.string << Bytes.toHex) [ txId ] ) ])
         , expect = ConcurrentTask.Http.expectJson thisTxDecoder
         , timeout = Nothing
         }
@@ -1121,57 +1113,31 @@ taskRetrieveTxBatch networkId txIds =
                     (JD.field "cbor" Bytes.jsonDecoder)
                 )
                 |> JD.map Dict.fromList
-
-        koiosUrl =
-            case networkId of
-                Testnet ->
-                    "https://preview.koios.rest/api/v1"
-
-                Mainnet ->
-                    "https://api.koios.rest/api/v1"
     in
     ConcurrentTask.Http.post
-        { url = "/proxy/json"
+        { url = "/koios"
         , headers = []
         , body =
-            ConcurrentTask.Http.jsonBody
-                (JE.object
-                    [ ( "url", JE.string <| koiosUrl ++ "/tx_cbor" )
-                    , ( "method", JE.string "POST" )
-                    , ( "body", JE.object [ ( "_tx_hashes", JE.list (JE.string << Bytes.toHex) txIds ) ] )
-                    ]
-                )
+            ConcurrentTask.Http.jsonBody <|
+                koiosProxyValue networkId "POST" "/tx_cbor" <|
+                    Just (JE.object [ ( "_tx_hashes", JE.list (JE.string << Bytes.toHex) txIds ) ])
         , expect = ConcurrentTask.Http.expectJson batchDecoder
         , timeout = Nothing
         }
 
 
 {-| Task to retrieve relevant script info for the app.
-It uses the Koios API, proxied through the app server (because CORS).
+It uses the Koios API, proxied through the app server (for auth and CORS).
 -}
 taskGetScriptInfo : NetworkId -> Bytes CredentialHash -> ConcurrentTask ConcurrentTask.Http.Error ScriptInfo
 taskGetScriptInfo networkId scriptHash =
-    let
-        koiosUrl =
-            case networkId of
-                Testnet ->
-                    "https://preview.koios.rest/api/v1"
-
-                Mainnet ->
-                    "https://api.koios.rest/api/v1"
-    in
-    -- TODO: change to authenticated free tier Koios request
     ConcurrentTask.Http.post
-        { url = "/proxy/json"
+        { url = "/koios"
         , headers = []
         , body =
-            ConcurrentTask.Http.jsonBody
-                (JE.object
-                    [ ( "url", JE.string <| koiosUrl ++ "/script_info" )
-                    , ( "method", JE.string "POST" )
-                    , ( "body", JE.object [ ( "_script_hashes", JE.list (JE.string << Bytes.toHex) [ scriptHash ] ) ] )
-                    ]
-                )
+            ConcurrentTask.Http.jsonBody <|
+                koiosProxyValue networkId "POST" "/script_info" <|
+                    Just (JE.object [ ( "_script_hashes", JE.list (JE.string << Bytes.toHex) [ scriptHash ] ) ])
         , expect = ConcurrentTask.Http.expectJson ScriptInfo.koiosFirstScriptInfoDecoder
         , timeout = Nothing
         }
@@ -1183,14 +1149,6 @@ Returns the creation transaction hash if the datum exists on-chain.
 taskGetDatumInfo : NetworkId -> Bytes a -> ConcurrentTask ConcurrentTask.Http.Error { creationTxHash : Bytes TransactionId }
 taskGetDatumInfo networkId datumHash =
     let
-        koiosUrl =
-            case networkId of
-                Testnet ->
-                    "https://preview.koios.rest/api/v1"
-
-                Mainnet ->
-                    "https://api.koios.rest/api/v1"
-
         decoder =
             JD.index 0
                 (JD.field "creation_tx_hash" JD.string
@@ -1206,16 +1164,12 @@ taskGetDatumInfo networkId datumHash =
                 )
     in
     ConcurrentTask.Http.post
-        { url = "/proxy/json"
+        { url = "/koios"
         , headers = []
         , body =
-            ConcurrentTask.Http.jsonBody
-                (JE.object
-                    [ ( "url", JE.string <| koiosUrl ++ "/datum_info" )
-                    , ( "method", JE.string "POST" )
-                    , ( "body", JE.object [ ( "_datum_hashes", JE.list (JE.string << Bytes.toHex) [ datumHash ] ) ] )
-                    ]
-                )
+            ConcurrentTask.Http.jsonBody <|
+                koiosProxyValue networkId "POST" "/datum_info" <|
+                    Just (JE.object [ ( "_datum_hashes", JE.list (JE.string << Bytes.toHex) [ datumHash ] ) ])
         , expect = ConcurrentTask.Http.expectJson decoder
         , timeout = Nothing
         }
@@ -1227,35 +1181,23 @@ Returns the UTxO info if it exists and is unspent (non-empty response).
 taskGetUtxoInfo : NetworkId -> Bytes TransactionId -> Int -> ConcurrentTask ConcurrentTask.Http.Error Bool
 taskGetUtxoInfo networkId txHash outputIndex =
     let
-        koiosUrl =
-            case networkId of
-                Testnet ->
-                    "https://preview.koios.rest/api/v1"
-
-                Mainnet ->
-                    "https://api.koios.rest/api/v1"
-
         decoder =
             JD.list (JD.field "is_spent" JD.bool)
                 |> JD.map (\items -> items == [ False ])
     in
     ConcurrentTask.Http.post
-        { url = "/proxy/json"
+        { url = "/koios"
         , headers = []
         , body =
-            ConcurrentTask.Http.jsonBody
-                (JE.object
-                    [ ( "url", JE.string <| koiosUrl ++ "/utxo_info" )
-                    , ( "method", JE.string "POST" )
-                    , ( "body"
-                      , JE.object
+            ConcurrentTask.Http.jsonBody <|
+                koiosProxyValue networkId "POST" "/utxo_info" <|
+                    Just
+                        (JE.object
                             [ ( "_utxo_refs"
                               , JE.list JE.string [ Bytes.toHex txHash ++ "#" ++ String.fromInt outputIndex ]
                               )
                             ]
-                      )
-                    ]
-                )
+                        )
         , expect = ConcurrentTask.Http.expectJson decoder
         , timeout = Nothing
         }

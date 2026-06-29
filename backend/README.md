@@ -110,11 +110,11 @@ its own domain with no configuration. All related variables are optional:
   host distinct from the app's own host). Leave unset to auto-derive per request.
 - `OG_CARD_CACHE_DIR`: directory for the rendered card cache (default: a
   `og-cards/` folder under the system temp dir).
-- `KOIOS_API_TOKEN`: override the Koios token (a public free-tier token is used
-  by default). It is used both for the server's own Koios calls (e.g. resolving
-  proposal titles) and threaded to the frontend via the init flags. Note that it
-  is shipped to the browser in the page's JS and is therefore publicly viewable,
-  so only use a token that is safe to expose.
+- `KOIOS_API_TOKEN`: override the Koios token (a free-tier token is used by
+  default). It is used server-side only: both for the server's own Koios calls
+  (e.g. resolving proposal titles) and to authenticate the Koios requests the
+  frontend proxies through the `/koios` endpoint. It is never sent to the
+  browser.
 
 Rendering needs Pillow (a project dependency) and a TrueType font. The Docker
 image bundles one via the `font-dejavu` package; without a usable font the
