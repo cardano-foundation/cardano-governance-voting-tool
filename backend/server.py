@@ -232,6 +232,7 @@ def _koios_auth_headers() -> dict:
     """Authorization header for Koios, omitted when no token is configured."""
     return {"Authorization": f"Bearer {KOIOS_API_TOKEN}"} if KOIOS_API_TOKEN else {}
 
+
 # Aggressive caching: proposal off-chain metadata is immutable once submitted,
 # so a successful (or stably-empty) lookup is cached for an hour. A failed
 # lookup is cached only briefly so a transient Koios outage recovers quickly.
