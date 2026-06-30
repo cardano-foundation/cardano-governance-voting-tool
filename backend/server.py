@@ -388,6 +388,7 @@ async def read_root(request: Request):
     return templates.TemplateResponse(
         "index.html",
         {**_base_context(request), **_og_context(None, image_url)},
+        headers={"Cache-Control": "no-cache"},
     )
 
 
@@ -411,6 +412,7 @@ async def get_page(full_path: str, request: Request):
     return templates.TemplateResponse(
         "index.html",
         {**_base_context(request), **_og_context(title, image_url)},
+        headers={"Cache-Control": "no-cache"},
     )
 
 
@@ -1032,26 +1034,67 @@ async def proxy_request(request: ProxyRequest):
 class CompressedStaticFiles(StaticFiles):
     async def get_response(self, path: str, scope):
         """
-        Serve pre-compressed `.gz` or `.br` files if available and the client supports it.
+        Serve pre-compressed `.br` or `.gz` files when the client supports them,
+        always attaching a validator so browsers revalidate rather than serve a
+        stale build.
+
+        Assets keep stable filenames (e.g. `main.js`), so without an explicit
+        Cache-Control browsers fall back to heuristic caching and can keep an
+        outdated build for a long time. We send `Cache-Control: no-cache` ("you
+        may store it, but revalidate before reusing") together with an ETag:
+        unchanged files come back as a tiny 304, changed files are fetched
+        fresh, so nobody gets stuck on an old version.
         """
         accept_encoding = ""
+        if_none_match = ""
         for header, value in scope["headers"]:
             if header == b"accept-encoding":
                 accept_encoding = value.decode()
-                break
+            elif header == b"if-none-match":
+                if_none_match = value.decode()
 
         full_path = os.path.join(self.directory, path)  # type: ignore
 
-        # Serve Brotli (.br) if supported and available
+        # Pick a pre-compressed variant the client accepts, if one exists.
+        encoding = None
+        served_path = full_path
         if "br" in accept_encoding and os.path.exists(full_path + ".br"):
-            return FileResponse(full_path + ".br", headers={"Content-Encoding": "br"})
+            encoding, served_path = "br", full_path + ".br"
+        elif "gzip" in accept_encoding and os.path.exists(full_path + ".gz"):
+            encoding, served_path = "gzip", full_path + ".gz"
 
-        # Serve Gzip (.gz) if supported and available
-        if "gzip" in accept_encoding and os.path.exists(full_path + ".gz"):
-            return FileResponse(full_path + ".gz", headers={"Content-Encoding": "gzip"})
+        if encoding is None:
+            # Uncompressed path: Starlette already sets ETag/Last-Modified and
+            # handles conditional requests; we only add the revalidation policy.
+            response = await super().get_response(path, scope)
+            response.headers["Cache-Control"] = "no-cache"
+            return response
 
-        # Default to the uncompressed version
-        return await super().get_response(path, scope)
+        # Compressed variant: derive the ETag from the *uncompressed* file so the
+        # validator tracks content changes regardless of which encoding is sent,
+        # and answer conditional requests ourselves (FileResponse would otherwise
+        # ignore the client's If-None-Match for these branches).
+        try:
+            stat = os.stat(full_path)
+        except FileNotFoundError:
+            stat = os.stat(served_path)
+        etag = f'"{stat.st_mtime_ns:x}-{stat.st_size:x}"'
+        headers = {
+            "Content-Encoding": encoding,
+            "Cache-Control": "no-cache",
+            "ETag": etag,
+            "Vary": "Accept-Encoding",
+        }
+
+        candidates = [t.strip() for t in if_none_match.split(",") if t.strip()]
+        if "*" in candidates or etag in candidates or f"W/{etag}" in candidates:
+            return Response(status_code=304, headers=headers)
+
+        return FileResponse(
+            served_path,
+            media_type=mimetypes.guess_type(full_path)[0],
+            headers=headers,
+        )
 
 
 # Mount static files from static directory
