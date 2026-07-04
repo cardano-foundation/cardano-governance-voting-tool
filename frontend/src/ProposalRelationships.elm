@@ -1,6 +1,6 @@
 module ProposalRelationships exposing
     ( GovernancePurpose(..), ProposalRelInfo
-    , actionLatestEnacted, isChainableAction, proposalRelationships
+    , actionLatestEnacted, isChainableAction, isDelayingActionType, proposalRelationships
     )
 
 {-| Module for computing governance proposal relationships.
@@ -11,7 +11,7 @@ enacted, the rest expire. This module provides the types and logic to
 detect and represent these relationships.
 
 @docs GovernancePurpose, ProposalRelInfo
-@docs actionLatestEnacted, isChainableAction, proposalRelationships
+@docs actionLatestEnacted, isChainableAction, isDelayingActionType, proposalRelationships
 
 -}
 
@@ -40,7 +40,6 @@ type alias ProposalRelInfo =
     , latestEnacted : Maybe ActionId
     , follows : Maybe Int
     , competingWith : List Int
-    , isDelaying : Bool
     }
 
 
@@ -63,6 +62,36 @@ isChainableAction actionType =
             True
 
         "NewConstitution" ->
+            True
+
+        _ ->
+            False
+
+
+{-| Whether a governance action, if ratified, delays the ratification of all
+other governance actions until the first epoch after its enactment.
+
+Per CIP-1694, the delaying actions are: motion of no-confidence, update
+committee, new constitution, and hard-fork initiation. Protocol parameter
+changes, treasury withdrawals and info actions are not delaying.
+
+This property is intrinsic to the action type: it holds regardless of whether
+the proposal competes with or depends on any other proposal.
+
+-}
+isDelayingActionType : String -> Bool
+isDelayingActionType actionType =
+    case actionType of
+        "NoConfidence" ->
+            True
+
+        "NewCommittee" ->
+            True
+
+        "NewConstitution" ->
+            True
+
+        "HardForkInitiation" ->
             True
 
         _ ->
@@ -244,15 +273,6 @@ proposalRelationships chainableProposals =
                         |> Maybe.withDefault []
                         |> List.filterMap (\siblingId -> Dict.get siblingId bech32ToNumber)
                         |> List.sort
-
-                isDelaying =
-                    case proposal.actionType of
-                        "ParameterChange" ->
-                            False
-
-                        _ ->
-                            -- All other chainable types are delaying
-                            True
             in
             ( bech32Id
             , { number = index + 1
@@ -260,7 +280,6 @@ proposalRelationships chainableProposals =
               , latestEnacted = latestEnacted
               , follows = follows
               , competingWith = competingWith
-              , isDelaying = isDelaying
               }
             )
     in
