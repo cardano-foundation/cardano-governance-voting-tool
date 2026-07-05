@@ -1354,8 +1354,8 @@ showMoreButton hasMore visibleCount totalCount clickMsg =
 
 {-| Card for an individual proposal
 -}
-proposalCard : { title : String, hashIsValid : Bool, pastVote : Maybe Gov.Vote, isRatifying : Bool, isLastEpoch : Bool, expiryText : String, abstract : String, actionType : String, linkUrl : String, linkHex : String, index : Int, relInfo : Maybe { number : Int, follows : Maybe Int, competingWith : List Int, isDelaying : Bool } } -> msg -> Html msg -> Html msg
-proposalCard { title, hashIsValid, pastVote, isRatifying, isLastEpoch, expiryText, abstract, actionType, linkUrl, linkHex, index, relInfo } selectMsg actionIcon =
+proposalCard : { title : String, hashIsValid : Bool, pastVote : Maybe Gov.Vote, isRatifying : Bool, isLastEpoch : Bool, expiryText : String, abstract : String, actionType : String, linkUrl : String, linkHex : String, index : Int, isDelaying : Bool, relInfo : Maybe { number : Int, follows : Maybe Int, competingWith : List Int } } -> msg -> Html msg -> Html msg
+proposalCard { title, hashIsValid, pastVote, isRatifying, isLastEpoch, expiryText, abstract, actionType, linkUrl, linkHex, index, isDelaying, relInfo } selectMsg actionIcon =
     div
         [ HA.style "border" "1px solid #E2E8F0"
         , HA.style "border-radius" "0.75rem"
@@ -1427,7 +1427,7 @@ proposalCard { title, hashIsValid, pastVote, isRatifying, isLastEpoch, expiryTex
 
                 badges : List (Html msg)
                 badges =
-                    viewRelBadges relInfo
+                    viewRelBadges isDelaying relInfo
                         ++ (if hashIsValid then
                                 []
 
@@ -1665,55 +1665,65 @@ viewPastVoteBadge vote =
 
 {-| Render relationship badges (number, follows, competing, delaying) for a proposal.
 Reusable across proposal cards, cart rows, etc.
+
+The "Delaying" badge is intrinsic to the action type (see CIP-1694) and is shown
+whenever `isDelaying` is True, independently of whether the proposal has any
+relationship with other proposals. The other badges (number, follows, competing)
+only appear when relationship info is present.
+
 -}
-viewRelBadges : Maybe { number : Int, follows : Maybe Int, competingWith : List Int, isDelaying : Bool } -> List (Html msg)
-viewRelBadges relInfo =
-    case relInfo of
-        Nothing ->
-            []
+viewRelBadges : Bool -> Maybe { number : Int, follows : Maybe Int, competingWith : List Int } -> List (Html msg)
+viewRelBadges isDelaying relInfo =
+    let
+        smallBadge bgColor color tooltip label =
+            Html.span
+                [ HA.style "display" "inline-flex"
+                , HA.style "align-items" "center"
+                , HA.style "background-color" bgColor
+                , HA.style "color" color
+                , HA.style "font-weight" "600"
+                , HA.style "padding" "0.125rem 0.4rem"
+                , HA.style "border-radius" "0.375rem"
+                , HA.style "font-size" "0.75rem"
+                , HA.style "cursor" "help"
+                , HA.title tooltip
+                ]
+                [ text label ]
 
-        Just info ->
-            let
-                smallBadge bgColor color tooltip label =
-                    Html.span
-                        [ HA.style "display" "inline-flex"
-                        , HA.style "align-items" "center"
-                        , HA.style "background-color" bgColor
-                        , HA.style "color" color
-                        , HA.style "font-weight" "600"
-                        , HA.style "padding" "0.125rem 0.4rem"
-                        , HA.style "border-radius" "0.375rem"
-                        , HA.style "font-size" "0.75rem"
-                        , HA.style "cursor" "help"
-                        , HA.title tooltip
-                        ]
-                        [ text label ]
-            in
-            smallBadge "#E2E8F0" "#4A5568" "Proposal number for cross-referencing related proposals" ("#" ++ String.fromInt info.number)
-                :: (case info.follows of
-                        Just n ->
-                            [ smallBadge "#FEF3C7" "#D97706" ("This proposal depends on #" ++ String.fromInt n ++ " being enacted first") ("Follows #" ++ String.fromInt n) ]
+        relationshipBadges =
+            case relInfo of
+                Nothing ->
+                    []
 
-                        Nothing ->
-                            []
-                   )
-                ++ (if List.isEmpty info.competingWith then
-                        []
+                Just info ->
+                    smallBadge "#E2E8F0" "#4A5568" "Proposal number for cross-referencing related proposals" ("#" ++ String.fromInt info.number)
+                        :: (case info.follows of
+                                Just n ->
+                                    [ smallBadge "#FEF3C7" "#D97706" ("This proposal depends on #" ++ String.fromInt n ++ " being enacted first") ("Follows #" ++ String.fromInt n) ]
 
-                    else
-                        [ smallBadge "#FEE2E2" "#DC2626" "These proposals share the same purpose and parent action, so only one can be enacted" ("Competing #" ++ String.join ", #" (List.map String.fromInt info.competingWith)) ]
-                   )
-                ++ (if info.isDelaying then
-                        [ smallBadge "#EDE9FE" "#7C3AED" "If ratified, this action delays all other ratifications for the rest of the epoch" "Delaying" ]
+                                Nothing ->
+                                    []
+                           )
+                        ++ (if List.isEmpty info.competingWith then
+                                []
 
-                    else
-                        []
-                   )
+                            else
+                                [ smallBadge "#FEE2E2" "#DC2626" "These proposals share the same purpose and parent action, so only one can be enacted" ("Competing #" ++ String.join ", #" (List.map String.fromInt info.competingWith)) ]
+                           )
+
+        delayingBadges =
+            if isDelaying then
+                [ smallBadge "#EDE9FE" "#7C3AED" "If ratified, this action delays all other ratifications for the rest of the epoch" "Delaying" ]
+
+            else
+                []
+    in
+    relationshipBadges ++ delayingBadges
 
 
 {-| List of proposals already in the cart for the currently selected voter.
 -}
-viewProposalsListInCart : List { proposalTitle : String, voteIntent : VoteIntent, relInfo : Maybe { number : Int, follows : Maybe Int, competingWith : List Int, isDelaying : Bool } } -> Html msg
+viewProposalsListInCart : List { proposalTitle : String, voteIntent : VoteIntent, isDelaying : Bool, relInfo : Maybe { number : Int, follows : Maybe Int, competingWith : List Int } } -> Html msg
 viewProposalsListInCart items =
     if List.isEmpty items then
         text ""
@@ -1733,8 +1743,8 @@ viewProposalsListInCart items =
             ]
 
 
-viewProposalRowAt : Int -> { proposalTitle : String, voteIntent : VoteIntent, relInfo : Maybe { number : Int, follows : Maybe Int, competingWith : List Int, isDelaying : Bool } } -> Html msg
-viewProposalRowAt index { proposalTitle, voteIntent, relInfo } =
+viewProposalRowAt : Int -> { proposalTitle : String, voteIntent : VoteIntent, isDelaying : Bool, relInfo : Maybe { number : Int, follows : Maybe Int, competingWith : List Int } } -> Html msg
+viewProposalRowAt index { proposalTitle, voteIntent, isDelaying, relInfo } =
     Html.li
         [ HA.style "display" "flex"
         , HA.style "justify-content" "space-between"
@@ -1762,7 +1772,7 @@ viewProposalRowAt index { proposalTitle, voteIntent, relInfo } =
                 , HA.style "word-break" "break-word"
                 ]
                 (text proposalTitle
-                    :: (case viewRelBadges relInfo of
+                    :: (case viewRelBadges isDelaying relInfo of
                             [] ->
                                 []
 

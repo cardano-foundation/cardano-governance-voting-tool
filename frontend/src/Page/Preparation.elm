@@ -64,7 +64,7 @@ import Page.Cart as Cart
 import Platform.Cmd as Cmd
 import Process
 import ProposalMetadata exposing (AuthorWitness, ProposalMetadata)
-import ProposalRelationships exposing (ProposalRelInfo)
+import ProposalRelationships exposing (ProposalRelInfo, isDelayingActionType)
 import RemoteData exposing (RemoteData, WebData)
 import ScriptInfo exposing (ScriptInfo)
 import Set exposing (Set)
@@ -4117,9 +4117,13 @@ viewProposalList ctx form maybeVoter proposalsDict visibleCount =
                                 (\( actionIdStr, { proposalTitle, voteIntent } ) ->
                                     { proposalTitle = proposalTitle
                                     , voteIntent = voteIntent
+                                    , isDelaying =
+                                        Dict.get actionIdStr proposalsDict
+                                            |> Maybe.map (\p -> isDelayingActionType p.actionType)
+                                            |> Maybe.withDefault False
                                     , relInfo =
                                         Dict.get actionIdStr ctx.proposalRelationships
-                                            |> Maybe.map (\info -> { number = info.number, follows = info.follows, competingWith = info.competingWith, isDelaying = info.isDelaying })
+                                            |> Maybe.map (\info -> { number = info.number, follows = info.follows, competingWith = info.competingWith })
                                     }
                                 )
         in
@@ -4185,10 +4189,11 @@ viewProposalCardHelper wrapMsg networkId currentEpoch getPastVote relationships 
 
         relInfo =
             Dict.get idString relationships
-                |> Maybe.map (\info -> { number = info.number, follows = info.follows, competingWith = info.competingWith, isDelaying = info.isDelaying })
+                |> Maybe.map (\info -> { number = info.number, follows = info.follows, competingWith = info.competingWith })
     in
     Helper.proposalCard
         { hashIsValid = hashIsValid
+        , isDelaying = isDelayingActionType proposal.actionType
         , pastVote = pastVote
         , isRatifying = proposal.ratified == currentEpoch
         , isLastEpoch = currentEpoch == Just (proposal.epoch_validity.end - 1)
