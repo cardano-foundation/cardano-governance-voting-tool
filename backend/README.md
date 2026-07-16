@@ -37,9 +37,9 @@ IPFS_PRECONFIGS_JSON="[
 NETWORK_ID=0
 
 # Matomo Analytics (optional - can be removed for self-hosted deployments)
-MATOMO_URL="https://cardanofoundation.matomo.cloud/"
-MATOMO_SITE_ID="13"
-MATOMO_JS_URL="https://cdn.matomo.cloud/cardanofoundation.matomo.cloud/matomo.js"
+MATOMO_URL="https://analytics.cf-app.org/"
+MATOMO_SITE_ID="5"
+MATOMO_JS_URL="https://analytics.cf-app.org/matomo.js"
 MATOMO_SCRIPT='
       var _paq = window._paq = window._paq || [];
       _paq.push(["trackPageView"]);
