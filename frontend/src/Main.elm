@@ -2108,6 +2108,10 @@ governanceTools =
       , url = "https://www.drep.fun/"
       , description = "Minimalist tool for DReps to vote on proposals."
       }
+    , { name = "DRepTalk"
+      , url = "https://dreptalk.com"
+      , description = "A public discussion forum for Cardano governance, where every on-chain action has its own thread and DReps, SPOs, and CC members post authenticated by wallet signature."
+      }
     , { name = "governancespace.com"
       , url = "https://governancespace.com"
       , description = "Another alternative comprehensive platform for Cardano governance, still WIP."
