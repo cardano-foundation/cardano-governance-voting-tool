@@ -972,7 +972,7 @@ ipfsGateways =
 If the metadata URL is pointing to an IPFS resource ("ipfs://"),
 requests are staggered across multiple IPFS gateways: the first gateway
 is tried immediately, and each subsequent gateway is tried with an additional
-2-second delay. The first successful response wins (via `race`).
+2-second delay. The first successful response wins (via `firstSuccess`).
 
 For non-IPFS URLs, a single direct request is made.
 
@@ -989,7 +989,7 @@ taskLoadProposalMetadata url =
 {-| Fetch content from a URL as raw string.
 For IPFS URLs (ipfs://), uses staggered multi-gateway fetching:
 the first gateway fires immediately, then every 2 seconds a new gateway
-is tried. The first successful response wins via `ConcurrentTask.race`.
+is tried. The first successful response wins via `firstSuccess`.
 For HTTPS URLs, makes a direct request with CORS fallback via the server proxy.
 -}
 taskFetchFromUrl : String -> ConcurrentTask String String
@@ -1010,7 +1010,7 @@ taskFetchFromUrl url =
                         ConcurrentTask.Process.sleep (index * 2000)
                             |> ConcurrentTask.andThenDo (fetchMetadataFromUrl (gateway ++ cid))
                 in
-                ConcurrentTask.race
+                firstSuccess
                     (fetchMetadataFromUrl (first ++ cid))
                     (List.indexedMap (\i gw -> staggeredTask (i + 1) gw) rest)
                     |> httpErrorToString
@@ -1018,6 +1018,38 @@ taskFetchFromUrl url =
     else
         fetchMetadataFromUrl url
             |> httpErrorToString
+
+
+{-| Run tasks concurrently and succeed with the first one to succeed
+(similar to `Promise.any()` in JavaScript).
+Fails only once all tasks have failed, with the error of the first task.
+
+This differs from `ConcurrentTask.race`, which surfaces the first task to fail
+if it happens before any task succeeds.
+
+Since concurrent tasks can only short-circuit on failure (`batch`, `map2`),
+this is implemented as the dual of `batch` (Promise.all):
+invert each task, run them all, then invert the result.
+
+-}
+firstSuccess : ConcurrentTask x a -> List (ConcurrentTask x a) -> ConcurrentTask x a
+firstSuccess task tasks =
+    ConcurrentTask.map2 Tuple.pair
+        (invertTask task)
+        (ConcurrentTask.batch (List.map invertTask tasks))
+        |> invertTask
+        |> ConcurrentTask.mapError Tuple.first
+
+
+{-| Swap success and failure of a task.
+A success short-circuits concurrent tasks (in a batch) as if it was a failure.
+-}
+invertTask : ConcurrentTask x a -> ConcurrentTask a x
+invertTask task =
+    task
+        |> ConcurrentTask.map Err
+        |> ConcurrentTask.onError (Ok >> ConcurrentTask.succeed)
+        |> ConcurrentTask.andThen ConcurrentTask.fromResult
 
 
 {-| Fetch content from a URL, with CORS fallback via the server proxy.
