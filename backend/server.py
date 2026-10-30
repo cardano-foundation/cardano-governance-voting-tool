@@ -309,7 +309,7 @@ async def fetch_proposal_title(
 
     try:
         raw_title = rows[0]["meta_json"]["body"]["title"]
-    except (IndexError, KeyError, TypeError):
+    except IndexError, KeyError, TypeError:
         raw_title = None
     title = (
         raw_title.strip() if isinstance(raw_title, str) and raw_title.strip() else None
@@ -386,6 +386,7 @@ def _base_context(request: Request) -> dict:
 async def read_root(request: Request):
     image_url = f"{_request_base_url(request)}{OG_IMAGE_PATH}"
     return templates.TemplateResponse(
+        request,
         "index.html",
         {**_base_context(request), **_og_context(None, image_url)},
         headers={"Cache-Control": "no-cache"},
@@ -410,6 +411,7 @@ async def get_page(full_path: str, request: Request):
         image_url = f"{base_url}/og/proposal/{proposal_id}.jpg?networkId={network_id}"
 
     return templates.TemplateResponse(
+        request,
         "index.html",
         {**_base_context(request), **_og_context(title, image_url)},
         headers={"Cache-Control": "no-cache"},

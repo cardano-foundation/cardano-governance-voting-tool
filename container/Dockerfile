@@ -1,5 +1,5 @@
 # Use a Python image with uv pre-installed to build the backend server
-FROM ghcr.io/astral-sh/uv:python3.10-alpine AS backend-builder
+FROM ghcr.io/astral-sh/uv:python3.14-alpine AS backend-builder
 
 # Install the server into `/backend`
 WORKDIR /backend
@@ -16,7 +16,7 @@ RUN if [ "$TARGETARCH" = "amd64" ]; then \
     echo "Unsupported architecture: $TARGETARCH"; \
     exit 1; \
     fi && \
-    wget "https://github.com/typst/typst/releases/download/v0.14.2/$ARCHIVE_NAME.tar.xz" -O "$ARCHIVE_NAME.tar.xz" && \
+    wget "https://github.com/typst/typst/releases/download/v0.15.1/$ARCHIVE_NAME.tar.xz" -O "$ARCHIVE_NAME.tar.xz" && \
     tar xf "$ARCHIVE_NAME.tar.xz" && \
     mv "${ARCHIVE_NAME}/typst" .
 
@@ -67,7 +67,7 @@ RUN npm run compress
 
 # Then use the final image for the server without uv
 # and with the compiled frontend app into /frontend/static/
-FROM python:3.10-alpine
+FROM python:3.14-alpine
 # It is important to use the image that matches the builder,
 # as the path to the Python executable must be the same.
 
