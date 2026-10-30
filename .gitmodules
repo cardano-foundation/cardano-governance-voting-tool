@@ -5,8 +5,8 @@
 	path = frontend/elm-kernel-replacements/elm-stuff/elm/browser/1.0.2
 	url = https://github.com/lydell/browser.git
 [submodule "frontend/elm-kernel-replacements/elm-stuff/elm/html/1.0.0"]
-	path = frontend/elm-kernel-replacements/elm-stuff/elm/html/1.0.0
+	path = frontend/elm-kernel-replacements/elm-stuff/elm/html/1.0.1
 	url = https://github.com/lydell/html.git
 [submodule "frontend/elm-kernel-replacements/elm-stuff/elm/virtual-dom/1.0.4"]
-	path = frontend/elm-kernel-replacements/elm-stuff/elm/virtual-dom/1.0.4
+	path = frontend/elm-kernel-replacements/elm-stuff/elm/virtual-dom/1.0.5
 	url = https://github.com/lydell/virtual-dom.git
