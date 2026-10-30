@@ -2128,8 +2128,8 @@ governanceTools =
       , url = "https://1694.io"
       , description = "A knowledge hub dedicated to Cardano's governance processes."
       }
-    , { name = "changwatch.com"
-      , url = "https://changwatch.com"
+    , { name = "GovScope"
+      , url = "https://cardanogovscope.com/"
       , description = "A governance dashboard providing insights and tracking."
       }
     , { name = "DRep-Collective"
