@@ -7,12 +7,11 @@ import mimetypes
 import os
 import re
 import shutil
-import subprocess
 import tempfile
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Annotated
 
 import httpx
 from brotli_asgi import BrotliMiddleware
@@ -50,21 +49,27 @@ BLOCKFROST_DEFAULT_RPC_URL = "https://ipfs.blockfrost.io/api/v0"
 #   basic      : rpcUrl, userId, password
 #   nmkr       : rpcUrl, userId, bearerToken
 #   blockfrost : projectId (rpcUrl optional; defaults to Blockfrost's public host)
+class ConfigError(Exception):
+    """Invalid server configuration (environment variables)."""
+
+
 def _validate_preconfig(entry: dict, index: int) -> dict:
     common = ["id", "label", "description", "format"]
     for key in common:
         if not entry.get(key):
-            raise Exception(f"IPFS preconfig #{index}: missing or empty field '{key}'")
+            raise ConfigError(
+                f"IPFS preconfig #{index}: missing or empty field '{key}'"
+            )
     fmt = entry["format"].lower()
     if fmt not in ("basic", "nmkr", "blockfrost"):
-        raise Exception(
+        raise ConfigError(
             f"IPFS preconfig #{index} ('{entry['id']}'): unknown format '{fmt}'"
         )
     entry["format"] = fmt
 
     def _require(key: str) -> None:
         if not entry.get(key):
-            raise Exception(
+            raise ConfigError(
                 f"IPFS preconfig #{index} ('{entry['id']}'): "
                 f"format '{fmt}' requires '{key}'"
             )
@@ -86,22 +91,22 @@ def _validate_preconfig(entry: dict, index: int) -> dict:
 
 
 IPFS_PRECONFIGS_JSON_RAW = os.getenv("IPFS_PRECONFIGS_JSON", "").strip()
-IPFS_PRECONFIGS: List[dict] = []
+IPFS_PRECONFIGS: list[dict] = []
 if IPFS_PRECONFIGS_JSON_RAW:
     try:
         parsed = json.loads(IPFS_PRECONFIGS_JSON_RAW)
-    except Exception as e:
-        raise Exception(f"Invalid JSON for IPFS_PRECONFIGS_JSON: {e}")
+    except json.JSONDecodeError as e:
+        raise ConfigError(f"Invalid JSON for IPFS_PRECONFIGS_JSON: {e}") from e
     if not isinstance(parsed, list):
-        raise Exception("IPFS_PRECONFIGS_JSON must be a JSON array")
+        raise TypeError("IPFS_PRECONFIGS_JSON must be a JSON array")
     for index, entry in enumerate(parsed):
         if not isinstance(entry, dict):
-            raise Exception(f"IPFS preconfig #{index} must be an object")
+            raise TypeError(f"IPFS preconfig #{index} must be an object")
         IPFS_PRECONFIGS.append(_validate_preconfig(entry, index))
     seen_ids: set = set()
     for entry in IPFS_PRECONFIGS:
         if entry["id"] in seen_ids:
-            raise Exception(f"Duplicate IPFS preconfig id: '{entry['id']}'")
+            raise ConfigError(f"Duplicate IPFS preconfig id: '{entry['id']}'")
         seen_ids.add(entry["id"])
 
 if not IPFS_PRECONFIGS:
@@ -111,7 +116,7 @@ if not IPFS_PRECONFIGS:
     )
 
 # Indexed by id for fast lookup during pin requests.
-IPFS_PRECONFIGS_BY_ID: Dict[str, dict] = {p["id"]: p for p in IPFS_PRECONFIGS}
+IPFS_PRECONFIGS_BY_ID: dict[str, dict] = {p["id"]: p for p in IPFS_PRECONFIGS}
 
 
 # Public view exposed to the frontend (never includes secrets).
@@ -196,12 +201,15 @@ try:
 
     OG_CARD_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     _OG_CARD_AVAILABLE = True
-except Exception as e:  # pragma: no cover - depends on optional Pillow install
+except (
+    ImportError,
+    OSError,
+) as e:  # pragma: no cover - depends on optional Pillow install
     logger.warning(f"OG card rendering unavailable ({e}); using static image")
     _OG_CARD_AVAILABLE = False
 
 
-def _og_network_slug(network_id: Optional[str]) -> str:
+def _og_network_slug(network_id: str | None) -> str:
     return "mainnet" if network_id == "Mainnet" else "preview"
 
 
@@ -212,7 +220,7 @@ KOIOS_MAINNET_URL = "https://api.koios.rest/api/v1"
 KOIOS_PREVIEW_URL = "https://preview.koios.rest/api/v1"
 
 
-def _koios_api_url(network_id: Optional[str]) -> str:
+def _koios_api_url(network_id: str | None) -> str:
     return KOIOS_MAINNET_URL if network_id == "Mainnet" else KOIOS_PREVIEW_URL
 
 
@@ -246,21 +254,21 @@ OG_CACHE_MAX_ENTRIES = 5000
 OG_FETCH_TIMEOUT_SECONDS = 4
 
 # proposal_id -> (monotonic_expiry, title_or_None)
-_og_title_cache: Dict[str, Tuple[float, Optional[str]]] = {}
+_og_title_cache: dict[str, tuple[float, str | None]] = {}
 
 # Bech32 CIP-129 governance action id (e.g. "gov_action1..."). Validating the
 # shape before hitting Koios blocks junk query params from unbounded fetches.
 _PROPOSAL_ID_RE = re.compile(r"^gov_action1[02-9ac-hj-np-z]{50,70}$")
 
 
-def _og_cache_get(proposal_id: str) -> Tuple[bool, Optional[str]]:
+def _og_cache_get(proposal_id: str) -> tuple[bool, str | None]:
     entry = _og_title_cache.get(proposal_id)
     if entry is not None and time.monotonic() < entry[0]:
         return True, entry[1]
     return False, None
 
 
-def _og_cache_set(proposal_id: str, title: Optional[str], ttl: float) -> None:
+def _og_cache_set(proposal_id: str, title: str | None, ttl: float) -> None:
     if len(_og_title_cache) >= OG_CACHE_MAX_ENTRIES:
         now = time.monotonic()
         for key in [k for k, v in _og_title_cache.items() if v[0] <= now]:
@@ -270,9 +278,7 @@ def _og_cache_set(proposal_id: str, title: Optional[str], ttl: float) -> None:
     _og_title_cache[proposal_id] = (time.monotonic() + ttl, title)
 
 
-async def fetch_proposal_title(
-    proposal_id: str, network_id: Optional[str]
-) -> Optional[str]:
+async def fetch_proposal_title(proposal_id: str, network_id: str | None) -> str | None:
     """Return the off-chain title for a proposal, or None. Cached aggressively.
 
     The Koios network is chosen from the request's `networkId` param, since a
@@ -302,7 +308,7 @@ async def fetch_proposal_title(
         )
         response.raise_for_status()
         rows = response.json()
-    except Exception as e:
+    except (httpx.HTTPError, ValueError) as e:
         logger.warning(f"OG: failed to fetch title for {proposal_id}: {e}")
         _og_cache_set(cache_key, None, OG_CACHE_FAILURE_TTL_SECONDS)
         return None
@@ -319,7 +325,7 @@ async def fetch_proposal_title(
     return title
 
 
-def _og_context(title: Optional[str], image_url: str) -> dict:
+def _og_context(title: str | None, image_url: str) -> dict:
     """Open Graph template variables: proposal-specific when a title is known."""
     if title:
         return {
@@ -338,15 +344,15 @@ def _og_context(title: Optional[str], image_url: str) -> dict:
 PRECONFIGURED_VOTERS_JSON = os.getenv("PRECONFIGURED_VOTERS_JSON", "[]")
 try:
     json.loads(PRECONFIGURED_VOTERS_JSON)
-except Exception as e:
-    raise Exception(f"Invalid JSON for PRECONFIGURED_VOTERS_JSON: {e}")
+except json.JSONDecodeError as e:
+    raise ConfigError(f"Invalid JSON for PRECONFIGURED_VOTERS_JSON: {e}") from e
 
 # Preconfigured authors for rationale signatures
 PRECONFIGURED_AUTHORS_JSON = os.getenv("PRECONFIGURED_AUTHORS_JSON", "[]")
 try:
     json.loads(PRECONFIGURED_AUTHORS_JSON)
-except Exception as e:
-    raise Exception(f"Invalid JSON for PRECONFIGURED_AUTHORS_JSON: {e}")
+except json.JSONDecodeError as e:
+    raise ConfigError(f"Invalid JSON for PRECONFIGURED_AUTHORS_JSON: {e}") from e
 
 
 # Define an async HTTP client (using httpx) and attach it to the FastAPI app
@@ -439,8 +445,8 @@ async def og_proposal_card(proposal_id: str, request: Request):
             tmp = path.with_suffix(".jpg.tmp")
             tmp.write_bytes(data)
             tmp.replace(path)  # atomic publish
-        except Exception as e:
-            logger.warning(f"OG: card render failed for {proposal_id}: {e}")
+        except Exception:
+            logger.exception(f"OG: card render failed for {proposal_id}")
             return RedirectResponse(fallback_url, status_code=302)
 
     return FileResponse(
@@ -451,7 +457,7 @@ async def og_proposal_card(proposal_id: str, request: Request):
 
 
 @app.post("/pretty-gov-pdf")
-async def create_pretty_pdf(data: dict = Body(...)):
+async def create_pretty_pdf(data: Annotated[dict, Body()]):
     """
     Generate a pretty PDF from JSON governance data.
     Returns the PDF file.
@@ -462,8 +468,7 @@ async def create_pretty_pdf(data: dict = Body(...)):
         with tempfile.TemporaryDirectory() as temp_dir:
             # Write metadata to JSON file
             metadata_file = Path(temp_dir) / "metadata.json"
-            with open(metadata_file, "w") as f:
-                json.dump(data, f)
+            await asyncio.to_thread(metadata_file.write_text, json.dumps(data))
 
             output_path = Path(temp_dir) / "metadata.pdf"
 
@@ -471,66 +476,65 @@ async def create_pretty_pdf(data: dict = Body(...)):
             template_dest = Path(temp_dir) / "template.typ"
             shutil.copyfile("template.typ", str(template_dest))
 
-            # Change to temp directory and run typst command
-            current_dir = os.getcwd()
+            # Run the typst command in the temp directory
+            logger.info(f"Running typst in directory: {temp_dir}")
+            logger.info(f"Files in directory: {os.listdir(temp_dir)}")
 
-            try:
-                os.chdir(temp_dir)
-                # Add more verbose logging
-                logger.info(f"Running typst in directory: {temp_dir}")
-                logger.info(f"Files in directory: {os.listdir('.')}")
+            process = await asyncio.create_subprocess_exec(
+                "typst",
+                "compile",
+                "template.typ",
+                "metadata.pdf",
+                cwd=temp_dir,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout_bytes, stderr_bytes = await process.communicate()
+            stdout = stdout_bytes.decode(errors="replace")
+            stderr = stderr_bytes.decode(errors="replace")
 
-                process = subprocess.run(
-                    ["typst", "compile", "template.typ", "metadata.pdf"],
-                    capture_output=True,
-                    text=True,
-                    check=True,
+            if process.returncode != 0:
+                logger.error(f"PDF generation failed: {stderr}")
+                raise HTTPException(
+                    status_code=500, detail=f"PDF generation failed: {stderr}"
                 )
 
-                # Log the process output
-                if process.stdout:
-                    logger.info(f"Typst output: {process.stdout}")
-                if process.stderr:
-                    logger.warning(f"Typst stderr: {process.stderr}")
+            # Log the process output
+            if stdout:
+                logger.info(f"Typst output: {stdout}")
+            if stderr:
+                logger.warning(f"Typst stderr: {stderr}")
 
-                # Check if the file was actually created
-                if not output_path.exists():
-                    logger.error("PDF file was not created after typst command")
-                    raise HTTPException(
-                        status_code=500,
-                        detail="PDF generation failed - output file not created",
-                    )
-
-                # Log file size to ensure it's not empty
-                logger.info(f"Generated PDF size: {output_path.stat().st_size} bytes")
-
-                # Read the file into memory before the temp directory is cleaned up
-                pdf_content = output_path.read_bytes()
-
-                return Response(
-                    content=pdf_content,
-                    media_type="application/pdf",
-                    headers={
-                        "Content-Disposition": "attachment; filename=metadata.pdf"
-                    },
+            # Check if the file was actually created
+            if not output_path.exists():
+                logger.error("PDF file was not created after typst command")
+                raise HTTPException(
+                    status_code=500,
+                    detail="PDF generation failed - output file not created",
                 )
 
-            finally:
-                os.chdir(current_dir)
+            # Log file size to ensure it's not empty
+            logger.info(f"Generated PDF size: {output_path.stat().st_size} bytes")
 
-    except subprocess.CalledProcessError as e:
-        logger.error(f"PDF generation failed: {e.stderr}")
-        raise HTTPException(
-            status_code=500, detail=f"PDF generation failed: {e.stderr}"
-        )
-    except Exception as e:
-        logger.error(f"Unexpected error: {str(e)}")
+            # Read the file into memory before the temp directory is cleaned up
+            pdf_content = await asyncio.to_thread(output_path.read_bytes)
+
+            return Response(
+                content=pdf_content,
+                media_type="application/pdf",
+                headers={"Content-Disposition": "attachment; filename=metadata.pdf"},
+            )
+
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Unexpected error")
         raise HTTPException(status_code=500, detail="An unexpected error occurred")
 
 
 class IPFSPinRequest(BaseModel):
     ipfsServer: str | None = None
-    headers: List[Tuple[str, str]] | None = None
+    headers: list[tuple[str, str]] | None = None
     preconfigId: str | None = None
     filecoin: bool = False
 
@@ -540,7 +544,7 @@ class IPFSPinJSONRequest(IPFSPinRequest):
     jsonContent: str
 
 
-def _pick_preconfig(preconfig_id: Optional[str]) -> Optional[dict]:
+def _pick_preconfig(preconfig_id: str | None) -> dict | None:
     if not IPFS_PRECONFIGS:
         return None
     if preconfig_id is None:
@@ -556,11 +560,11 @@ def _pick_preconfig(preconfig_id: Optional[str]) -> Optional[dict]:
 
 
 def get_ipfs_config(
-    preconfig_id: Optional[str] = None,
-    ipfs_server: Optional[str] = None,
-    custom_headers: Optional[List[Tuple[str, str]]] = None,
+    preconfig_id: str | None = None,
+    ipfs_server: str | None = None,
+    custom_headers: list[tuple[str, str]] | None = None,
     filecoin_requested: bool = False,
-) -> Tuple[str, Dict[str, str], str, bool]:
+) -> tuple[str, dict[str, str], str, bool]:
     """Resolve the IPFS endpoint + auth headers, format, and effective Filecoin flag.
 
     Precedence:
@@ -636,9 +640,9 @@ def get_ipfs_config(
 
 async def pin_to_ipfs_common(
     temp_file_path: Path,
-    ipfs_server: Optional[str] = None,
-    custom_headers: Optional[List[Tuple[str, str]]] = None,
-    preconfig_id: Optional[str] = None,
+    ipfs_server: str | None = None,
+    custom_headers: list[tuple[str, str]] | None = None,
+    preconfig_id: str | None = None,
     filecoin: bool = False,
 ):
     """Common IPFS pinning logic used by both endpoints."""
@@ -658,9 +662,8 @@ async def pin_to_ipfs_common(
                 mime_type = "application/octet-stream"
 
             # Read file and convert to base64
-            with open(temp_file_path, "rb") as f:
-                file_bytes = f.read()
-                file_base64 = base64.b64encode(file_bytes).decode("utf-8")
+            file_bytes = await asyncio.to_thread(temp_file_path.read_bytes)
+            file_base64 = base64.b64encode(file_bytes).decode("utf-8")
 
             # Create JSON payload
             payload = {
@@ -689,12 +692,12 @@ async def pin_to_ipfs_common(
             # IpfsAnswer decoder reads `ipfs_hash` from the /add response, so
             # we return that body whether or not the pin step succeeds — the
             # status code reflects pin failure when applicable.
-            with open(temp_file_path, "rb") as f:
-                add_response = await app.async_client.post(  # type: ignore
-                    url=f"{server_url}/ipfs/add",
-                    headers=headers,
-                    files={"file": f},
-                )
+            file_bytes = await asyncio.to_thread(temp_file_path.read_bytes)
+            add_response = await app.async_client.post(  # type: ignore
+                url=f"{server_url}/ipfs/add",
+                headers=headers,
+                files={"file": (temp_file_path.name, file_bytes)},
+            )
 
             if add_response.status_code != 200:
                 return Response(
@@ -741,43 +744,43 @@ async def pin_to_ipfs_common(
 
         else:
             # Basic format - uses /add endpoint with file upload
-            with open(temp_file_path, "rb") as f:
-                add_response = await app.async_client.post(  # type: ignore
-                    url=f"{server_url}/add?pin=true",  # Add pin=true parameter
-                    headers=headers,
-                    files={"file": f},
-                )
+            file_bytes = await asyncio.to_thread(temp_file_path.read_bytes)
+            add_response = await app.async_client.post(  # type: ignore
+                url=f"{server_url}/add?pin=true",  # Add pin=true parameter
+                headers=headers,
+                files={"file": (temp_file_path.name, file_bytes)},
+            )
 
-                # Check if the add request was successful
-                if add_response.status_code != 200:
-                    return Response(
-                        content=add_response.content,
-                        status_code=add_response.status_code,
-                        media_type=add_response.headers.get("content-type"),
-                    )
-
-                # Return the response directly since pinning is already done
+            # Check if the add request was successful
+            if add_response.status_code != 200:
                 return Response(
                     content=add_response.content,
                     status_code=add_response.status_code,
                     media_type=add_response.headers.get("content-type"),
                 )
 
+            # Return the response directly since pinning is already done
+            return Response(
+                content=add_response.content,
+                status_code=add_response.status_code,
+                media_type=add_response.headers.get("content-type"),
+            )
+
     except HTTPException:
         raise
     except json.JSONDecodeError as e:
-        logger.error(f"Failed to parse IPFS output: {str(e)}")
+        logger.error(f"Failed to parse IPFS output: {e!s}")
         raise HTTPException(status_code=500, detail="Failed to parse IPFS response")
-    except Exception as e:
-        logger.error(f"Unexpected error: {str(e)}")
+    except Exception:
+        logger.exception("Unexpected error")
         raise HTTPException(status_code=500, detail="An unexpected error occurred")
 
 
 @app.post("/ipfs-pin/file")
 async def pin_file_to_ipfs(
     file: UploadFile,
-    ipfs_server: Optional[str] = None,
-    preconfig_id: Optional[str] = None,
+    ipfs_server: str | None = None,
+    preconfig_id: str | None = None,
     filecoin: bool = False,
 ):
     """Pin a file to IPFS and return the hash.
@@ -793,8 +796,7 @@ async def pin_file_to_ipfs(
         temp_file_path = Path(temp_dir) / file.filename  # type: ignore
         content = await file.read()
 
-        with open(temp_file_path, "wb") as f:
-            f.write(content)
+        await asyncio.to_thread(temp_file_path.write_bytes, content)
 
         return await pin_to_ipfs_common(
             temp_file_path,
@@ -813,8 +815,9 @@ async def pin_json_to_ipfs(request: IPFSPinJSONRequest):
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_file_path = Path(temp_dir) / request.fileName
 
-        with open(temp_file_path, "w", encoding="utf-8") as f:
-            f.write(request.jsonContent)
+        await asyncio.to_thread(
+            temp_file_path.write_text, request.jsonContent, encoding="utf-8"
+        )
 
         return await pin_to_ipfs_common(
             temp_file_path,
@@ -829,7 +832,7 @@ class KoiosRequest(BaseModel):
     networkId: str  # "Mainnet" selects mainnet; anything else uses Preview.
     path: str  # Koios path (with query string), e.g. "/ogmios" or "/vote_list?...".
     method: str = "GET"
-    body: Optional[dict] = None
+    body: dict | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -856,10 +859,10 @@ KOIOS_CACHE_TTL_VOLATILE = 30  # current epoch, proposal_list, vote_list
 KOIOS_CACHE_MAX_ENTRIES = 2000
 
 # cache_key -> (monotonic_expiry, status_code, media_type, content_bytes)
-_koios_cache: Dict[str, Tuple[float, int, Optional[str], bytes]] = {}
+_koios_cache: dict[str, tuple[float, int, str | None, bytes]] = {}
 
 
-def _koios_cache_ttl(path: str, body: Optional[dict]) -> Optional[float]:
+def _koios_cache_ttl(path: str, body: dict | None) -> float | None:
     """Pick a cache TTL (seconds) from the request semantics, or None to skip."""
     # Match on the Koios resource only, ignoring the query string.
     resource = path.split("?", 1)[0].strip("/")
@@ -890,9 +893,7 @@ def _koios_cache_ttl(path: str, body: Optional[dict]) -> Optional[float]:
     return None
 
 
-def _koios_cache_key(
-    network_id: str, method: str, path: str, body: Optional[dict]
-) -> str:
+def _koios_cache_key(network_id: str, method: str, path: str, body: dict | None) -> str:
     raw = json.dumps(
         {"n": network_id, "m": method, "p": path, "b": body},
         sort_keys=True,
@@ -901,7 +902,7 @@ def _koios_cache_key(
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
-def _koios_cache_get(key: str) -> Optional[Tuple[int, Optional[str], bytes]]:
+def _koios_cache_get(key: str) -> tuple[int, str | None, bytes] | None:
     entry = _koios_cache.get(key)
     if entry is not None and time.monotonic() < entry[0]:
         return entry[1], entry[2], entry[3]
@@ -909,7 +910,7 @@ def _koios_cache_get(key: str) -> Optional[Tuple[int, Optional[str], bytes]]:
 
 
 def _koios_cache_set(
-    key: str, status_code: int, media_type: Optional[str], content: bytes, ttl: float
+    key: str, status_code: int, media_type: str | None, content: bytes, ttl: float
 ) -> None:
     if len(_koios_cache) >= KOIOS_CACHE_MAX_ENTRIES:
         now = time.monotonic()
@@ -989,8 +990,8 @@ async def koios_request(request: KoiosRequest):
             media_type=response.headers.get("content-type"),
         )
 
-    except Exception as e:
-        logger.error(f"Unexpected error: {str(e)}")
+    except Exception:
+        logger.exception("Unexpected error")
         raise HTTPException(status_code=500, detail="An unexpected error occurred")
 
 
@@ -998,7 +999,7 @@ class ProxyRequest(BaseModel):
     url: str
     method: str = "GET"
     headers: dict = {}
-    body: Optional[dict] = None
+    body: dict | None = None
 
 
 @app.post("/proxy/json")
@@ -1028,8 +1029,8 @@ async def proxy_request(request: ProxyRequest):
             media_type=response.headers.get("content-type"),
         )
 
-    except Exception as e:
-        logger.error(f"Unexpected error: {str(e)}")
+    except Exception:
+        logger.exception("Unexpected error")
         raise HTTPException(status_code=500, detail="An unexpected error occurred")
 
 

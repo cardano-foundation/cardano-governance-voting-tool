@@ -60,12 +60,12 @@ _FONT_REGULAR = [
 
 
 @lru_cache(maxsize=8)
-def _font(size: int, bold: bool) -> "ImageFont.FreeTypeFont | ImageFont.ImageFont":
+def _font(size: int, bold: bool) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
     for path in _FONT_BOLD if bold else _FONT_REGULAR:
         if path and os.path.exists(path):
             try:
                 return ImageFont.truetype(path, size)
-            except Exception:
+            except OSError:
                 continue
     logger.warning(
         "OG: no TTF font found; using bitmap fallback (cards will look poor)"
