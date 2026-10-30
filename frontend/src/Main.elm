@@ -80,7 +80,6 @@ import Page.MultisigRegistration
 import Page.Pdf
 import Page.Preparation exposing (IpfsPreconfig, JsonLdContexts, StorageConfig)
 import Page.Signing
-import Platform.Cmd as Cmd
 import ProposalMetadata exposing (ProposalMetadata)
 import ProposalRelationships exposing (ProposalRelInfo, isChainableAction)
 import RemoteData exposing (WebData)

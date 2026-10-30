@@ -1,5 +1,5 @@
 module ProposalRelationships exposing
-    ( GovernancePurpose(..), ProposalRelInfo
+    ( GovernancePurpose, ProposalRelInfo
     , actionLatestEnacted, isChainableAction, isDelayingActionType, proposalRelationships
     )
 

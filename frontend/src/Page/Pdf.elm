@@ -23,7 +23,6 @@ import Html.Attributes as HA
 import Http
 import Json.Decode as JD exposing (Decoder)
 import Page.Preparation as Preparation exposing (InternalVote, Rationale, Reference, ReferenceType(..))
-import Platform.Cmd as Cmd
 import Task
 
 

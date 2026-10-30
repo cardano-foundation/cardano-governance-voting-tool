@@ -1886,8 +1886,8 @@ textInputField { label, value, onInputMsg } =
 
 {-| Form for a header item with name and value inputs
 -}
-storageHeaderForm : Int -> String -> String -> msg -> (String -> msg) -> (String -> msg) -> Html msg
-storageHeaderForm _ name value deleteMsg nameChangeMsg valueChangeMsg =
+storageHeaderForm : String -> String -> msg -> (String -> msg) -> (String -> msg) -> Html msg
+storageHeaderForm name value deleteMsg nameChangeMsg valueChangeMsg =
     div
         [ HA.style "border" "1px solid #E2E8F0"
         , HA.style "border-radius" "0.5rem"

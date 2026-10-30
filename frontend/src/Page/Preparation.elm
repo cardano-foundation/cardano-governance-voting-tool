@@ -61,7 +61,6 @@ import Markdown.Block
 import Markdown.Parser as Md
 import Natural
 import Page.Cart as Cart
-import Platform.Cmd as Cmd
 import Process
 import ProposalMetadata exposing (AuthorWitness, ProposalMetadata)
 import ProposalRelationships exposing (ProposalRelInfo, isDelayingActionType)
@@ -2570,7 +2569,7 @@ validateRationaleForm hostingIsAppControlled step =
                         |> Result.andThen (\_ -> validateRationaleStatement form.rationaleStatement)
                         |> Result.andThen (\_ -> validateRationaleDiscussion form.precedentDiscussion)
                         |> Result.andThen (\_ -> validateRationaleCounterArg form.counterArgumentDiscussion)
-                        |> Result.andThen (\_ -> validateRationaleConclusion form.conclusion)
+                        |> Result.andThen (\_ -> validateRationaleConclusion)
                         |> Result.andThen (\_ -> validateRationaleInternVote form.internalVote)
                         |> Result.andThen (\_ -> validateRationaleRefs form.references)
 
@@ -2657,8 +2656,8 @@ validateRationaleCounterArg counterArg =
         |> Result.andThen validateMarkdownHeadings
 
 
-validateRationaleConclusion : MarkdownForm -> Result String ()
-validateRationaleConclusion _ =
+validateRationaleConclusion : Result String ()
+validateRationaleConclusion =
     Ok ()
 
 
@@ -4747,7 +4746,6 @@ viewCustomIpfsForm form =
                 (List.indexedMap
                     (\n ( field, value ) ->
                         Helper.storageHeaderForm
-                            n
                             field
                             value
                             (DeleteHeaderButtonClicked n)
