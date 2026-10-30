@@ -2084,7 +2084,11 @@ viewLandingPage networkId =
 
 governanceTools : List { name : String, url : String, description : String }
 governanceTools =
-    [ { name = "gov.tools"
+    [ { name = "DRepTalk"
+      , url = "https://dreptalk.com"
+      , description = "A public discussion forum for Cardano governance, where every on-chain action has its own thread and DReps, SPOs, and CC members post authenticated by wallet signature."
+      }
+    , { name = "gov.tools"
       , url = "https://gov.tools"
       , description = "The original governance platform for Cardano. Register as a DRep, delegate your voting power, explore proposals, and cast your votes."
       }
@@ -2111,10 +2115,6 @@ governanceTools =
     , { name = "ADAtool DRep vote"
       , url = "https://adatool.net/drep-vote"
       , description = "DRep tool (in Japanese) to batch votes in a single transaction, with generated CIP-100 rationales."
-      }
-    , { name = "DRepTalk"
-      , url = "https://dreptalk.com"
-      , description = "A public discussion forum for Cardano governance, where every on-chain action has its own thread and DReps, SPOs, and CC members post authenticated by wallet signature."
       }
     , { name = "governancespace.com"
       , url = "https://governancespace.com"
